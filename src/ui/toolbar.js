@@ -336,11 +336,11 @@ function highlightWorkspaceFile(path) {
   const tree = document.getElementById('file-tree');
   if (!tree) return;
   const items = tree.querySelectorAll('li');
-  items.forEach((li) => li.classList.remove('active'));
-  const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-    ? CSS.escape(path)
-    : path.replace(/"/g, '\\"');
-  const active = tree.querySelector(`li[data-path="${esc}"]`);
+  let active = null;
+  items.forEach((li) => {
+    li.classList.remove('active');
+    if (li.dataset.path === path) active = li;
+  });
   if (active) active.classList.add('active');
 }
 
