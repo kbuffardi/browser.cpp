@@ -547,6 +547,13 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
       self.crypto.getRandomValues(buf);
       return 0;
     },
+
+    // fd_prestat_get(fd, buf_ptr) → errno
+    // Signals that there are no pre-opened directories.
+    fd_prestat_get() { return 8; }, // __WASI_ERRNO_BADF
+
+    // fd_prestat_dir_name(fd, path_ptr, path_len) → errno
+    fd_prestat_dir_name() { return 8; }, // __WASI_ERRNO_BADF
   };
 
   return { wasi, setMemory };
