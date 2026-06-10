@@ -90,43 +90,30 @@ async function loadCompiler() {
 
   send({ type: 'compiler-loading', progress: 10 });
 
-  // Load the Emscripten JS glue.  Two formats exist in the wild:
+  // Load the Emscripten JS glue via importScripts().
   //
-  //   Classic (importScripts-compatible):
-  //     Built without -s EXPORT_ES6.  Sets a global (e.g. self.Module or
-  //     self.createClangModule) when the script runs.
+  // The compiler worker always uses classic (importScripts-compatible) format.
+  // If the downloaded clang.js was in ES6 module format (e.g. from the
+  // browsercc package built with -s EXPORT_ES6), npm run fetch-clang patches
+  // it automatically: import.meta.url → '' and export default → self assignment.
   //
-  //   ES6 module (built with -s EXPORT_ES6 -s MODULARIZE):
-  //     Exports a default factory function.  Requires dynamic import().
-  //     Example: the "browsercc" NPM package (LLVM 20).
-  //
-  // We try importScripts first and fall back to dynamic import so that either
-  // format works without any manual configuration.
-
-  let es6Factory = null;
+  // Supported globals set by importScripts():
+  //   • self.createClangModule  (classic, -s EXPORT_NAME=createClangModule,
+  //                              or patched ES6 build from fetch-clang)
+  //   • self.Module as function (classic, -s MODULARIZE=1, default name)
+  //   • self.Module as object   (non-modularized build — already live)
 
   try {
     importScripts(jsUrl);
-  } catch (classicErr) {
-    // importScripts throws for ES6 modules — try dynamic import instead.
-    try {
-      const mod = await import(jsUrl);
-      if (typeof mod.default === 'function') {
-        es6Factory = mod.default;
-      } else if (mod.default && typeof mod.default === 'object') {
-        // Pre-initialized ES6 module object — use directly.
-        ClangModule = mod.default;
-      } else {
-        throw new Error(`Unexpected default export in clang.js: ${typeof mod.default}`);
-      }
-    } catch (esErr) {
-      compilerState = 'error';
-      send({
-        type: 'compiler-error',
-        message: `Failed to load clang.js: ${classicErr.message} / ${esErr.message}`,
-      });
-      return false;
-    }
+  } catch (err) {
+    compilerState = 'error';
+    send({
+      type: 'compiler-error',
+      message:
+        `Failed to load clang.js: ${err.message}\n` +
+        'Run:  npm run fetch-clang  then reload the extension.',
+    });
+    return false;
   }
 
   send({ type: 'compiler-loading', progress: 30 });
@@ -134,15 +121,13 @@ async function loadCompiler() {
   // Resolve which factory / module object to use.
   //
   // Priority:
-  //  1. ES6 default export factory  (dynamic import path above, EXPORT_ES6)
-  //  2. self.createClangModule       (classic, -s EXPORT_NAME=createClangModule)
-  //  3. self.Module as a function    (classic, -s MODULARIZE=1, default name)
-  //  4. ClangModule already set      (ES6 default export was a plain object)
-  //  5. self.Module as plain object  (classic, no MODULARIZE — already live)
+  //  1. self.createClangModule       (classic, -s EXPORT_NAME=createClangModule,
+  //                                   or patched ES6 build from fetch-clang)
+  //  2. self.Module as a function    (classic, -s MODULARIZE=1, default name)
+  //  3. self.Module as plain object  (classic, no MODULARIZE — already live)
 
   if (!ClangModule) {
     const factory =
-      es6Factory ||
       (typeof self['createClangModule'] === 'function' ? self['createClangModule'] : null) ||
       (typeof self['Module'] === 'function'            ? self['Module']            : null);
 

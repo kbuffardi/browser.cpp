@@ -87,6 +87,51 @@ function download(url, dest) {
   });
 }
 
+/**
+ * Patch clang.js if it was built in ES6 module format (-s EXPORT_ES6).
+ *
+ * Emscripten's EXPORT_ES6 output uses two constructs that are illegal in a
+ * classic Web Worker loaded via importScripts():
+ *
+ *   • import.meta.url  – replaced with '' (the compiler worker always
+ *                        supplies locateFile(), so _scriptName is unused)
+ *   • export default … – replaced with a self.createClangModule assignment
+ *                        that the compiler worker expects
+ *
+ * Classic format builds (-s MODULARIZE=1 -s EXPORT_NAME=createClangModule)
+ * already set self.createClangModule and have no ES6 syntax, so the function
+ * is a no-op for them.
+ */
+function patchClangJs(dest) {
+  let src = fs.readFileSync(dest, 'utf8');
+
+  // Only patch files that actually use ES6 module syntax.
+  if (!src.includes('import.meta') && !src.includes('export default')) return;
+
+  const before = src;
+
+  // Replace every import.meta.url reference with an empty string.
+  // All five occurrences in the browsercc build are either:
+  //   – inside ENVIRONMENT_IS_NODE blocks (never executed in a worker), or
+  //   – inside findWasmBinary() which is short-circuited when locateFile() is
+  //     provided (which the compiler worker always does), or
+  //   – the top-level _scriptName assignment whose value is unused when
+  //     locateFile() is provided.
+  src = src.replaceAll('import.meta.url', "''");
+
+  // Convert the ES6 default export into a classic global assignment.
+  // The compiler worker looks for self.createClangModule after importScripts().
+  src = src.replace(
+    /^export default (\w+);?\s*$/m,
+    'if (typeof self !== "undefined") { self.createClangModule = $1; }'
+  );
+
+  if (src !== before) {
+    fs.writeFileSync(dest, src, 'utf8');
+    console.log(`  Patched ${path.basename(dest)} for importScripts() compatibility.`);
+  }
+}
+
 (async () => {
   console.log(`Downloading Clang WASM binaries to dist/clang/ …\n`);
   for (const file of FILES) {
@@ -98,6 +143,7 @@ function download(url, dest) {
     }
     console.log(`  ↓ ${url}`);
     await download(url, dest);
+    if (file === 'clang.js') patchClangJs(dest);
   }
   console.log('\nDone. You can now run `npm run build` to bundle the extension.');
 })().catch((err) => {
