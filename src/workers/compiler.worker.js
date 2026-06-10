@@ -102,31 +102,46 @@ async function loadCompiler() {
 
   send({ type: 'compiler-loading', progress: 30 });
 
-  // The Emscripten module factory name is set at build time via
-  // -s EXPORT_NAME=createClangModule.  We reference it directly.
-  const factoryName = 'createClangModule';
+  // Detect the Emscripten export.  Builds differ in how they export the module:
+  //   • -s MODULARIZE=1 -s EXPORT_NAME=createClangModule  → self.createClangModule() factory
+  //   • -s MODULARIZE=1  (default export name)            → self.Module() factory
+  //   • no MODULARIZE flag                                → self.Module already-initialized object
+  //
+  // Try the names in preference order; fall back gracefully.
+  const FACTORY_NAMES = ['createClangModule', 'Module'];
 
-  if (typeof self[factoryName] !== 'function') {
+  const factoryName = FACTORY_NAMES.find((n) => typeof self[n] === 'function');
+  const preInitName = !factoryName && typeof self['Module'] === 'object' && self['Module'] !== null
+    ? 'Module'
+    : null;
+
+  if (!factoryName && !preInitName) {
     compilerState = 'error';
     send({
       type: 'compiler-error',
       message:
-        `Emscripten factory "createClangModule" not found in clang.js. ` +
-        'Ensure the binary was built with -s EXPORT_NAME=createClangModule.',
+        'Emscripten module not found in clang.js. ' +
+        'Build clang.js with -s MODULARIZE=1 -s EXPORT_NAME=createClangModule ' +
+        '(see README § "Building Clang WASM from source").',
     });
     return false;
   }
 
   try {
-    ClangModule = await self[factoryName]({
-      locateFile: (file) => workerRelativeUrl(`clang/${file}`),
-      onRuntimeInitialized() {
-        send({ type: 'compiler-loading', progress: 90 });
-      },
-      // Suppress Emscripten's default console output; we capture it per-call
-      print:    () => {},
-      printErr: () => {},
-    });
+    if (preInitName) {
+      // Non-modularized build: Module is already the live Emscripten object.
+      ClangModule = self[preInitName];
+    } else {
+      ClangModule = await self[factoryName]({
+        locateFile: (file) => workerRelativeUrl(`clang/${file}`),
+        onRuntimeInitialized() {
+          send({ type: 'compiler-loading', progress: 90 });
+        },
+        // Suppress Emscripten's default console output; we capture it per-call
+        print:    () => {},
+        printErr: () => {},
+      });
+    }
   } catch (err) {
     compilerState = 'error';
     send({ type: 'compiler-error', message: `Clang init failed: ${err.message}` });
