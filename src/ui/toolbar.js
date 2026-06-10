@@ -411,14 +411,7 @@ async function openFolderWorkspace() {
 async function actionOpen() {
   if (_dirty && !confirm('Discard unsaved changes?')) return;
   try {
-    const openFolderFirst = confirm(
-      'Open a folder?\n\nOK: open folder\nCancel: open single file'
-    );
-    if (openFolderFirst) {
-      await openFolderWorkspace();
-    } else {
-      await openSingleFile();
-    }
+    await openFolderWorkspace();
   } catch (err) {
     showOpenError(err);
   }

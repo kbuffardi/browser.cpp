@@ -123,7 +123,7 @@ terminal.js  →  xterm.js display
 | Compile only | **Ctrl+Shift+B** |
 | Run (last build) | **Ctrl+Shift+R** |
 | Save | **Ctrl+S** |
-| Open file/folder | **Ctrl+O** |
+| Open folder | **Ctrl+O** |
 | New | **Ctrl+N** |
 | Clear terminal | **Ctrl+K** |
 
