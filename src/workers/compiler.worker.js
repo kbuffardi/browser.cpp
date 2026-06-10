@@ -155,6 +155,12 @@ async function loadCompiler() {
       } else {
         ClangModule = await factory({
           locateFile: (file) => workerRelativeUrl(`clang/${file}`),
+          // Prevent the Emscripten runtime from automatically calling main()
+          // during initialisation.  Without this, builds compiled with the
+          // default INVOKE_RUN=1 run main() with no arguments at startup,
+          // which can corrupt the module state and cause subsequent callMain()
+          // calls to fail with "RuntimeError: null function".
+          noInitialRun: true,
           onRuntimeInitialized() {
             send({ type: 'compiler-loading', progress: 90 });
           },
@@ -162,7 +168,7 @@ async function loadCompiler() {
           print:    () => {},
           printErr: () => {},
         });
-      }
+    }
     } catch (err) {
       compilerState = 'error';
       send({ type: 'compiler-error', message: `Clang init failed: ${err.message}` });
@@ -224,6 +230,21 @@ async function compile(source, flags = [], std = 'c++20') {
   } catch (e) {
     if (e && e.name === 'ExitStatus') {
       exitCode = e.status;
+    } else if (e instanceof WebAssembly.RuntimeError) {
+      // A WASM RuntimeError (e.g. "null function or function signature
+      // mismatch") means the compiler binary itself crashed.  Treat it as a
+      // compile failure rather than an uncaught exception so we can show a
+      // helpful message in the terminal.
+      ClangModule.print    = savedPrint;
+      ClangModule.printErr = savedPrintErr;
+      const detail = e.message || String(e);
+      return {
+        success: false,
+        diagnostics:
+          `Compiler crashed (WebAssembly.RuntimeError: ${detail}).\n` +
+          'Try reloading the extension. If the problem persists, run:\n' +
+          '  npm run fetch-clang  then  npm run build',
+      };
     } else {
       throw e;
     }

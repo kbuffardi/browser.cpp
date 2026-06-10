@@ -162,7 +162,7 @@ export function writeStderr(text) {
 export function onCompileResult({ success, diagnostics }) {
   if (diagnostics) {
     const col = success ? C.yellow : C.red;
-    term?.write(`${col}${diagnostics.replace(/\n/g, CRLF)}${C.reset}`);
+    term?.write(`${col}${diagnostics.replace(/\n/g, CRLF)}${C.reset}${CRLF}`);
   }
   if (success) {
     term?.write(`${C.green}Compilation successful.${C.reset}${CRLF}`);
