@@ -51,8 +51,18 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 function download(url, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
     let received = 0;
+    let settled = false;
+
+    function done(err) {
+      if (settled) return;
+      settled = true;
+      if (err) {
+        fs.unlink(dest, () => reject(err));
+      } else {
+        resolve();
+      }
+    }
 
     function get(urlStr) {
       https.get(urlStr, (res) => {
@@ -60,9 +70,12 @@ function download(url, dest) {
           return get(res.headers.location);
         }
         if (res.statusCode !== 200) {
-          reject(new Error(`HTTP ${res.statusCode} for ${urlStr}`));
+          res.resume();
+          done(new Error(`HTTP ${res.statusCode} for ${urlStr}`));
           return;
         }
+
+        const file = fs.createWriteStream(dest);
         const total = parseInt(res.headers['content-length'] || '0', 10);
         res.on('data', (chunk) => {
           received += chunk.length;
@@ -71,20 +84,54 @@ function download(url, dest) {
             process.stdout.write(`\r  ${path.basename(dest)}  ${pct}%   `);
           }
         });
+        res.on('error', (err) => done(err));
+        file.on('error', (err) => done(err));
         res.pipe(file);
         file.on('finish', () => {
           file.close();
           process.stdout.write('\n');
-          resolve();
+          done();
         });
-      }).on('error', (err) => {
-        fs.unlink(dest, () => {});
-        reject(err);
-      });
+      }).on('error', (err) => done(err));
     }
 
     get(url);
   });
+}
+
+function hasWasmMagic(dest) {
+  let fd = null;
+  try {
+    fd = fs.openSync(dest, 'r');
+    const header = Buffer.alloc(4);
+    const bytesRead = fs.readSync(fd, header, 0, 4, 0);
+    return (
+      bytesRead === 4 &&
+      header[0] === 0x00 &&
+      header[1] === 0x61 &&
+      header[2] === 0x73 &&
+      header[3] === 0x6d
+    );
+  } catch (_) {
+    return false;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function hasNonEmptyFile(dest) {
+  try {
+    return fs.statSync(dest).size > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isValidExistingArtifact(file, dest) {
+  if (!fs.existsSync(dest)) return false;
+  if (!hasNonEmptyFile(dest)) return false;
+  if (file === 'clang.wasm') return hasWasmMagic(dest);
+  return true;
 }
 
 /**
@@ -137,13 +184,26 @@ function patchClangJs(dest) {
   for (const file of FILES) {
     const url  = `${BASE_URL}/${file}`;
     const dest = path.join(OUT_DIR, file);
-    if (fs.existsSync(dest)) {
-      console.log(`  ${file} already present, skipping.`);
-      continue;
+
+    if (!isValidExistingArtifact(file, dest)) {
+      if (fs.existsSync(dest)) {
+        console.log(`  ${file} present but invalid/corrupted, re-downloading.`);
+        fs.unlinkSync(dest);
+      }
+      console.log(`  ↓ ${url}`);
+      await download(url, dest);
+    } else {
+      console.log(`  ${file} already present, skipping download.`);
     }
-    console.log(`  ↓ ${url}`);
-    await download(url, dest);
-    if (file === 'clang.js') patchClangJs(dest);
+
+    if (file === 'clang.js') {
+      patchClangJs(dest);
+    } else if (file === 'clang.wasm' && !hasWasmMagic(dest)) {
+      throw new Error(
+        `Downloaded clang.wasm is invalid at ${dest}. ` +
+        'Delete dist/clang/ and run npm run fetch-clang again.'
+      );
+    }
   }
   console.log('\nDone. You can now run `npm run build` to bundle the extension.');
 })().catch((err) => {
