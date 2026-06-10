@@ -1,0 +1,10 @@
+node_modules/
+dist/
+# Keep the clang/ placeholder but not the actual binary
+!dist/clang/
+dist/clang/*.wasm
+dist/clang/*.js
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

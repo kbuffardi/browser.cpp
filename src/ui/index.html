@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>browser.cpp</title>
+  <!-- styles.css is injected by webpack (MiniCssExtractPlugin) -->
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Toolbar ──────────────────────────────────────────────────────── -->
+    <header id="toolbar">
+      <span id="toolbar-brand">browser.cpp</span>
+
+      <div id="toolbar-file-actions">
+        <button id="btn-new"   title="New file  (Ctrl+N)">New</button>
+        <button id="btn-open"  title="Open file (Ctrl+O)">Open</button>
+        <button id="btn-save"  title="Save file (Ctrl+S)">Save</button>
+        <button id="btn-save-as" title="Save As…">Save As…</button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <div id="toolbar-build-actions">
+        <label for="cpp-standard" class="sr-only">C++ standard</label>
+        <select id="cpp-standard" title="C++ standard">
+          <option value="c++20" selected>C++20</option>
+          <option value="c++17">C++17</option>
+          <option value="c++14">C++14</option>
+        </select>
+
+        <button id="btn-compile" title="Compile  (Ctrl+Shift+B)">Compile</button>
+        <button id="btn-run"     title="Run      (Ctrl+Shift+R)">Run</button>
+        <button id="btn-compile-run" class="btn-primary" title="Compile &amp; Run  (F5)">
+          ▶ Run
+        </button>
+      </div>
+
+      <div id="toolbar-status" aria-live="polite"></div>
+    </header>
+
+    <!-- ── Main ─────────────────────────────────────────────────────────── -->
+    <div id="main">
+
+      <!-- File explorer -->
+      <aside id="sidebar">
+        <div class="panel-header">EXPLORER</div>
+        <ul id="file-tree" role="tree" aria-label="Open files"></ul>
+      </aside>
+
+      <!-- Editor + terminal workspace -->
+      <div id="workspace">
+        <!-- Open-file tab bar -->
+        <div id="tab-bar" role="tablist"></div>
+
+        <!-- Monaco editor -->
+        <div id="editor-container" role="main"></div>
+
+        <!-- Resizable terminal panel -->
+        <div id="terminal-panel">
+          <div id="terminal-panel-header">
+            <span>TERMINAL</span>
+            <div class="panel-controls">
+              <button id="btn-clear-terminal" title="Clear terminal (Ctrl+K)">⌫</button>
+              <button id="btn-toggle-terminal" title="Toggle terminal">▾</button>
+            </div>
+          </div>
+          <!-- xterm.js mounts here -->
+          <div id="terminal-container"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Status bar ────────────────────────────────────────────────────── -->
+    <footer id="statusbar">
+      <span id="status-compiler" class="status-item">Initialising compiler…</span>
+      <span id="status-file"     class="status-item"></span>
+      <span id="status-cursor"   class="status-item">Ln 1, Col 1</span>
+    </footer>
+
+  </div>
+  <!-- bundle.js injected by HtmlWebpackPlugin -->
+</body>
+</html>
