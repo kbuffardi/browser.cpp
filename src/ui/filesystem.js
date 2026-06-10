@@ -168,7 +168,7 @@ export function newFile() {
 
 /** Read a file from the currently opened workspace folder. */
 export async function readWorkspaceFile(path) {
-  const key = normaliseWorkspacePath(path);
+  const key = normalizeWorkspacePath(path);
   const item = workspaceFiles.get(key);
   if (!item) return null;
   if (item.handle) {
@@ -226,7 +226,9 @@ function openFolderFallback() {
       }
 
       const firstParts = (files[0].webkitRelativePath || '').split('/');
-      workspaceName = firstParts[0] || 'workspace';
+      workspaceName = firstParts.length > 1 && firstParts[0]
+        ? firstParts[0]
+        : 'workspace';
 
       const dirSet = new Set();
       for (const file of files) {
@@ -234,7 +236,7 @@ function openFolderFallback() {
         const withoutRoot = full.startsWith(`${workspaceName}/`)
           ? full.slice(workspaceName.length + 1)
           : full;
-        const path = normaliseWorkspacePath(withoutRoot);
+        const path = normalizeWorkspacePath(withoutRoot);
         workspaceFiles.set(path, { file });
         workspaceEntries.push({ path, kind: 'file' });
 
@@ -341,6 +343,6 @@ async function detectGitMetadata() {
   return { isRepo: true, branch, remotes };
 }
 
-function normaliseWorkspacePath(path) {
+function normalizeWorkspacePath(path) {
   return String(path || '').replace(/^\/+/, '');
 }

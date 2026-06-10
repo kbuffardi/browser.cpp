@@ -40,6 +40,7 @@ const CRLF   = '\r\n';
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
+const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'cat ', 'pwd', 'git ', 'help'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -351,7 +352,7 @@ export function setWorkspace(workspace) {
   workspaceGit = workspace.git || { isRepo: false, branch: null, remotes: [] };
 
   for (const entry of workspaceEntries) {
-    const fullPath = `/${normalisePath(entry.path)}`;
+    const fullPath = `/${normalizePath(entry.path)}`;
     if (!entry.path) continue;
     if (entry.kind === 'directory') {
       workspaceDirs.add(fullPath);
@@ -425,8 +426,7 @@ function handleKey({ key, domEvent }) {
   if (code === 'Tab') {
     domEvent.preventDefault();
     // Basic tab-completion for known commands
-    const cmds = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'cat ', 'pwd', 'git ', 'help'];
-    const matches = cmds.filter((c) => c.startsWith(inputBuffer));
+    const matches = TAB_COMMANDS.filter((c) => c.startsWith(inputBuffer));
     if (matches.length === 1) {
       const extra = matches[0].slice(inputBuffer.length);
       inputBuffer += extra;
@@ -696,7 +696,7 @@ async function cmdCat(args) {
       writePrompt();
       return;
     }
-    const content = await _readWorkspaceFile?.(path.slice(1));
+    const content = await _readWorkspaceFile?.(normalizePath(path));
     if (content == null) {
       term.write(`${C.red}cat: ${args[0]}: Could not read file${C.reset}${CRLF}`);
     } else {
@@ -881,6 +881,6 @@ function formatEntry(entry) {
   return entry.name;
 }
 
-function normalisePath(path) {
+function normalizePath(path) {
   return String(path || '').replace(/^\/+/, '');
 }
