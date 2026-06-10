@@ -2,68 +2,50 @@
  * scripts/fetch-clang-wasm.js
  *
  * Downloads the pre-built Emscripten-compiled Clang WASM binary
- * (clang.js + clang.wasm) from a release URL and places
- * both files in dist/clang/.
+ * (clang.js + clang.wasm) and places both files in dist/clang/.
  *
  * Usage:
  *   npm run fetch-clang
  *
- * The binary is large (~60 MB for clang.wasm).  It is NOT bundled in the
+ * The binary is large (~43 MB for clang.wasm).  It is NOT bundled in the
  * repository; each developer fetches it once.  The extension's compiler
  * worker (dist/compiler.worker.js) loads these files at runtime.
  *
- * ── Building your own binary ──────────────────────────────────────────────────
- * If you don't have a pre-built binary, build one from source:
+ * ── Default source ────────────────────────────────────────────────────────────
+ * By default this script downloads from the "browsercc" NPM package
+ * (github.com/BertalanD/browsercc), which ships a pre-built LLVM 20 Clang
+ * compiled with Emscripten using -s MODULARIZE -s EXPORT_ES6.
  *
- *   git clone https://github.com/llvm/llvm-project
- *   cd llvm-project
- *   emcmake cmake -S llvm -B build-wasm -G Ninja \
- *     -DLLVM_ENABLE_PROJECTS="clang" \
- *     -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
- *     -DCMAKE_BUILD_TYPE=MinSizeRel \
- *     -DLLVM_BUILD_TOOLS=OFF \
- *     -DLLVM_INCLUDE_TESTS=OFF \
- *     -DEMSCRIPTEN_EXTRA_LINK_FLAGS="-s MODULARIZE=1 -s EXPORT_NAME=createClangModule"
- *   cmake --build build-wasm --target clang -j$(nproc)
+ * The compiler worker supports both classic (importScripts) and ES6 module
+ * formats, so no extra configuration is needed.
  *
- * Copy the resulting clang.js and clang.wasm into dist/clang/.
+ * ── Using a custom binary ─────────────────────────────────────────────────────
+ * Set BASE_URL below to point to your own host that serves clang.js and
+ * clang.wasm.  Either build format is accepted by the worker:
+ *   • ES6 module:  -s MODULARIZE -s EXPORT_ES6  (browsercc style)
+ *   • Classic:     -s MODULARIZE=1 -s EXPORT_NAME=createClangModule
  *
- * Alternatively, supply your own BASE_URL below pointing to a host that serves
- * clang.js and clang.wasm built with the flags above.
+ * ── Building from source ──────────────────────────────────────────────────────
+ * See README § "Building Clang WASM from source".
  *
  * C++20 note:
- *   LLVM 14+ supports most of C++20.
- *   To build your own C++23-capable binary see README § "Building Clang WASM".
+ *   LLVM 14+ supports most of C++20; LLVM 20 (browsercc default) covers C++23.
  */
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
+const fs    = require('fs');
+const path  = require('path');
 const https = require('https');
 
 // ── Configuration ─────────────────────────────────────────────────────────────
-// Set BASE_URL to your own host that serves clang.js and clang.wasm built with
-//   -s MODULARIZE=1 -s EXPORT_NAME=createClangModule
-// Leave empty to skip the download and build from source instead (see above).
-const BASE_URL = '';
+// Default: browsercc NPM package (LLVM 20, Emscripten ES6 module format).
+// Override with your own CDN/server URL if you host a custom binary.
+const BASE_URL = 'https://unpkg.com/browsercc@0.1.1/dist';
 const FILES    = ['clang.js', 'clang.wasm'];
 const OUT_DIR  = path.resolve(__dirname, '..', 'dist', 'clang');
 
 // ─────────────────────────────────────────────────────────────────────────────
-
-if (!BASE_URL) {
-  console.error(
-    '\nNo pre-built Clang WASM binary URL is configured.\n\n' +
-    'Options:\n' +
-    '  1. Set BASE_URL in scripts/fetch-clang-wasm.js to point to a host\n' +
-    '     that serves clang.js + clang.wasm built with:\n' +
-    '       -s MODULARIZE=1 -s EXPORT_NAME=createClangModule\n\n' +
-    '  2. Build the binary yourself and copy it to dist/clang/:\n' +
-    '     See README § "Building Clang WASM from source" for instructions.\n'
-  );
-  process.exit(1);
-}
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 

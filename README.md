@@ -20,24 +20,18 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 npm install
 ```
 
-### 2 – Obtain the Clang WASM binary
+### 2 – Fetch the Clang WASM binary
 
-The compiler binary is **not** shipped in this repository (it is ~60 MB).
-You need to either build it from source or host it yourself and configure the
-download URL.
+The compiler binary is **not** shipped in this repository (~43 MB).
+Download the pre-built [browsercc](https://github.com/BertalanD/browsercc) binary
+(LLVM 20, C++23-capable):
 
-**Build from source** (recommended — see [§ Building Clang WASM from source](#building-clang-wasm-from-source)):
-```bash
-# After building, copy the output to dist/clang/
-cp build-wasm/bin/clang.js build-wasm/bin/clang.wasm dist/clang/
-```
-
-**Or configure a download URL** — set `BASE_URL` in `scripts/fetch-clang-wasm.js`
-to a host that serves `clang.js` and `clang.wasm` built with
-`-s MODULARIZE=1 -s EXPORT_NAME=createClangModule`, then run:
 ```bash
 npm run fetch-clang
 ```
+
+> **Building your own binary** (custom LLVM version):
+> See [§ Building Clang WASM from source](#building-clang-wasm-from-source) below.
 
 ### 3 – Build the extension
 
@@ -152,8 +146,10 @@ terminal.js  →  xterm.js display
 
 ## Building Clang WASM from source
 
-For **C++20 / C++23** support with the latest LLVM:
+For a **custom LLVM version** or offline builds, compile Clang with Emscripten.
+The compiler worker accepts either output format:
 
+**ES6 module format** (recommended, Emscripten 3.0+):
 ```bash
 # Prerequisites: Emscripten SDK (emsdk), CMake, Ninja
 git clone https://github.com/llvm/llvm-project
@@ -165,15 +161,22 @@ emcmake cmake -S llvm -B build-wasm -G Ninja \
   -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DLLVM_BUILD_TOOLS=OFF \
   -DLLVM_INCLUDE_TESTS=OFF \
-  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="-s MODULARIZE=1 -s EXPORT_NAME=createClangModule"
+  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="MODULARIZE=1 EXPORT_ES6=1 EXPORTED_RUNTIME_METHODS=FS,callMain"
 
 cmake --build build-wasm --target clang -j$(nproc)
 ```
 
+**Classic format** (legacy Emscripten):
+```bash
+emcmake cmake -S llvm -B build-wasm -G Ninja \
+  ...same flags... \
+  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="-s MODULARIZE=1 -s EXPORT_NAME=createClangModule -s EXPORTED_RUNTIME_METHODS=[FS,callMain]"
+```
+
 Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
 
-> The binary will be large (~60–120 MB for clang.wasm).  Consider hosting it
-> on a CDN and updating the URL in `scripts/fetch-clang-wasm.js`.
+> The binary will be large (~40–120 MB for clang.wasm).  You can also host it
+> on a CDN and update the `BASE_URL` in `scripts/fetch-clang-wasm.js`.
 
 ---
 
