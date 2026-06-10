@@ -42,7 +42,9 @@ const https = require('https');
 // Default: browsercc NPM package (LLVM 20, Emscripten ES6 module format).
 // Override with your own CDN/server URL if you host a custom binary.
 const BASE_URL = 'https://unpkg.com/browsercc@0.1.1/dist';
-const FILES    = ['clang.js', 'clang.wasm'];
+const CLANG_JS_FILE   = 'clang.js';
+const CLANG_WASM_FILE = 'clang.wasm';
+const FILES           = [CLANG_JS_FILE, CLANG_WASM_FILE];
 const OUT_DIR  = path.resolve(__dirname, '..', 'dist', 'clang');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,13 +54,18 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 function download(url, dest) {
   return new Promise((resolve, reject) => {
     let received = 0;
-    let settled = false;
+    let completed = false;
 
     function done(err) {
-      if (settled) return;
-      settled = true;
+      if (completed) return;
+      completed = true;
       if (err) {
-        fs.unlink(dest, () => reject(err));
+        fs.unlink(dest, (unlinkErr) => {
+          if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+            console.warn(`Warning: failed to remove ${dest}: ${unlinkErr.message}`);
+          }
+          reject(err);
+        });
       } else {
         resolve();
       }
@@ -130,7 +137,7 @@ function hasNonEmptyFile(dest) {
 function isValidExistingArtifact(file, dest) {
   if (!fs.existsSync(dest)) return false;
   if (!hasNonEmptyFile(dest)) return false;
-  if (file === 'clang.wasm') return hasWasmMagic(dest);
+  if (file === CLANG_WASM_FILE) return hasWasmMagic(dest);
   return true;
 }
 
@@ -196,9 +203,9 @@ function patchClangJs(dest) {
       console.log(`  ${file} already present, skipping download.`);
     }
 
-    if (file === 'clang.js') {
+    if (file === CLANG_JS_FILE) {
       patchClangJs(dest);
-    } else if (file === 'clang.wasm' && !hasWasmMagic(dest)) {
+    } else if (file === CLANG_WASM_FILE && !hasWasmMagic(dest)) {
       throw new Error(
         `Downloaded clang.wasm is invalid at ${dest}. ` +
         'Delete dist/clang/ and run npm run fetch-clang again.'
