@@ -213,7 +213,7 @@ function actionCompile() {
 }
 
 function actionRun() {
-  _worker.postMessage({ type: 'run', stdin: '' });
+  _terminalAPI.startRun();
 }
 
 function actionCompileRun() {
@@ -227,7 +227,7 @@ function actionCompileRun() {
       _worker.onmessage = originalOnMessage;
       originalOnMessage({ data }); // let normal handler render diagnostics
       if (data.success) {
-        _worker.postMessage({ type: 'run', stdin: '' });
+        _terminalAPI.startRun();
       }
     } else {
       originalOnMessage({ data });
