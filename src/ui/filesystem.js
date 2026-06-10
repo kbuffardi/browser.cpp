@@ -15,6 +15,11 @@ const BLOB_URL_REVOKE_DELAY_MS = 2_000;
 
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
+let currentDirectoryHandle = null;
+let workspaceName = null;
+const workspaceEntries = [];
+const workspaceFiles = new Map();
+let workspaceGit = { isRepo: false, branch: null, remotes: [] };
 
 const CPP_TYPES = [
   {
@@ -39,6 +44,7 @@ const CPP_TYPES = [
  *   null if the user cancelled.
  */
 export async function openFile() {
+  clearWorkspace();
   if (!supportsFileSystemAccess()) {
     return openFileFallback();
   }
@@ -59,6 +65,37 @@ export async function openFile() {
   const file    = await handle.getFile();
   const content = await file.text();
   return { name: file.name, content };
+}
+
+/**
+ * Open a local folder and index its files/subdirectories.
+ * @returns {Promise<{ name: string, entries: Array<{path:string, kind:'file'|'directory'}>, git: {isRepo:boolean, branch:string|null, remotes:string[]} }|null>}
+ */
+export async function openFolder() {
+  clearWorkspace();
+
+  if (!supportsDirectoryAccess()) {
+    return openFolderFallback();
+  }
+
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker();
+  } catch (err) {
+    if (err.name === 'AbortError') return null;
+    throw err;
+  }
+
+  currentDirectoryHandle = handle;
+  workspaceName = handle.name;
+  await walkDirectoryHandle(handle, '');
+  workspaceGit = await detectGitMetadata();
+
+  return {
+    name: workspaceName,
+    entries: [...workspaceEntries],
+    git: workspaceGit,
+  };
 }
 
 /**
@@ -129,10 +166,29 @@ export function newFile() {
   currentHandle = null;
 }
 
+/** Read a file from the currently opened workspace folder. */
+export async function readWorkspaceFile(path) {
+  const key = normaliseWorkspacePath(path);
+  const item = workspaceFiles.get(key);
+  if (!item) return null;
+  if (item.handle) {
+    const file = await item.handle.getFile();
+    return file.text();
+  }
+  if (item.file) {
+    return item.file.text();
+  }
+  return null;
+}
+
 // ── Feature detection ─────────────────────────────────────────────────────────
 
 function supportsFileSystemAccess() {
   return typeof window.showOpenFilePicker === 'function';
+}
+
+function supportsDirectoryAccess() {
+  return typeof window.showDirectoryPicker === 'function';
 }
 
 // ── Fallbacks for browsers without File System Access API ─────────────────────
@@ -156,6 +212,60 @@ function openFileFallback() {
   });
 }
 
+function openFolderFallback() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.webkitdirectory = true;
+    input.onchange = () => {
+      const files = Array.from(input.files || []);
+      if (!files.length) {
+        resolve(null);
+        return;
+      }
+
+      const firstParts = (files[0].webkitRelativePath || '').split('/');
+      workspaceName = firstParts[0] || 'workspace';
+
+      const dirSet = new Set();
+      for (const file of files) {
+        const full = file.webkitRelativePath || file.name;
+        const withoutRoot = full.startsWith(`${workspaceName}/`)
+          ? full.slice(workspaceName.length + 1)
+          : full;
+        const path = normaliseWorkspacePath(withoutRoot);
+        workspaceFiles.set(path, { file });
+        workspaceEntries.push({ path, kind: 'file' });
+
+        const segments = path.split('/');
+        segments.pop();
+        let cur = '';
+        for (const seg of segments) {
+          cur = cur ? `${cur}/${seg}` : seg;
+          dirSet.add(cur);
+        }
+      }
+
+      for (const dir of dirSet) {
+        workspaceEntries.push({ path: dir, kind: 'directory' });
+      }
+
+      workspaceEntries.sort((a, b) => a.path.localeCompare(b.path));
+      detectGitMetadata().then((git) => {
+        workspaceGit = git;
+        resolve({
+          name: workspaceName,
+          entries: [...workspaceEntries],
+          git: workspaceGit,
+        });
+      });
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 /**
  * Classic <a download> fallback for saving.
  */
@@ -168,4 +278,69 @@ function saveFileFallback(content, suggestedName) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), BLOB_URL_REVOKE_DELAY_MS);
   return Promise.resolve(suggestedName);
+}
+
+function clearWorkspace() {
+  currentDirectoryHandle = null;
+  workspaceName = null;
+  workspaceEntries.length = 0;
+  workspaceFiles.clear();
+  workspaceGit = { isRepo: false, branch: null, remotes: [] };
+}
+
+async function walkDirectoryHandle(dirHandle, prefix) {
+  for await (const [name, entry] of dirHandle.entries()) {
+    const relPath = prefix ? `${prefix}/${name}` : name;
+    if (entry.kind === 'directory') {
+      workspaceEntries.push({ path: relPath, kind: 'directory' });
+      await walkDirectoryHandle(entry, relPath);
+    } else if (entry.kind === 'file') {
+      workspaceEntries.push({ path: relPath, kind: 'file' });
+      workspaceFiles.set(relPath, { handle: entry });
+    }
+  }
+  workspaceEntries.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function detectGitMetadata() {
+  const hasGitDir = workspaceEntries.some(
+    (entry) => entry.kind === 'directory' && entry.path === '.git'
+  );
+  if (!hasGitDir && !workspaceFiles.has('.git/HEAD')) {
+    return { isRepo: false, branch: null, remotes: [] };
+  }
+
+  let branch = null;
+  const head = await readWorkspaceFile('.git/HEAD');
+  if (head?.startsWith('ref:')) {
+    const ref = head.slice(5).trim();
+    branch = ref.split('/').pop() || null;
+  }
+
+  const remotes = [];
+  const config = await readWorkspaceFile('.git/config');
+  if (config) {
+    const lines = config.split('\n');
+    let inRemote = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('[remote "')) {
+        inRemote = true;
+        continue;
+      }
+      if (trimmed.startsWith('[')) {
+        inRemote = false;
+        continue;
+      }
+      if (inRemote && trimmed.startsWith('url = ')) {
+        remotes.push(trimmed.slice(6).trim());
+      }
+    }
+  }
+
+  return { isRepo: true, branch, remotes };
+}
+
+function normaliseWorkspacePath(path) {
+  return String(path || '').replace(/^\/+/, '');
 }

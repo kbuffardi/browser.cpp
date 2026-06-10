@@ -17,6 +17,7 @@ let _terminalAPI = null;
 let _fsAPI       = null;
 let _dirty       = false;
 let _fileName    = 'main.cpp';
+let _workspace   = null;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -162,24 +163,11 @@ function handleWorkerMessages() {
 function actionNew() {
   if (_dirty && !confirm('Discard unsaved changes?')) return;
   _fsAPI.newFile();
+  clearWorkspaceMode();
   _editorAPI.setValue(_editorAPI.DEFAULT_SOURCE ?? '');
   _editorAPI.clearDiagnostics();
   setFileName('main.cpp');
   markDirty(false);
-}
-
-async function actionOpen() {
-  if (_dirty && !confirm('Discard unsaved changes?')) return;
-  try {
-    const result = await _fsAPI.openFile();
-    if (!result) return;
-    _editorAPI.setValue(result.content);
-    _editorAPI.clearDiagnostics();
-    setFileName(result.name);
-    markDirty(false);
-  } catch (err) {
-    alert(`Could not open file:\n${err.message}`);
-  }
 }
 
 async function actionSave() {
@@ -278,8 +266,11 @@ function setFileName(name) {
   if (statusFile) statusFile.textContent = name;
   // Update the single tab
   updateTab(name, _dirty);
-  // Sidebar entry
-  updateSidebar(name);
+  if (_workspace) {
+    highlightWorkspaceFile(name);
+  } else {
+    updateSidebar(name);
+  }
 }
 
 /** Mark the current file as dirty (has unsaved changes). */
@@ -305,12 +296,130 @@ function updateTab(name, dirty) {
 function updateSidebar(name) {
   const tree = document.getElementById('file-tree');
   if (!tree) return;
-  let li = tree.querySelector('li');
-  if (!li) {
-    li = document.createElement('li');
-    li.className = 'active';
+  tree.innerHTML = '';
+  const li = document.createElement('li');
+  li.className = 'active';
+  li.setAttribute('role', 'treeitem');
+  li.textContent = `📄 ${name}`;
+  tree.appendChild(li);
+}
+
+function renderWorkspaceSidebar(workspace) {
+  const tree = document.getElementById('file-tree');
+  if (!tree) return;
+  tree.innerHTML = '';
+  const entries = [...workspace.entries].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+
+  for (const entry of entries) {
+    const li = document.createElement('li');
     li.setAttribute('role', 'treeitem');
+    li.dataset.path = entry.path;
+    const depth = Math.max(0, entry.path.split('/').length - 1);
+    li.style.paddingLeft = `${16 + depth * 14}px`;
+    li.textContent = entry.kind === 'directory' ? `📁 ${entry.path}` : `📄 ${entry.path}`;
+
+    if (entry.kind === 'file') {
+      li.addEventListener('click', () => {
+        void openWorkspaceFile(entry.path);
+      });
+    }
+
     tree.appendChild(li);
   }
-  li.textContent = `📄 ${name}`;
+  highlightWorkspaceFile(_fileName);
+}
+
+function highlightWorkspaceFile(path) {
+  const tree = document.getElementById('file-tree');
+  if (!tree) return;
+  const items = tree.querySelectorAll('li');
+  items.forEach((li) => li.classList.remove('active'));
+  const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(path)
+    : path.replace(/"/g, '\\"');
+  const active = tree.querySelector(`li[data-path="${esc}"]`);
+  if (active) active.classList.add('active');
+}
+
+async function openWorkspaceInitialFile(workspace) {
+  const file = pickInitialWorkspaceFile(workspace.entries);
+  if (!file) {
+    _editorAPI.setValue(_editorAPI.DEFAULT_SOURCE ?? '');
+    _editorAPI.clearDiagnostics();
+    setFileName('main.cpp');
+    return;
+  }
+  await openWorkspaceFile(file.path);
+}
+
+async function openWorkspaceFile(path) {
+  const content = await _fsAPI.readWorkspaceFile(path);
+  if (content == null) return;
+  _editorAPI.setValue(content);
+  _editorAPI.clearDiagnostics();
+  setFileName(path);
+  markDirty(false);
+}
+
+function pickInitialWorkspaceFile(entries) {
+  const files = entries.filter((entry) => entry.kind === 'file');
+  const preferred = files.find((entry) =>
+    /\.(cpp|cc|cxx|c\+\+|c|h|hpp|hxx)$/i.test(entry.path)
+  );
+  return preferred || files[0] || null;
+}
+
+function showOpenError(err) {
+  const kind = _workspace ? 'folder' : 'file';
+  alert(`Could not open ${kind}:\n${err.message}`);
+}
+
+function setWorkspaceMode(workspace) {
+  _workspace = workspace;
+  _terminalAPI.setWorkspace?.(workspace);
+}
+
+function clearWorkspaceMode() {
+  _workspace = null;
+  _terminalAPI.setWorkspace?.(null);
+}
+
+async function openSingleFile() {
+  const result = await _fsAPI.openFile();
+  if (!result) return false;
+  clearWorkspaceMode();
+  _editorAPI.setValue(result.content);
+  _editorAPI.clearDiagnostics();
+  setFileName(result.name);
+  markDirty(false);
+  return true;
+}
+
+async function openFolderWorkspace() {
+  const workspace = await _fsAPI.openFolder();
+  if (!workspace) return false;
+  setWorkspaceMode(workspace);
+  await openWorkspaceInitialFile(workspace);
+  renderWorkspaceSidebar(workspace);
+  markDirty(false);
+  return true;
+}
+
+async function actionOpen() {
+  if (_dirty && !confirm('Discard unsaved changes?')) return;
+  try {
+    const openFolderFirst = confirm(
+      'Open a folder?\n\nOK: open folder\nCancel: open single file'
+    );
+    if (openFolderFirst) {
+      await openFolderWorkspace();
+    } else {
+      await openSingleFile();
+    }
+  } catch (err) {
+    showOpenError(err);
+  }
 }

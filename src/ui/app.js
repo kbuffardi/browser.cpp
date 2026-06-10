@@ -42,6 +42,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     onRun: (sab) =>
       worker.postMessage({ type: 'run', sharedBuffer: sab }),
     getSource: () => editorAPI.getValue(),
+    readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
   });
 
   // 4. Toolbar (wires buttons + worker messages + keyboard shortcuts)
