@@ -36,7 +36,6 @@ const C = {
   white:   '\x1b[37m',
 };
 
-const PROMPT = `${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:~$ ${C.reset}`;
 const CRLF   = '\r\n';
 
 /** Maximum number of commands retained in shell history. */
@@ -64,6 +63,14 @@ let running = false;
 
 /** Resolve function set when waiting for run output to complete */
 let runDone = null;
+
+let workspaceName = null;
+let workspaceEntries = [];
+let workspaceDirs = new Set(['/']);
+let workspaceFiles = new Set();
+let workspaceCwd = '/';
+let workspaceGit = { isRepo: false, branch: null, remotes: [] };
+let _readWorkspaceFile = null;
 
 // ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
 
@@ -166,12 +173,14 @@ let _getSource = null;  // () => string  – returns current editor source
  *   onCompile: (source:string, flags:string[], std:string) => void,
  *   onRun:     (sharedBuffer:SharedArrayBuffer) => void,
  *   getSource: () => string,
+ *   readWorkspaceFile?: (path:string) => Promise<string|null>,
  * }} callbacks
  */
-export function createTerminal(container, { onCompile, onRun, getSource }) {
+export function createTerminal(container, { onCompile, onRun, getSource, readWorkspaceFile }) {
   _onCompile = onCompile;
   _onRun     = onRun;
   _getSource = getSource;
+  _readWorkspaceFile = readWorkspaceFile || null;
 
   term = new Terminal({
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
@@ -322,6 +331,38 @@ export function printInfo(msg) {
   term?.write(`${C.blue}${msg.replace(/\n/g, CRLF)}${C.reset}${CRLF}`);
 }
 
+/** Update terminal workspace context for ls/cd/pwd/git commands. */
+export function setWorkspace(workspace) {
+  if (!workspace) {
+    workspaceName = null;
+    workspaceEntries = [];
+    workspaceDirs = new Set(['/']);
+    workspaceFiles = new Set();
+    workspaceCwd = '/';
+    workspaceGit = { isRepo: false, branch: null, remotes: [] };
+    return;
+  }
+
+  workspaceName = workspace.name || null;
+  workspaceEntries = Array.isArray(workspace.entries) ? workspace.entries : [];
+  workspaceDirs = new Set(['/']);
+  workspaceFiles = new Set();
+  workspaceCwd = '/';
+  workspaceGit = workspace.git || { isRepo: false, branch: null, remotes: [] };
+
+  for (const entry of workspaceEntries) {
+    const fullPath = `/${normalisePath(entry.path)}`;
+    if (!entry.path) continue;
+    if (entry.kind === 'directory') {
+      workspaceDirs.add(fullPath);
+    } else if (entry.kind === 'file') {
+      workspaceFiles.add(fullPath);
+      const parent = fullPath.slice(0, fullPath.lastIndexOf('/')) || '/';
+      workspaceDirs.add(parent);
+    }
+  }
+}
+
 // ── Key handler ───────────────────────────────────────────────────────────────
 
 function handleKey({ key, domEvent }) {
@@ -384,7 +425,7 @@ function handleKey({ key, domEvent }) {
   if (code === 'Tab') {
     domEvent.preventDefault();
     // Basic tab-completion for known commands
-    const cmds = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cat ', 'pwd', 'help'];
+    const cmds = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'cat ', 'pwd', 'git ', 'help'];
     const matches = cmds.filter((c) => c.startsWith(inputBuffer));
     if (matches.length === 1) {
       const extra = matches[0].slice(inputBuffer.length);
@@ -497,11 +538,24 @@ function executeCommand(cmdLine) {
     case 'ls':
       cmdLs(args);
       break;
+    case 'cd':
+      cmdCd(args);
+      break;
     case 'cat':
-      cmdCat(args);
+      void cmdCat(args);
       break;
     case 'pwd':
-      term.write(`/home/user${CRLF}`);
+      term.write(`${pwdPath()}${CRLF}`);
+      writePrompt();
+      break;
+    case 'git':
+      cmdGit(args);
+      writePrompt();
+      break;
+    case 'ssh':
+      term.write(
+        `${C.yellow}SSH uses your device keys in your native terminal. Open this folder locally and run git there for SSH auth to GitHub.${C.reset}${CRLF}`
+      );
       writePrompt();
       break;
     case 'help':
@@ -565,27 +619,142 @@ function cmdRun(args) {
   startRun();
 }
 
-function cmdLs() {
-  // Show virtual files (mirrors the editor tabs + compiled binary)
-  const files = ['main.cpp', ...vfs.keys()].filter(
-    (f, i, a) => a.indexOf(f) === i
-  );
-  term.write(
-    files.map((f) => `${C.blue}${f}${C.reset}`).join('  ') + CRLF
-  );
+function cmdLs(args = []) {
+  if (!workspaceName) {
+    const files = ['main.cpp', ...vfs.keys()].filter(
+      (f, i, a) => a.indexOf(f) === i
+    );
+    term.write(
+      files.map((f) => `${C.blue}${f}${C.reset}`).join('  ') + CRLF
+    );
+    writePrompt();
+    return;
+  }
+
+  const recursive = args.includes('-R');
+  const pathArg = args.find((a) => a !== '-R') || '.';
+  const target = resolvePath(pathArg);
+  if (!workspaceDirs.has(target)) {
+    term.write(`${C.red}ls: cannot access '${pathArg}': No such directory${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  if (recursive) {
+    const dirs = [...workspaceDirs].sort((a, b) => a.localeCompare(b));
+    for (const dir of dirs) {
+      if (!dir.startsWith(target)) continue;
+      term.write(`${displayDir(dir)}:${CRLF}`);
+      const entries = listDirEntries(dir);
+      if (entries.length) {
+        term.write(entries.map(formatEntry).join('  ') + CRLF);
+      }
+      term.write(CRLF);
+    }
+    writePrompt();
+    return;
+  }
+
+  const entries = listDirEntries(target);
+  if (entries.length) {
+    term.write(entries.map(formatEntry).join('  ') + CRLF);
+  } else {
+    term.write(CRLF);
+  }
   writePrompt();
 }
 
-function cmdCat(args) {
+function cmdCd(args) {
+  if (!workspaceName) {
+    term.write(`${C.red}cd: no folder opened${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const targetArg = args[0] || '/';
+  const target = resolvePath(targetArg);
+  if (!workspaceDirs.has(target)) {
+    term.write(`${C.red}cd: ${targetArg}: No such directory${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+  workspaceCwd = target;
+  writePrompt();
+}
+
+async function cmdCat(args) {
   if (!args[0]) {
     term.write(`${C.red}Usage: cat <file>${C.reset}${CRLF}`);
-  } else if (args[0] === 'main.cpp' || args[0] === './main.cpp') {
+    writePrompt();
+    return;
+  }
+
+  if (workspaceName) {
+    const path = resolvePath(args[0]);
+    if (!workspaceFiles.has(path)) {
+      term.write(`${C.red}cat: ${args[0]}: No such file${C.reset}${CRLF}`);
+      writePrompt();
+      return;
+    }
+    const content = await _readWorkspaceFile?.(path.slice(1));
+    if (content == null) {
+      term.write(`${C.red}cat: ${args[0]}: Could not read file${C.reset}${CRLF}`);
+    } else {
+      term.write(content.replace(/\n/g, CRLF) + CRLF);
+    }
+    writePrompt();
+    return;
+  }
+
+  if (args[0] === 'main.cpp' || args[0] === './main.cpp') {
     const src = _getSource?.() || '';
     term.write(src.replace(/\n/g, CRLF) + CRLF);
   } else {
     term.write(`${C.red}cat: ${args[0]}: No such file${C.reset}${CRLF}`);
   }
   writePrompt();
+}
+
+function cmdGit(args) {
+  if (!workspaceName) {
+    term.write(`${C.red}git: open a folder first (Ctrl+O)${C.reset}${CRLF}`);
+    return;
+  }
+  if (!workspaceGit?.isRepo) {
+    term.write(`${C.red}fatal: not a git repository${C.reset}${CRLF}`);
+    return;
+  }
+
+  const sub = args[0] || 'status';
+  if (sub === 'status') {
+    const branch = workspaceGit.branch || 'unknown';
+    term.write(`On branch ${branch}${CRLF}`);
+    term.write(`${C.yellow}Working-tree state is unavailable in this browser terminal.${C.reset}${CRLF}`);
+    term.write(`${C.dim}Use your device terminal in this folder for full git status/pull/push using your SSH keys.${C.reset}${CRLF}`);
+    return;
+  }
+
+  if (sub === 'branch') {
+    term.write(`* ${workspaceGit.branch || 'unknown'}${CRLF}`);
+    return;
+  }
+
+  if (sub === 'remote' && args[1] === '-v') {
+    if (!workspaceGit.remotes?.length) {
+      term.write(`(no remotes configured)${CRLF}`);
+      return;
+    }
+    for (const remote of workspaceGit.remotes) {
+      term.write(`origin\t${remote} (fetch)${CRLF}`);
+      term.write(`origin\t${remote} (push)${CRLF}`);
+    }
+    return;
+  }
+
+  term.write(
+    `${C.yellow}Supported git commands: status, branch, remote -v.${C.reset}${CRLF}` +
+    `${C.dim}For clone/fetch/pull/push over SSH, use your device terminal in this folder.${C.reset}${CRLF}`
+  );
 }
 
 function cmdHelp() {
@@ -596,9 +765,11 @@ function cmdHelp() {
     `  ${C.dim}  While running: type input and press Enter; Ctrl+D (empty line) = EOF${C.reset}${CRLF}` +
     `  ${C.green}clear${C.reset}                                      Clear the terminal${CRLF}` +
     `  ${C.green}echo <text>${C.reset}                                Print text${CRLF}` +
-    `  ${C.green}ls${C.reset}                                         List virtual files${CRLF}` +
+    `  ${C.green}ls [-R] [dir]${C.reset}                              List files/folders in the opened folder${CRLF}` +
+    `  ${C.green}cd [dir]${C.reset}                                   Change folder in the opened workspace${CRLF}` +
     `  ${C.green}cat <file>${C.reset}                                 Print file contents${CRLF}` +
-    `  ${C.green}pwd${C.reset}                                        Print working directory${CRLF}` +
+    `  ${C.green}pwd${C.reset}                                        Print current working directory${CRLF}` +
+    `  ${C.green}git <cmd>${C.reset}                                  Basic git info for opened repo${CRLF}` +
     `  ${C.green}help${C.reset}                                       Show this message${CRLF}` +
     CRLF
   );
@@ -608,12 +779,13 @@ function cmdHelp() {
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function writePrompt() {
-  term?.write(PROMPT);
+  term?.write(`${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:${promptPath()}$ ${C.reset}`);
 }
 
 function clearInputLine() {
   // Erase everything the user has typed on the current line
-  term.write('\r' + PROMPT + ' '.repeat(inputBuffer.length) + '\r' + PROMPT);
+  const prompt = `${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:${promptPath()}$ ${C.reset}`;
+  term.write('\r' + prompt + ' '.repeat(inputBuffer.length) + '\r' + prompt);
 }
 
 /**
@@ -637,4 +809,78 @@ function tokenise(line) {
   }
   if (cur) tokens.push(cur);
   return tokens;
+}
+
+function promptPath() {
+  if (!workspaceName || workspaceCwd === '/') return '~';
+  return `~${workspaceCwd}`;
+}
+
+function pwdPath() {
+  if (!workspaceName) return '/home/user';
+  return `/home/user/${workspaceName}${workspaceCwd === '/' ? '' : workspaceCwd}`;
+}
+
+function resolvePath(input) {
+  if (!workspaceName) return '/';
+  const raw = String(input || '.').trim();
+  const absolute = raw.startsWith('/');
+  const parts = [];
+  const source = absolute
+    ? raw.split('/')
+    : [...workspaceCwd.split('/'), ...raw.split('/')];
+  for (const part of source) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return '/' + parts.join('/');
+}
+
+function listDirEntries(dirPath) {
+  const out = [];
+  for (const dir of workspaceDirs) {
+    if (dir === dirPath) continue;
+    if (parentDir(dir) === dirPath) {
+      out.push({ kind: 'directory', name: baseName(dir) });
+    }
+  }
+  for (const file of workspaceFiles) {
+    if (parentDir(file) === dirPath) {
+      out.push({ kind: 'file', name: baseName(file) });
+    }
+  }
+  return out.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function parentDir(path) {
+  const idx = path.lastIndexOf('/');
+  return idx <= 0 ? '/' : path.slice(0, idx);
+}
+
+function baseName(path) {
+  const idx = path.lastIndexOf('/');
+  return idx < 0 ? path : path.slice(idx + 1);
+}
+
+function displayDir(path) {
+  if (!workspaceName || path === '/') return '.';
+  return path.slice(1) || '.';
+}
+
+function formatEntry(entry) {
+  if (entry.kind === 'directory') {
+    return `${C.blue}${entry.name}/${C.reset}`;
+  }
+  return entry.name;
+}
+
+function normalisePath(path) {
+  return String(path || '').replace(/^\/+/, '');
 }

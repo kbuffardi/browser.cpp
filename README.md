@@ -123,7 +123,7 @@ terminal.js  →  xterm.js display
 | Compile only | **Ctrl+Shift+B** |
 | Run (last build) | **Ctrl+Shift+R** |
 | Save | **Ctrl+S** |
-| Open | **Ctrl+O** |
+| Open file/folder | **Ctrl+O** |
 | New | **Ctrl+N** |
 | Clear terminal | **Ctrl+K** |
 
@@ -137,9 +137,11 @@ terminal.js  →  xterm.js display
 | `./a.out` | Run the last compiled binary |
 | `clear` | Clear the terminal |
 | `echo <text>` | Print text |
-| `ls` | List virtual files |
+| `ls [-R] [dir]` | List files/folders from the opened workspace folder |
+| `cd [dir]` | Change the current workspace directory |
 | `cat <file>` | Print file contents |
 | `pwd` | Print working directory |
+| `git <cmd>` | Basic git repo info (`status`, `branch`, `remote -v`) |
 | `help` | Show command list |
 
 ---
