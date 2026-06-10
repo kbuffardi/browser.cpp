@@ -90,62 +90,99 @@ async function loadCompiler() {
 
   send({ type: 'compiler-loading', progress: 10 });
 
-  // The Emscripten JS glue registers a global factory function.
-  // Import it synchronously (workers can use importScripts).
+  // Load the Emscripten JS glue.  Two formats exist in the wild:
+  //
+  //   Classic (importScripts-compatible):
+  //     Built without -s EXPORT_ES6.  Sets a global (e.g. self.Module or
+  //     self.createClangModule) when the script runs.
+  //
+  //   ES6 module (built with -s EXPORT_ES6 -s MODULARIZE):
+  //     Exports a default factory function.  Requires dynamic import().
+  //     Example: the "browsercc" NPM package (LLVM 20).
+  //
+  // We try importScripts first and fall back to dynamic import so that either
+  // format works without any manual configuration.
+
+  let es6Factory = null;
+
   try {
     importScripts(jsUrl);
-  } catch (err) {
-    compilerState = 'error';
-    send({ type: 'compiler-error', message: `Failed to load clang.js: ${err.message}` });
-    return false;
+  } catch (classicErr) {
+    // importScripts throws for ES6 modules — try dynamic import instead.
+    try {
+      const mod = await import(jsUrl);
+      if (typeof mod.default === 'function') {
+        es6Factory = mod.default;
+      } else if (mod.default && typeof mod.default === 'object') {
+        // Pre-initialized ES6 module object — use directly.
+        ClangModule = mod.default;
+      } else {
+        throw new Error(`Unexpected default export in clang.js: ${typeof mod.default}`);
+      }
+    } catch (esErr) {
+      compilerState = 'error';
+      send({
+        type: 'compiler-error',
+        message: `Failed to load clang.js: ${classicErr.message} / ${esErr.message}`,
+      });
+      return false;
+    }
   }
 
   send({ type: 'compiler-loading', progress: 30 });
 
-  // Detect the Emscripten export.  Builds differ in how they export the module:
-  //   • -s MODULARIZE=1 -s EXPORT_NAME=createClangModule  → self.createClangModule() factory
-  //   • -s MODULARIZE=1  (default export name)            → self.Module() factory
-  //   • no MODULARIZE flag                                → self.Module already-initialized object
+  // Resolve which factory / module object to use.
   //
-  // Try the names in preference order; fall back gracefully.
-  const FACTORY_NAMES = ['createClangModule', 'Module'];
+  // Priority:
+  //  1. ES6 default export factory  (dynamic import path above, EXPORT_ES6)
+  //  2. self.createClangModule       (classic, -s EXPORT_NAME=createClangModule)
+  //  3. self.Module as a function    (classic, -s MODULARIZE=1, default name)
+  //  4. ClangModule already set      (ES6 default export was a plain object)
+  //  5. self.Module as plain object  (classic, no MODULARIZE — already live)
 
-  const factoryName = FACTORY_NAMES.find((n) => typeof self[n] === 'function');
-  const preInitName = !factoryName && typeof self['Module'] === 'object' && self['Module'] !== null
-    ? 'Module'
-    : null;
+  if (!ClangModule) {
+    const factory =
+      es6Factory ||
+      (typeof self['createClangModule'] === 'function' ? self['createClangModule'] : null) ||
+      (typeof self['Module'] === 'function'            ? self['Module']            : null);
 
-  if (!factoryName && !preInitName) {
-    compilerState = 'error';
-    send({
-      type: 'compiler-error',
-      message:
-        'Emscripten module not found in clang.js. ' +
-        'Build clang.js with -s MODULARIZE=1 -s EXPORT_NAME=createClangModule ' +
-        '(see README § "Building Clang WASM from source").',
-    });
-    return false;
-  }
+    const preInit =
+      !factory && typeof self['Module'] === 'object' && self['Module'] !== null
+        ? self['Module']
+        : null;
 
-  try {
-    if (preInitName) {
-      // Non-modularized build: Module is already the live Emscripten object.
-      ClangModule = self[preInitName];
-    } else {
-      ClangModule = await self[factoryName]({
-        locateFile: (file) => workerRelativeUrl(`clang/${file}`),
-        onRuntimeInitialized() {
-          send({ type: 'compiler-loading', progress: 90 });
-        },
-        // Suppress Emscripten's default console output; we capture it per-call
-        print:    () => {},
-        printErr: () => {},
+    if (!factory && !preInit) {
+      compilerState = 'error';
+      send({
+        type: 'compiler-error',
+        message:
+          'Emscripten module not found in clang.js. ' +
+          'Build clang.js with -s MODULARIZE=1 -s EXPORT_NAME=createClangModule ' +
+          '(see README § "Building Clang WASM from source").',
       });
+      return false;
     }
-  } catch (err) {
-    compilerState = 'error';
-    send({ type: 'compiler-error', message: `Clang init failed: ${err.message}` });
-    return false;
+
+    try {
+      if (preInit) {
+        // Non-modularized build: Module is already the live Emscripten object.
+        ClangModule = preInit;
+      } else {
+        ClangModule = await factory({
+          locateFile: (file) => workerRelativeUrl(`clang/${file}`),
+          onRuntimeInitialized() {
+            send({ type: 'compiler-loading', progress: 90 });
+          },
+          // Suppress Emscripten's default console output; we capture it per-call
+          print:    () => {},
+          printErr: () => {},
+        });
+      }
+    } catch (err) {
+      compilerState = 'error';
+      send({ type: 'compiler-error', message: `Clang init failed: ${err.message}` });
+      return false;
+    }
   }
 
   compilerState = 'ready';
