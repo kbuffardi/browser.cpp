@@ -42,9 +42,20 @@ const https = require('https');
 // Default: browsercc NPM package (LLVM 20, Emscripten ES6 module format).
 // Override with your own CDN/server URL if you host a custom binary.
 const BASE_URL = 'https://unpkg.com/browsercc@0.1.1/dist';
-const CLANG_JS_FILE   = 'clang.js';
-const CLANG_WASM_FILE = 'clang.wasm';
-const FILES           = [CLANG_JS_FILE, CLANG_WASM_FILE];
+
+// Each entry describes one file to fetch.
+//   name        – filename in dist/clang/
+//   isWasm      – validate WASM magic bytes after download
+//   globalName  – if set, patch this ES6 module to expose self.<globalName>
+//                 so it can be loaded via importScripts() in a classic worker
+const FILES = [
+  { name: 'clang.js',    isWasm: false, globalName: 'createClangModule' },
+  { name: 'clang.wasm',  isWasm: true,  globalName: null               },
+  { name: 'lld.js',      isWasm: false, globalName: 'createLLDModule'  },
+  { name: 'lld.wasm',    isWasm: true,  globalName: null               },
+  { name: 'sysroot.tar', isWasm: false, globalName: null               },
+];
+
 const OUT_DIR  = path.resolve(__dirname, '..', 'dist', 'clang');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,29 +145,29 @@ function hasNonEmptyFile(dest) {
   }
 }
 
-function isValidExistingArtifact(file, dest) {
+function isValidExistingArtifact({ name, isWasm }, dest) {
   if (!fs.existsSync(dest)) return false;
   if (!hasNonEmptyFile(dest)) return false;
-  if (file === CLANG_WASM_FILE) return hasWasmMagic(dest);
+  if (isWasm) return hasWasmMagic(dest);
   return true;
 }
 
 /**
- * Patch clang.js if it was built in ES6 module format (-s EXPORT_ES6).
+ * Patch a JS file built in ES6 module format (-s EXPORT_ES6) so it can be
+ * loaded via importScripts() in a classic Web Worker.
  *
  * Emscripten's EXPORT_ES6 output uses two constructs that are illegal in a
- * classic Web Worker loaded via importScripts():
+ * classic worker:
  *
- *   • import.meta.url  – replaced with '' (the compiler worker always
- *                        supplies locateFile(), so _scriptName is unused)
- *   • export default … – replaced with a self.createClangModule assignment
- *                        that the compiler worker expects
+ *   • import.meta.url  – replaced with '' (the worker always supplies
+ *                        locateFile(), so _scriptName is unused)
+ *   • export default … – replaced with a self.<globalName> assignment
+ *                        that compiler.worker.js reads after importScripts()
  *
- * Classic format builds (-s MODULARIZE=1 -s EXPORT_NAME=createClangModule)
- * already set self.createClangModule and have no ES6 syntax, so the function
- * is a no-op for them.
+ * Classic format builds (-s MODULARIZE=1 -s EXPORT_NAME=...) already set a
+ * global and have no ES6 syntax, so this function is a no-op for them.
  */
-function patchClangJs(dest) {
+function patchJsFile(dest, globalName) {
   let src = fs.readFileSync(dest, 'utf8');
 
   // Only patch files that actually use ES6 module syntax.
@@ -165,49 +176,43 @@ function patchClangJs(dest) {
   const before = src;
 
   // Replace every import.meta.url reference with an empty string.
-  // All five occurrences in the browsercc build are either:
-  //   – inside ENVIRONMENT_IS_NODE blocks (never executed in a worker), or
-  //   – inside findWasmBinary() which is short-circuited when locateFile() is
-  //     provided (which the compiler worker always does), or
-  //   – the top-level _scriptName assignment whose value is unused when
-  //     locateFile() is provided.
   src = src.replaceAll('import.meta.url', "''");
 
   // Convert the ES6 default export into a classic global assignment.
-  // The compiler worker looks for self.createClangModule after importScripts().
   src = src.replace(
     /^export default (\w+);?\s*$/m,
-    'if (typeof self !== "undefined") { self.createClangModule = $1; }'
+    `if (typeof self !== "undefined") { self.${globalName} = $1; }`
   );
 
   if (src !== before) {
     fs.writeFileSync(dest, src, 'utf8');
-    console.log(`  Patched ${path.basename(dest)} for importScripts() compatibility.`);
+    console.log(`  Patched ${path.basename(dest)} (self.${globalName}) for importScripts() compatibility.`);
   }
 }
 
 (async () => {
   console.log(`Downloading Clang WASM binaries to dist/clang/ …\n`);
-  for (const file of FILES) {
-    const url  = `${BASE_URL}/${file}`;
-    const dest = path.join(OUT_DIR, file);
+  for (const entry of FILES) {
+    const { name, isWasm, globalName } = entry;
+    const url  = `${BASE_URL}/${name}`;
+    const dest = path.join(OUT_DIR, name);
 
-    if (!isValidExistingArtifact(file, dest)) {
+    if (!isValidExistingArtifact(entry, dest)) {
       if (fs.existsSync(dest)) {
-        console.log(`  ${file} present but invalid/corrupted, re-downloading.`);
+        console.log(`  ${name} present but invalid/corrupted, re-downloading.`);
         fs.unlinkSync(dest);
       }
       console.log(`  ↓ ${url}`);
       await download(url, dest);
     } else {
-      console.log(`  ${file} already present, skipping download.`);
+      console.log(`  ${name} already present, skipping download.`);
     }
 
-    if (file === CLANG_JS_FILE) {
-      patchClangJs(dest);
-    } else if (file === CLANG_WASM_FILE && !hasWasmMagic(dest)) {
+    if (globalName) {
+      patchJsFile(dest, globalName);
+    } else if (isWasm && !hasWasmMagic(dest)) {
       throw new Error(
-        `Downloaded clang.wasm is invalid at ${dest}. ` +
+        `Downloaded ${name} is invalid at ${dest}. ` +
         'Delete dist/clang/ and run npm run fetch-clang again.'
       );
     }

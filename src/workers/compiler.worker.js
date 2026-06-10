@@ -1,8 +1,9 @@
 /**
  * src/workers/compiler.worker.js
  *
- * Web Worker that hosts the Emscripten-compiled Clang WASM binary.
- * It exposes a simple message-passing API consumed by toolbar.js:
+ * Web Worker that hosts the Emscripten-compiled Clang + LLD WASM binaries
+ * (from the browsercc package).  It exposes a simple message-passing API
+ * consumed by toolbar.js:
  *
  *  Inbound messages (from main thread):
  *    { type: 'compile', source: string, flags: string[] }
@@ -20,6 +21,16 @@
  *    { type: 'stderr',           data: string }
  *    { type: 'run-result',       exitCode: number }
  *    { type: 'status-reply',     state: string }
+ *
+ * Compilation pipeline (mirrors browsercc's index.ts):
+ *   1. Fresh Clang instance  – run `clang++ -###` to get the exact -cc1 and
+ *                              wasm-ld argument lists from the driver
+ *   2. Fresh Clang instance  – run `clang++ -cc1 …` to compile to object file
+ *   3. Fresh LLD  instance   – run `wasm-ld …` to link to a WASM binary
+ *
+ * A fresh instance is required for each step because the binaries are built
+ * with `-s EXIT_RUNTIME`, which tears down the Emscripten runtime after
+ * callMain() returns and makes the instance unusable for a second call.
  */
 
 'use strict';
@@ -30,10 +41,22 @@
 let compilerState = 'unloaded';
 
 /**
- * The Emscripten Module object once loaded.
- * @type {object|null}
+ * Factory function for the Clang Emscripten module (set after importScripts).
+ * @type {Function|null}
  */
-let ClangModule = null;
+let clangFactory = null;
+
+/**
+ * Factory function for the LLD Emscripten module (set after importScripts).
+ * @type {Function|null}
+ */
+let lldFactory = null;
+
+/**
+ * Contents of sysroot.tar (C/C++ stdlib headers + libraries), cached once.
+ * @type {ArrayBuffer|null}
+ */
+let sysrootBuffer = null;
 
 /**
  * Raw bytes of the last successfully compiled WASM binary.
@@ -59,9 +82,10 @@ function workerRelativeUrl(file) {
 // ── Compiler loader ──────────────────────────────────────────────────────────
 
 /**
- * Load the Emscripten-compiled Clang into this worker.
- * Expects dist/clang/clang.js and dist/clang/clang.wasm to be present.
- * Call npm run fetch-clang once to download those files.
+ * Load both Emscripten module factories (Clang + LLD) and fetch the sysroot.
+ * This does NOT instantiate any module; fresh instances are created per compile.
+ * Expects dist/clang/{clang.js,clang.wasm,lld.js,lld.wasm,sysroot.tar}.
+ * Run  npm run fetch-clang  once to download those files.
  */
 async function loadCompiler() {
   if (compilerState === 'ready') return true;
@@ -70,110 +94,77 @@ async function loadCompiler() {
   compilerState = 'loading';
   send({ type: 'compiler-loading', progress: 0 });
 
-  const jsUrl   = workerRelativeUrl('clang/clang.js');
-  const wasmUrl = workerRelativeUrl('clang/clang.wasm');
-
-  // Quick probe to give a clear error if the binary is missing
-  try {
-    const probe = await fetch(wasmUrl, { method: 'HEAD' });
+  // Probe that all required runtime files are present
+  const requiredFiles = ['clang/clang.wasm', 'clang/lld.wasm', 'clang/sysroot.tar'];
+  for (const rel of requiredFiles) {
+    const url = workerRelativeUrl(rel);
+    try {
+    const probe = await fetch(url, { method: 'HEAD' });
     if (!probe.ok) {
       throw new Error(
-        `clang.wasm not found at ${wasmUrl}.\n` +
+        `${rel} not found (HTTP ${probe.status}) at ${url}.\n` +
         'Run:  npm run fetch-clang  then rebuild the extension.'
       );
     }
-  } catch (err) {
+    } catch (err) {
     compilerState = 'error';
     send({ type: 'compiler-error', message: err.message });
     return false;
+    }
   }
 
   send({ type: 'compiler-loading', progress: 10 });
 
-  // Load the Emscripten JS glue via importScripts().
-  //
-  // The compiler worker always uses classic (importScripts-compatible) format.
-  // If the downloaded clang.js was in ES6 module format (e.g. from the
-  // browsercc package built with -s EXPORT_ES6), npm run fetch-clang patches
-  // it automatically: import.meta.url → '' and export default → self assignment.
-  //
-  // Supported globals set by importScripts():
-  //   • self.createClangModule  (classic, -s EXPORT_NAME=createClangModule,
-  //                              or patched ES6 build from fetch-clang)
-  //   • self.Module as function (classic, -s MODULARIZE=1, default name)
-  //   • self.Module as object   (non-modularized build — already live)
-
+  // Load the Emscripten JS glue for both Clang and LLD via importScripts().
+  // fetch-clang-wasm.js patches both files so they set self.createClangModule
+  // and self.createLLDModule (respectively) instead of using ES6 export syntax.
   try {
-    importScripts(jsUrl);
+    importScripts(
+    workerRelativeUrl('clang/clang.js'),
+    workerRelativeUrl('clang/lld.js'),
+    );
   } catch (err) {
     compilerState = 'error';
     send({
-      type: 'compiler-error',
-      message:
-        `Failed to load clang.js: ${err.message}\n` +
-        'Run:  npm run fetch-clang  then reload the extension.',
+    type: 'compiler-error',
+    message:
+      `Failed to load compiler scripts: ${err.message}\n` +
+      'Run:  npm run fetch-clang  then reload the extension.',
     });
     return false;
   }
 
   send({ type: 'compiler-loading', progress: 30 });
 
-  // Resolve which factory / module object to use.
-  //
-  // Priority:
-  //  1. self.createClangModule       (classic, -s EXPORT_NAME=createClangModule,
-  //                                   or patched ES6 build from fetch-clang)
-  //  2. self.Module as a function    (classic, -s MODULARIZE=1, default name)
-  //  3. self.Module as plain object  (classic, no MODULARIZE — already live)
+  // Resolve factory functions injected by the patched scripts
+  clangFactory = typeof self['createClangModule'] === 'function' ? self['createClangModule'] : null;
+  lldFactory   = typeof self['createLLDModule']   === 'function' ? self['createLLDModule']   : null;
 
-  if (!ClangModule) {
-    const factory =
-      (typeof self['createClangModule'] === 'function' ? self['createClangModule'] : null) ||
-      (typeof self['Module'] === 'function'            ? self['Module']            : null);
+  if (!clangFactory || !lldFactory) {
+    compilerState = 'error';
+    send({
+    type: 'compiler-error',
+    message:
+      'Compiler factory functions not found after loading clang.js / lld.js.\n' +
+      'Re-run:  npm run fetch-clang  then  npm run build',
+    });
+    return false;
+  }
 
-    const preInit =
-      !factory && typeof self['Module'] === 'object' && self['Module'] !== null
-        ? self['Module']
-        : null;
+  send({ type: 'compiler-loading', progress: 40 });
 
-    if (!factory && !preInit) {
-      compilerState = 'error';
-      send({
-        type: 'compiler-error',
-        message:
-          'Emscripten module not found in clang.js. ' +
-          'Build clang.js with -s MODULARIZE=1 -s EXPORT_NAME=createClangModule ' +
-          '(see README § "Building Clang WASM from source").',
-      });
-      return false;
-    }
-
-    try {
-      if (preInit) {
-        // Non-modularized build: Module is already the live Emscripten object.
-        ClangModule = preInit;
-      } else {
-        ClangModule = await factory({
-          locateFile: (file) => workerRelativeUrl(`clang/${file}`),
-          // Prevent the Emscripten runtime from automatically calling main()
-          // during initialisation.  Without this, builds compiled with the
-          // default INVOKE_RUN=1 run main() with no arguments at startup,
-          // which can corrupt the module state and cause subsequent callMain()
-          // calls to fail with "RuntimeError: null function".
-          noInitialRun: true,
-          onRuntimeInitialized() {
-            send({ type: 'compiler-loading', progress: 90 });
-          },
-          // Suppress Emscripten's default console output; we capture it per-call
-          print:    () => {},
-          printErr: () => {},
-        });
-    }
-    } catch (err) {
-      compilerState = 'error';
-      send({ type: 'compiler-error', message: `Clang init failed: ${err.message}` });
-      return false;
-    }
+  // Fetch the sysroot (C/C++ standard library headers + libraries, ~29 MB).
+  // Cached as an ArrayBuffer and extracted into each fresh module's virtual FS
+  // at compile time.
+  const sysrootUrl = workerRelativeUrl('clang/sysroot.tar');
+  try {
+    const resp = await fetch(sysrootUrl);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    sysrootBuffer = await resp.arrayBuffer();
+  } catch (err) {
+    compilerState = 'error';
+    send({ type: 'compiler-error', message: `Failed to load sysroot.tar: ${err.message}` });
+    return false;
   }
 
   compilerState = 'ready';
@@ -182,10 +173,146 @@ async function loadCompiler() {
   return true;
 }
 
+// ── TAR / sysroot utilities ───────────────────────────────────────────────────
+
+/**
+ * Yield every file entry in a POSIX ustar/GNU tar archive.
+ * Ported from browsercc/index.ts (BertalanD/browsercc, MIT licence).
+ *
+ * @param {ArrayBuffer} buffer
+ * @yields {{ name: string, content: Uint8Array }}
+ */
+function* tarContents(buffer) {
+  const data = new Uint8Array(buffer);
+  const dec  = new TextDecoder('utf-8');
+  let offset = 0;
+
+  while (offset + 512 <= data.length) {
+    const header = data.slice(offset, offset + 512);
+    const name   = dec.decode(header.slice(0, 100)).replace(/\0.*$/, '');
+    if (!name) break; // two empty blocks signal end of archive
+
+    const sizeStr = dec.decode(header.slice(124, 136)).replace(/\0.*$/, '').trim();
+    const size    = parseInt(sizeStr, 8) || 0;
+
+    const content = data.slice(offset + 512, offset + 512 + size);
+    yield { name, content };
+
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+}
+
+/**
+ * Extract the sysroot archive into an Emscripten module's virtual filesystem.
+ * Ported from browsercc/index.ts.
+ *
+ * @param {object}      module    – Emscripten module instance
+ * @param {ArrayBuffer} tarBuffer – contents of sysroot.tar
+ */
+function setUpSysroot(module, tarBuffer) {
+  for (const { name, content } of tarContents(tarBuffer)) {
+    if (name.endsWith('/')) continue; // directory entry – skip
+    const dir = name.split('/').slice(0, -1).join('/');
+    if (dir && !module.FS.analyzePath(dir).exists) {
+    module.FS.mkdirTree(dir);
+    }
+    module.FS.writeFile(name, content);
+  }
+}
+
+// ── callMain helper ───────────────────────────────────────────────────────────
+
+/**
+ * Invoke callMain and normalise the result.
+ * Emscripten throws ExitStatus when the program calls exit(); we catch it and
+ * return the numeric code so callers don't have to special-case it.
+ *
+ * @param {object}   module
+ * @param {string[]} args
+ * @returns {number} exit code
+ */
+function callMainSafe(module, args) {
+  try {
+    return module.callMain(args);
+  } catch (e) {
+    if (e && e.name === 'ExitStatus') return e.status;
+    throw e;
+  }
+}
+
+// ── Compiler invocation discovery ─────────────────────────────────────────────
+
+/**
+ * Ask the Clang driver which exact -cc1 and wasm-ld arguments it would use,
+ * without actually compiling anything.  Uses the `-###` flag which prints the
+ * subcommands to stderr and exits 0.
+ *
+ * Ported from browsercc/index.ts (getCompilerInvocation).
+ *
+ * @param {string}   fileName  – source file name as it appears in the FS
+ * @param {string}   source    – source text
+ * @param {string[]} flags     – user flags (e.g. ['-std=c++20', '-Wall'])
+ * @returns {{ compilerArgs: string[], compilerArtifact: string,
+ *             linkerArgs: string[],   linkerArtifact: string }}
+ */
+async function getCompilerInvocation(fileName, source, flags) {
+  let stderr = '';
+  const clang = await clangFactory({
+    thisProgram: 'clang++',
+    locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
+    print:    () => {},
+    printErr: (s) => { stderr += s + '\n'; },
+  });
+
+  clang.FS.writeFile(fileName, source);
+
+  // Minimal stub sysroot so the driver can resolve library/include paths
+  clang.FS.mkdirTree('/lib/wasm32-wasi');
+  clang.FS.mkdirTree('/include/c++/v1');
+  clang.FS.writeFile('/lib/wasm32-wasi/crt1-command.o', new Uint8Array(0));
+  clang.FS.writeFile('/lib/wasm32-wasi/crt1-reactor.o', new Uint8Array(0));
+
+  const ret = callMainSafe(clang, [fileName, ...flags, '-###']);
+  if (ret !== 0) {
+    throw new Error(`Clang driver failed (exit ${ret}):\n${stderr}`);
+  }
+
+  const lines = stderr.split('\n');
+
+  function extractArgs(key) {
+    const line = lines.find((l) => l.includes(key)) ?? '';
+    const matches = line.match(/"([^"]*)"/g);
+    if (!matches || matches.length < 2) {
+    throw new Error(`Could not find '${key}' subcommand in driver output:\n${stderr}`);
+    }
+    const args = matches.map((s) => s.slice(1, -1)).slice(1); // skip argv[0]
+    const oIndex = args.findIndex((a) => a === '-o');
+    return { args, outputFileName: args[oIndex + 1] };
+  }
+
+  const cc1    = extractArgs('-cc1');
+  const linker = extractArgs('wasm-ld');
+
+  return {
+    compilerArgs:     cc1.args,
+    compilerArtifact: cc1.outputFileName,
+    linkerArgs:       linker.args,
+    linkerArtifact:   linker.outputFileName,
+  };
+}
+
 // ── Compile ──────────────────────────────────────────────────────────────────
 
 /**
- * Compile C++ source using the in-WASM Clang.
+ * Compile C++ source to a WASM binary using the browsercc toolchain pipeline:
+ *   1. Fresh Clang instance  →  -### to get exact driver args
+ *   2. Fresh Clang instance  →  -cc1 … to produce an object file
+ *   3. Fresh LLD   instance  →  wasm-ld … to link into a final WASM binary
+ *
+ * A fresh instance is required for each step because browsercc is built with
+ * -s EXIT_RUNTIME, which destroys the Emscripten runtime after callMain()
+ * completes.  Reusing the same instance for a second callMain() call would
+ * fail with "RuntimeError: null function".
  *
  * @param {string}   source  – C++ source text
  * @param {string[]} flags   – extra compiler flags (e.g. ['-O2'])
@@ -195,81 +322,91 @@ async function loadCompiler() {
 async function compile(source, flags = [], std = 'c++20') {
   if (!await ensureReady()) return { success: false, diagnostics: 'Compiler not ready.' };
 
-  const FS = ClangModule.FS;
-
-  // Write the source file to the virtual filesystem
-  FS.writeFile('/input.cpp', source);
   compiledBinary = null;
 
-  // Remove any stale output
-  try { FS.unlink('/output.wasm'); } catch (_) {}
+  const userFlags = [`-std=${std}`, '-Wall', '-Wextra', ...flags];
 
-  // Build the Clang invocation
-  const args = [
-    `-std=${std}`,
-    '-Wall',
-    '-Wextra',
-    '--target=wasm32-wasi',
-    '-nostartfiles',
-    ...flags,
-    '-o', '/output.wasm',
-    '/input.cpp',
-  ];
+  // ── Step 1: Invocation discovery ─────────────────────────────────────────
 
-  let stdout = '';
-  let stderr = '';
-  const savedPrint    = ClangModule.print;
-  const savedPrintErr = ClangModule.printErr;
-  ClangModule.print    = (s) => { stdout += s + '\n'; };
-  ClangModule.printErr = (s) => { stderr += s + '\n'; };
-
-  let exitCode = 0;
+  let invocation;
   try {
-    // callMain(args) – note: Emscripten takes args WITHOUT argv[0]
-    exitCode = ClangModule.callMain(args);
-  } catch (e) {
-    if (e && e.name === 'ExitStatus') {
-      exitCode = e.status;
-    } else if (e instanceof WebAssembly.RuntimeError) {
-      // A WASM RuntimeError (e.g. "null function or function signature
-      // mismatch") means the compiler binary itself crashed.  Treat it as a
-      // compile failure rather than an uncaught exception so we can show a
-      // helpful message in the terminal.
-      ClangModule.print    = savedPrint;
-      ClangModule.printErr = savedPrintErr;
-      const detail = e.message || String(e);
-      return {
-        success: false,
-        diagnostics:
-          `Compiler crashed (WebAssembly.RuntimeError: ${detail}).\n` +
-          'Try reloading the extension. If the problem persists, run:\n' +
-          '  npm run fetch-clang  then  npm run build',
-      };
-    } else {
-      throw e;
-    }
-  } finally {
-    ClangModule.print    = savedPrint;
-    ClangModule.printErr = savedPrintErr;
+    invocation = await getCompilerInvocation('input.cpp', source, userFlags);
+  } catch (err) {
+    return { success: false, diagnostics: `Driver error: ${err.message}` };
   }
 
-  const diagnostics = (stdout + stderr).trim();
+  let allOutput = '';
+  const capture = (s) => { allOutput += s + '\n'; };
+
+  // ── Step 2: Compile (clang++ -cc1 …) ─────────────────────────────────────
+
+  let clang;
+  try {
+    clang = await clangFactory({
+    thisProgram: 'clang++',
+    locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
+    print:    capture,
+    printErr: capture,
+    });
+  } catch (err) {
+    return { success: false, diagnostics: `Clang init failed: ${err.message}` };
+  }
+
+  clang.FS.writeFile('input.cpp', source);
+  setUpSysroot(clang, sysrootBuffer);
+
+  let exitCode;
+  try {
+    exitCode = callMainSafe(clang, invocation.compilerArgs);
+  } catch (err) {
+    return { success: false, diagnostics: `Compiler crashed: ${err.message}\n${allOutput}`.trim() };
+  }
 
   if (exitCode !== 0) {
-    return { success: false, diagnostics };
+    return { success: false, diagnostics: allOutput.trim() };
   }
 
-  // Read the compiled WASM binary from the virtual FS
+  let objectBinary;
   try {
-    compiledBinary = FS.readFile('/output.wasm');
+    objectBinary = clang.FS.readFile(invocation.compilerArtifact);
   } catch (_) {
-    return {
-      success: false,
-      diagnostics: diagnostics || 'Compiler produced no output binary.',
-    };
+    return { success: false, diagnostics: allOutput.trim() || 'Compiler produced no object file.' };
   }
 
-  return { success: true, diagnostics };
+  // ── Step 3: Link (wasm-ld …) ─────────────────────────────────────────────
+
+  let lld;
+  try {
+    lld = await lldFactory({
+    thisProgram: 'wasm-ld',
+    locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
+    print:    capture,
+    printErr: capture,
+    });
+  } catch (err) {
+    return { success: false, diagnostics: `LLD init failed: ${err.message}` };
+  }
+
+  lld.FS.writeFile(invocation.compilerArtifact, objectBinary);
+  setUpSysroot(lld, sysrootBuffer);
+
+  try {
+    exitCode = callMainSafe(lld, invocation.linkerArgs);
+  } catch (err) {
+    return { success: false, diagnostics: `Linker crashed: ${err.message}\n${allOutput}`.trim() };
+  }
+
+  if (exitCode !== 0) {
+    return { success: false, diagnostics: allOutput.trim() };
+  }
+
+  try {
+    compiledBinary = lld.FS.readFile(invocation.linkerArtifact);
+  } catch (_) {
+    return { success: false, diagnostics: allOutput.trim() || 'Linker produced no output binary.' };
+  }
+
+  return { success: true, diagnostics: allOutput.trim() };
 }
 
 // ── WASI shim ─────────────────────────────────────────────────────────────────
