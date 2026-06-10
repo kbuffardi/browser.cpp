@@ -97,11 +97,14 @@ function _clearSAB() {
 
 /**
  * Enqueue a line of text (without the trailing newline) for delivery to stdin.
- * The '\n' is appended automatically.
+ * The '\n' is appended automatically.  Lines longer than SAB_DATA_BYTES are
+ * split into multiple chunks so no data is lost.
  */
 function _sendStdinLine(line) {
   const bytes = new TextEncoder().encode(line + '\n');
-  _pendingChunks.push(bytes);
+  for (let offset = 0; offset < bytes.length; offset += SAB_DATA_BYTES) {
+    _pendingChunks.push(bytes.subarray(offset, offset + SAB_DATA_BYTES));
+  }
   _flushStdin();
 }
 
@@ -251,8 +254,9 @@ export function startRun() {
 
   if (typeof SharedArrayBuffer === 'undefined') {
     term.write(
-      `${C.red}Interactive stdin requires SharedArrayBuffer, which is not available ` +
-      `in this context.${C.reset}${CRLF}`
+      `${C.red}Interactive stdin requires SharedArrayBuffer, which is unavailable ` +
+      `in this context.  The page must be served with Cross-Origin-Opener-Policy: ` +
+      `same-origin and Cross-Origin-Embedder-Policy: require-corp headers.${C.reset}${CRLF}`
     );
     writePrompt();
     return;
