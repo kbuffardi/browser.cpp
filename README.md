@@ -20,17 +20,24 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 npm install
 ```
 
-### 2 – Fetch the Clang WASM binary
+### 2 – Obtain the Clang WASM binary
 
 The compiler binary is **not** shipped in this repository (it is ~60 MB).
-Download a pre-built Emscripten-compiled Clang:
+You need to either build it from source or host it yourself and configure the
+download URL.
 
+**Build from source** (recommended — see [§ Building Clang WASM from source](#building-clang-wasm-from-source)):
+```bash
+# After building, copy the output to dist/clang/
+cp build-wasm/bin/clang.js build-wasm/bin/clang.wasm dist/clang/
+```
+
+**Or configure a download URL** — set `BASE_URL` in `scripts/fetch-clang-wasm.js`
+to a host that serves `clang.js` and `clang.wasm` built with
+`-s MODULARIZE=1 -s EXPORT_NAME=createClangModule`, then run:
 ```bash
 npm run fetch-clang
 ```
-
-> **Building your own binary** (C++20 / C++23, latest LLVM):
-> See [§ Building Clang WASM from source](#building-clang-wasm-from-source) below.
 
 ### 3 – Build the extension
 
@@ -157,7 +164,8 @@ emcmake cmake -S llvm -B build-wasm -G Ninja \
   -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
   -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DLLVM_BUILD_TOOLS=OFF \
-  -DLLVM_INCLUDE_TESTS=OFF
+  -DLLVM_INCLUDE_TESTS=OFF \
+  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="-s MODULARIZE=1 -s EXPORT_NAME=createClangModule"
 
 cmake --build build-wasm --target clang -j$(nproc)
 ```
