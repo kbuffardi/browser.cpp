@@ -1,0 +1,380 @@
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Catppuccin Mocha palette (VS Code dark-inspired) */
+  --crust:   #11111b;
+  --mantle:  #181825;
+  --base:    #1e1e2e;
+  --surface0:#313244;
+  --surface1:#45475a;
+  --overlay0:#6c7086;
+  --text:    #cdd6f4;
+  --subtext0:#a6adc8;
+  --green:   #a6e3a1;
+  --red:     #f38ba8;
+  --yellow:  #f9e2af;
+  --blue:    #89b4fa;
+  --mauve:   #cba6f7;
+  --peach:   #fab387;
+
+  --toolbar-h: 36px;
+  --statusbar-h: 22px;
+  --sidebar-w: 200px;
+  --terminal-h: 220px;
+  --tab-h: 35px;
+
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--base);
+}
+
+body {
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--toolbar-h);
+  background: var(--crust);
+  padding: 0 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--surface0);
+  user-select: none;
+}
+
+#toolbar-brand {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--green);
+  margin-right: 8px;
+  letter-spacing: 0.02em;
+}
+
+#toolbar-file-actions,
+#toolbar-build-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--surface1);
+  margin: 0 4px;
+}
+
+button {
+  background: var(--surface0);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: background 0.1s;
+}
+
+button:hover {
+  background: var(--surface1);
+  border-color: var(--overlay0);
+}
+
+button:active {
+  background: var(--surface1);
+  filter: brightness(0.9);
+}
+
+.btn-primary {
+  background: var(--green);
+  color: var(--crust);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: #b9f0b3;
+  border-color: transparent;
+}
+
+select {
+  background: var(--surface0);
+  color: var(--text);
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+select:focus {
+  outline: 1px solid var(--blue);
+}
+
+#toolbar-status {
+  margin-left: auto;
+  color: var(--subtext0);
+  font-size: 12px;
+  min-width: 140px;
+  text-align: right;
+}
+
+/* ── Main layout ──────────────────────────────────────────────────────────── */
+
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+
+#sidebar {
+  width: var(--sidebar-w);
+  min-width: 120px;
+  background: var(--mantle);
+  border-right: 1px solid var(--surface0);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  resize: horizontal;
+}
+
+.panel-header {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--subtext0);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+#file-tree {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 4px 0;
+}
+
+#file-tree li {
+  padding: 4px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#file-tree li:hover {
+  background: var(--surface0);
+}
+
+#file-tree li.active {
+  background: var(--surface1);
+  color: var(--blue);
+}
+
+/* ── Workspace ────────────────────────────────────────────────────────────── */
+
+#workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Tab bar ──────────────────────────────────────────────────────────────── */
+
+#tab-bar {
+  display: flex;
+  height: var(--tab-h);
+  background: var(--mantle);
+  border-bottom: 1px solid var(--surface0);
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 100%;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--subtext0);
+  border-right: 1px solid var(--surface0);
+  white-space: nowrap;
+  user-select: none;
+  min-width: 100px;
+}
+
+.tab:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--base);
+  color: var(--text);
+  border-top: 1px solid var(--blue);
+}
+
+.tab.dirty::after {
+  content: '●';
+  color: var(--yellow);
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--subtext0);
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.tab-close:hover {
+  background: var(--surface1);
+  color: var(--red);
+}
+
+/* ── Editor ───────────────────────────────────────────────────────────────── */
+
+#editor-container {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Terminal panel ───────────────────────────────────────────────────────── */
+
+#terminal-panel {
+  height: var(--terminal-h);
+  min-height: 80px;
+  background: var(--crust);
+  border-top: 2px solid var(--surface0);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  resize: vertical;
+  overflow: hidden;
+}
+
+#terminal-panel.collapsed {
+  height: 28px;
+  min-height: 28px;
+}
+
+#terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--mantle);
+  border-bottom: 1px solid var(--surface0);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--subtext0);
+  text-transform: uppercase;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.panel-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.panel-controls button {
+  background: none;
+  border: none;
+  color: var(--subtext0);
+  padding: 1px 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.panel-controls button:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+
+#terminal-container {
+  flex: 1;
+  overflow: hidden;
+  padding: 4px 6px;
+}
+
+/* xterm overrides */
+.xterm {
+  height: 100%;
+}
+
+/* ── Status bar ───────────────────────────────────────────────────────────── */
+
+#statusbar {
+  display: flex;
+  align-items: center;
+  height: var(--statusbar-h);
+  background: var(--crust);
+  border-top: 1px solid var(--surface0);
+  padding: 0 10px;
+  flex-shrink: 0;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--subtext0);
+}
+
+.status-item { white-space: nowrap; }
+
+#status-compiler.ready  { color: var(--green); }
+#status-compiler.error  { color: var(--red); }
+#status-compiler.busy   { color: var(--yellow); }
+
+/* ── Utility ──────────────────────────────────────────────────────────────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip: rect(0,0,0,0);
+  overflow: hidden;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--overlay0); }
