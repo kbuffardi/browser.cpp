@@ -4,7 +4,7 @@
   "description": "In-browser C++20 IDE with WASM Clang toolchain",
   "private": true,
   "scripts": {
-    "prebuild": "node scripts/generate-icons.js && mkdir -p dist/clang",
+    "prebuild": "mkdir -p dist/clang",
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
     "fetch-clang": "node scripts/fetch-clang-wasm.js"
