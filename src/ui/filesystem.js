@@ -10,6 +10,9 @@
 
 'use strict';
 
+/** Milliseconds before a blob URL created for download is revoked. */
+const BLOB_URL_REVOKE_DELAY_MS = 60_000;
+
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
 
@@ -163,6 +166,6 @@ function saveFileFallback(content, suggestedName) {
   a.href     = url;
   a.download = suggestedName;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setTimeout(() => URL.revokeObjectURL(url), BLOB_URL_REVOKE_DELAY_MS);
   return Promise.resolve(suggestedName);
 }

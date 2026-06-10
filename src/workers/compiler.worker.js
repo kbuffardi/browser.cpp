@@ -102,18 +102,17 @@ async function loadCompiler() {
 
   send({ type: 'compiler-loading', progress: 30 });
 
-  // Instantiate the Emscripten module.
-  // The factory name exported by the build is assumed to be `createClangModule`.
-  const factoryName = Object.keys(self).find(
-    (k) => typeof self[k] === 'function' && /clang/i.test(k)
-  ) || 'createClangModule';
+  // The Emscripten module factory name is set at build time via
+  // -s EXPORT_NAME=createClangModule.  We reference it directly.
+  const factoryName = 'createClangModule';
 
   if (typeof self[factoryName] !== 'function') {
     compilerState = 'error';
     send({
       type: 'compiler-error',
-      message: `Could not find Emscripten factory in clang.js (looked for "${factoryName}"). ` +
-               'Ensure the binary was built with -s EXPORT_NAME=createClangModule.',
+      message:
+        `Emscripten factory "createClangModule" not found in clang.js. ` +
+        'Ensure the binary was built with -s EXPORT_NAME=createClangModule.',
     });
     return false;
   }
@@ -338,6 +337,9 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
     },
 
     // clock_time_get(id, precision, time_ptr) → errno
+    // Note: Date.now() has millisecond resolution; WASI expects nanoseconds.
+    // The multiplication gives correct units but not sub-millisecond precision.
+    // Programs relying on high-resolution timing should use performance.now() paths.
     clock_time_get(_id, _prec, timePtr) {
       const ns = BigInt(Date.now()) * 1_000_000n;
       view().setBigUint64(timePtr, ns, true);
