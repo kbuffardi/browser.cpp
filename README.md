@@ -161,7 +161,7 @@ emcmake cmake -S llvm -B build-wasm -G Ninja \
   -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DLLVM_BUILD_TOOLS=OFF \
   -DLLVM_INCLUDE_TESTS=OFF \
-  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="MODULARIZE=1 EXPORT_ES6=1 EXPORTED_RUNTIME_METHODS=FS,callMain"
+  -DEMSCRIPTEN_EXTRA_LINK_FLAGS="-s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORTED_RUNTIME_METHODS=[FS,callMain]"
 
 cmake --build build-wasm --target clang -j$(nproc)
 ```
