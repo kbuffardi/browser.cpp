@@ -43,6 +43,7 @@ const CRLF   = '\r\n';
 const MAX_HISTORY_SIZE = 200;
 
 // ── State ─────────────────────────────────────────────────────────────────────
+
 let term     = null;
 let fitAddon = null;
 
@@ -55,10 +56,97 @@ let   historyIdx = -1;
 /** Virtual file store: filename → content */
 const vfs = new Map();
 
+/** True while the compiler is working – all keyboard input is ignored. */
 let busy = false;
+
+/** True while a compiled program is executing – input is routed to stdin. */
+let running = false;
 
 /** Resolve function set when waiting for run output to complete */
 let runDone = null;
+
+// ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
+
+/**
+ * SAB layout used for interactive stdin:
+ *   Int32[0]  – state:  0 = waiting, 1 = data ready, -1 = EOF
+ *   Int32[1]  – length: byte count in data section
+ *   Uint8[8…] – data:   up to SAB_DATA_BYTES bytes
+ */
+const SAB_HEADER_BYTES = 8;
+const SAB_DATA_BYTES   = 4096;
+
+let _sabControl    = null;   // Int32Array view of current SAB
+let _sabData       = null;   // Uint8Array  view of current SAB data section
+let _pendingChunks = [];     // queue of Uint8Array chunks waiting to be sent
+let _flushActive   = false;  // prevents concurrent _doFlush invocations
+
+function _initSAB(sab) {
+  _sabControl    = new Int32Array(sab);
+  _sabData       = new Uint8Array(sab, SAB_HEADER_BYTES);
+  _pendingChunks = [];
+  _flushActive   = false;
+}
+
+function _clearSAB() {
+  _sabControl    = null;
+  _sabData       = null;
+  _pendingChunks = [];
+  _flushActive   = false;
+}
+
+/**
+ * Enqueue a line of text (without the trailing newline) for delivery to stdin.
+ * The '\n' is appended automatically.
+ */
+function _sendStdinLine(line) {
+  const bytes = new TextEncoder().encode(line + '\n');
+  _pendingChunks.push(bytes);
+  _flushStdin();
+}
+
+/** Signal EOF on stdin (Ctrl+D on an empty line, or Ctrl+C). */
+function _sendStdinEOF() {
+  _pendingChunks.push(null); // null sentinel = EOF
+  _flushStdin();
+}
+
+function _flushStdin() {
+  if (_flushActive || _pendingChunks.length === 0 || !_sabControl) return;
+  _flushActive = true;
+  _doFlush();
+}
+
+/**
+ * Async loop that drains _pendingChunks into the SAB one chunk at a time,
+ * using Atomics.waitAsync to yield until the worker has consumed each chunk
+ * before sending the next.
+ */
+async function _doFlush() {
+  while (_pendingChunks.length > 0 && _sabControl) {
+    // Wait until the worker has consumed the previous chunk (state returns to 0)
+    const state = Atomics.load(_sabControl, 0);
+    if (state !== 0) {
+      const { async, value } = Atomics.waitAsync(_sabControl, 0, state);
+      if (async) await value;
+      continue; // re-check state after waking
+    }
+
+    const chunk = _pendingChunks.shift();
+    if (chunk === null) {
+      // EOF
+      Atomics.store(_sabControl, 0, -1);
+      Atomics.notify(_sabControl, 0);
+    } else {
+      const len = Math.min(chunk.length, SAB_DATA_BYTES);
+      _sabData.set(chunk.subarray(0, len));
+      Atomics.store(_sabControl, 1, len);
+      Atomics.store(_sabControl, 0, 1);
+      Atomics.notify(_sabControl, 0);
+    }
+  }
+  _flushActive = false;
+}
 
 // Set from outside: callbacks to compile and run
 let _onCompile = null;
@@ -73,7 +161,7 @@ let _getSource = null;  // () => string  – returns current editor source
  * @param {HTMLElement} container
  * @param {{
  *   onCompile: (source:string, flags:string[], std:string) => void,
- *   onRun:     (stdin:string) => void,
+ *   onRun:     (sharedBuffer:SharedArrayBuffer) => void,
  *   getSource: () => string,
  * }} callbacks
  */
@@ -143,6 +231,41 @@ export function clearTerminal() {
   writePrompt();
 }
 
+/**
+ * Start executing the last compiled binary with interactive stdin support.
+ *
+ * Creates a SharedArrayBuffer for stdin coordination, enters stdin-capture
+ * mode, and dispatches the run request to the compiler worker via _onRun.
+ * Can be called from the terminal command line (`./a.out`) or directly from
+ * the toolbar Run button.
+ */
+export function startRun() {
+  if (!term) return;
+  if (running) return; // already running
+
+  if (!vfs.has('/a.out')) {
+    term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  if (typeof SharedArrayBuffer === 'undefined') {
+    term.write(
+      `${C.red}Interactive stdin requires SharedArrayBuffer, which is not available ` +
+      `in this context.${C.reset}${CRLF}`
+    );
+    writePrompt();
+    return;
+  }
+
+  const sab = new SharedArrayBuffer(SAB_HEADER_BYTES + SAB_DATA_BYTES);
+  _initSAB(sab);
+  running     = true;
+  inputBuffer = ''; // clear any partial command line
+  term.write(CRLF);
+  _onRun?.(sab);
+}
+
 // ── Output helpers called by toolbar.js / app.js ─────────────────────────────
 
 /** Write stdout text from the running program. */
@@ -182,7 +305,9 @@ export function onRunResult({ exitCode }) {
   if (exitCode !== 0) {
     term?.write(`${CRLF}${C.yellow}Process exited with code ${exitCode}.${C.reset}${CRLF}`);
   }
-  busy    = false;
+  running  = false;
+  busy     = false;
+  _clearSAB();
   runDone?.();
   runDone = null;
   writePrompt();
@@ -196,7 +321,13 @@ export function printInfo(msg) {
 // ── Key handler ───────────────────────────────────────────────────────────────
 
 function handleKey({ key, domEvent }) {
-  if (busy) return; // ignore input while compiler/runner is active
+  if (busy) return; // ignore during compilation
+
+  // While a program is executing, route keystrokes to stdin instead of the shell
+  if (running) {
+    handleStdinKey(key, domEvent);
+    return;
+  }
 
   const code = domEvent.key;
 
@@ -278,6 +409,56 @@ function handleKey({ key, domEvent }) {
     term.clear();
     writePrompt();
     term.write(inputBuffer);
+    return;
+  }
+
+  // Printable characters
+  if (!domEvent.ctrlKey && !domEvent.altKey && key.length === 1) {
+    inputBuffer += key;
+    term.write(key);
+  }
+}
+
+// ── Stdin key handler (active while a program is running) ─────────────────────
+
+/**
+ * Handle a keystroke while a WASM program is executing.
+ * Characters are echoed to the terminal and buffered in inputBuffer;
+ * pressing Enter submits the line to the program's stdin.
+ * Ctrl+D on an empty line signals EOF; Ctrl+C sends EOF and clears the line.
+ */
+function handleStdinKey(key, domEvent) {
+  const code = domEvent.key;
+
+  if (code === 'Enter') {
+    term.write(CRLF);
+    const line = inputBuffer;
+    inputBuffer = '';
+    _sendStdinLine(line);
+    return;
+  }
+
+  if (code === 'Backspace') {
+    if (inputBuffer.length > 0) {
+      inputBuffer = inputBuffer.slice(0, -1);
+      term.write('\b \b');
+    }
+    return;
+  }
+
+  // Ctrl+D – EOF (only when the input line is empty, matching real terminal behaviour)
+  if (domEvent.ctrlKey && code === 'd') {
+    if (inputBuffer.length === 0) {
+      _sendStdinEOF();
+    }
+    return;
+  }
+
+  // Ctrl+C – interrupt: clear the current line and send EOF
+  if (domEvent.ctrlKey && code === 'c') {
+    term.write('^C' + CRLF);
+    inputBuffer = '';
+    _sendStdinEOF();
     return;
   }
 
@@ -377,14 +558,7 @@ function cmdGxx(args) {
 }
 
 function cmdRun(args) {
-  if (!vfs.has('/a.out')) {
-    term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
-    writePrompt();
-    return;
-  }
-  busy    = true;
-  term.write(CRLF);
-  _onRun?.(''); // stdin piping is not yet supported; programs read EOF on cin
+  startRun();
 }
 
 function cmdLs() {
@@ -415,6 +589,7 @@ function cmdHelp() {
     `${C.bold}Available commands:${C.reset}${CRLF}` +
     `  ${C.green}g++ [flags] [file] [-std=c++NN] [-o out]${C.reset}  Compile the editor's source${CRLF}` +
     `  ${C.green}./a.out${C.reset}                                    Run the last compiled binary${CRLF}` +
+    `  ${C.dim}  While running: type input and press Enter; Ctrl+D (empty line) = EOF${C.reset}${CRLF}` +
     `  ${C.green}clear${C.reset}                                      Clear the terminal${CRLF}` +
     `  ${C.green}echo <text>${C.reset}                                Print text${CRLF}` +
     `  ${C.green}ls${C.reset}                                         List virtual files${CRLF}` +

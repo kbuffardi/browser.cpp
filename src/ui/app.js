@@ -39,8 +39,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   terminalAPI.createTerminal(terminalContainer, {
     onCompile: (source, flags, std) =>
       worker.postMessage({ type: 'compile', source, flags, std }),
-    onRun: (stdin) =>
-      worker.postMessage({ type: 'run', stdin }),
+    onRun: (sab) =>
+      worker.postMessage({ type: 'run', sharedBuffer: sab }),
     getSource: () => editorAPI.getValue(),
   });
 

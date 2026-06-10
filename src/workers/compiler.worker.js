@@ -412,12 +412,25 @@ async function compile(source, flags = [], std = 'c++20') {
 // ── WASI shim ─────────────────────────────────────────────────────────────────
 
 /**
+ * SharedArrayBuffer layout used for interactive stdin:
+ *   Int32[0]  – state:  0 = waiting for input, 1 = data ready, -1 = EOF
+ *   Int32[1]  – length: number of bytes in the data section
+ *   Uint8[8…] – data:   up to SAB_DATA_BYTES bytes of stdin content
+ */
+const SAB_HEADER_BYTES = 8;
+const SAB_DATA_BYTES   = 4096;
+
+/**
  * Minimal WASI "snapshot_preview1" implementation sufficient for running
  * C++ programs that use cout/cin/cerr, command-line args, and proc_exit.
  *
+ * @param {SharedArrayBuffer} sharedBuffer – SAB created by the terminal for
+ *   interactive stdin.  The terminal writes lines into it; fd_read blocks with
+ *   Atomics.wait() until a line (or EOF) is available.
+ *
  * Reference: https://github.com/WebAssembly/WASI/blob/main/phases/snapshot/docs.md
  */
-function createWASIImports({ stdinBytes, onStdout, onStderr }) {
+function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
   // We capture the memory reference after instantiation via a closure cell
   let memory = null;
   const setMemory = (m) => { memory = m; };
@@ -425,7 +438,12 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
   const view = () => new DataView(memory.buffer);
   const u8   = () => new Uint8Array(memory.buffer);
 
-  let stdinPos = 0;
+  // Int32 view of the SAB header: [state, dataLen]
+  const sabControl = new Int32Array(sharedBuffer);
+
+  // Internal byte queue: filled from the SAB one chunk at a time, then served
+  // to the WASM module across potentially multiple fd_read calls.
+  const stdinQueue = [];
 
   // Decode iovs (iov_base, iov_len) pairs from memory
   function iovSpans(iovsPtr, iovsLen) {
@@ -459,21 +477,51 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
     },
 
     // fd_read(fd, iovs_ptr, iovs_len, nread_ptr) → errno
+    //
+    // Blocks (via Atomics.wait) until the terminal writes a line into the SAB,
+    // then drains bytes from an internal queue into the WASM memory buffer.
     fd_read(fd, iovsPtr, iovsLen, nreadPtr) {
       if (fd !== 0) {
         view().setUint32(nreadPtr, 0, true);
         return 8; // __WASI_ERRNO_BADF
       }
+
       const spans = iovSpans(iovsPtr, iovsLen);
       let total = 0;
+
       for (const { base, len } of spans) {
-        const available = stdinBytes.length - stdinPos;
-        const toRead    = Math.min(len, available);
-        if (toRead === 0) break;
-        u8().set(stdinBytes.subarray(stdinPos, stdinPos + toRead), base);
-        stdinPos += toRead;
-        total    += toRead;
+        // Refill internal queue from the SAB when it runs dry
+        if (stdinQueue.length === 0) {
+          // Block until the terminal signals data or EOF (state != 0)
+          if (Atomics.load(sabControl, 0) === 0) {
+            Atomics.wait(sabControl, 0, 0);
+          }
+
+          const state = Atomics.load(sabControl, 0);
+          if (state === -1) {
+            // EOF – reset so a potential second run in the same session works
+            Atomics.store(sabControl, 0, 0);
+            Atomics.notify(sabControl, 0);
+            break;
+          }
+
+          // state === 1: copy the chunk into the internal queue
+          const dataLen = Atomics.load(sabControl, 1);
+          const chunk   = new Uint8Array(sharedBuffer, SAB_HEADER_BYTES, dataLen).slice();
+          for (let i = 0; i < chunk.length; i++) stdinQueue.push(chunk[i]);
+
+          // Reset state to 0 so the terminal knows it can send the next chunk
+          Atomics.store(sabControl, 0, 0);
+          Atomics.notify(sabControl, 0); // wake any Atomics.waitAsync on main thread
+        }
+
+        if (stdinQueue.length === 0) break; // EOF was reached above
+
+        const toRead = Math.min(len, stdinQueue.length);
+        for (let i = 0; i < toRead; i++) u8()[base + i] = stdinQueue.shift();
+        total += toRead;
       }
+
       view().setUint32(nreadPtr, total, true);
       return 0;
     },
@@ -564,21 +612,21 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
 /**
  * Instantiate and execute the compiled WASM binary with a minimal WASI shim.
  *
- * @param {string} stdinText  – text piped to stdin
+ * @param {SharedArrayBuffer} sharedBuffer – SAB created by the terminal that
+ *   provides interactive stdin via Atomics.  The SAB must be pre-zeroed (state
+ *   = 0) so that fd_read blocks immediately when no input is ready.
  */
-async function run(stdinText = '') {
+async function run(sharedBuffer) {
   if (!compiledBinary) {
     send({ type: 'stderr', data: 'No compiled binary. Please compile first.\n' });
     send({ type: 'run-result', exitCode: 1 });
     return;
   }
 
-  const stdinBytes = new TextEncoder().encode(stdinText);
-
   let exitCode = 0;
 
   const { wasi, setMemory } = createWASIImports({
-    stdinBytes,
+    sharedBuffer,
     onStdout: (text) => send({ type: 'stdout', data: text }),
     onStderr: (text) => send({ type: 'stderr', data: text }),
   });
@@ -636,7 +684,7 @@ self.onmessage = async ({ data }) => {
 
     case 'run':
       send({ type: 'run-start' });
-      await run(data.stdin || '');
+      await run(data.sharedBuffer);
       break;
 
     case 'status':
