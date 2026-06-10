@@ -81,7 +81,7 @@ function bindKeyboardShortcuts() {
       e.preventDefault();
       actionNew();
     } else if (e.ctrlKey && e.key === 'k') {
-      // Ctrl+K in the terminal panel
+      // Ctrl+K clears the terminal regardless of which element has focus
       _terminalAPI.clearTerminal();
     }
   });

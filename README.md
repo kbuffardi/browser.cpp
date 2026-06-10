@@ -173,6 +173,8 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
 
 - **Binary size**: The Clang WASM binary is large; first load may take a few
   seconds.  Subsequent loads use the browser cache.
+- **stdin**: Programs that read from `std::cin` will receive EOF immediately.
+  Interactive keyboard input via the terminal is not yet supported.
 - **No network access**: Programs run in a sandboxed WASI environment with no
   socket or file-I/O beyond stdin/stdout/stderr.
 - **Standard library**: Only the subset of libc/libc++ compiled into the WASM

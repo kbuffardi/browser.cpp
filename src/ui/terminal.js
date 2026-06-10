@@ -384,7 +384,7 @@ function cmdRun(args) {
   }
   busy    = true;
   term.write(CRLF);
-  _onRun?.(''); // TODO: support piped stdin
+  _onRun?.(''); // stdin piping is not yet supported; programs read EOF on cin
 }
 
 function cmdLs() {
