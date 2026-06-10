@@ -338,10 +338,10 @@ function createWASIImports({ stdinBytes, onStdout, onStderr }) {
 
     // clock_time_get(id, precision, time_ptr) → errno
     // Note: Date.now() has millisecond resolution; WASI expects nanoseconds.
-    // The multiplication gives correct units but not sub-millisecond precision.
-    // Programs relying on high-resolution timing should use performance.now() paths.
+    // The multiplication gives correct units but not sub-millisecond precision,
+    // which is acceptable for typical C++ programs using std::chrono.
     clock_time_get(_id, _prec, timePtr) {
-      const ns = BigInt(Date.now()) * 1_000_000n;
+      const ns = BigInt(Date.now()) * BigInt(1000000);
       view().setBigUint64(timePtr, ns, true);
       return 0;
     },

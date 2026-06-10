@@ -24,7 +24,10 @@ const path = require('path');
 const https = require('https');
 
 // ── Configuration ─────────────────────────────────────────────────────────────
-// Adjust VERSION and BASE_URL if you host your own build.
+// This URL points to a pre-built third-party Emscripten-compiled Clang binary.
+// Before use, verify the binary matches the expected SHA-256 checksum documented
+// in the project README.  For production deployments, build from source (see
+// README § "Building Clang WASM from source") and host the binary yourself.
 const BASE_URL = 'https://github.com/nicowillis/wasm-clang/releases/download/v0.1.0';
 const FILES    = ['clang.js', 'clang.wasm'];
 const OUT_DIR  = path.resolve(__dirname, '..', 'dist', 'clang');

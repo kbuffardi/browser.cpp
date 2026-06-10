@@ -11,7 +11,7 @@
 'use strict';
 
 /** Milliseconds before a blob URL created for download is revoked. */
-const BLOB_URL_REVOKE_DELAY_MS = 60_000;
+const BLOB_URL_REVOKE_DELAY_MS = 2_000;
 
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
