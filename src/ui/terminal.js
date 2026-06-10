@@ -17,10 +17,10 @@
 
 'use strict';
 
-import { Terminal } from 'xterm';
-import { FitAddon }      from 'xterm-addon-fit';
-import { WebLinksAddon } from 'xterm-addon-web-links';
-import 'xterm/css/xterm.css';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon }      from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import '@xterm/xterm/css/xterm.css';
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -39,6 +39,9 @@ const C = {
 const PROMPT = `${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:~$ ${C.reset}`;
 const CRLF   = '\r\n';
 
+/** Maximum number of commands retained in shell history. */
+const MAX_HISTORY_SIZE = 200;
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let term     = null;
 let fitAddon = null;
@@ -52,7 +55,6 @@ let   historyIdx = -1;
 /** Virtual file store: filename → content */
 const vfs = new Map();
 
-/** Whether we're waiting for the compiler/runner to finish */
 let busy = false;
 
 /** Resolve function set when waiting for run output to complete */
@@ -205,7 +207,7 @@ function handleKey({ key, domEvent }) {
     historyIdx  = -1;
     if (cmd) {
       history.unshift(cmd);
-      if (history.length > 200) history.pop();
+      if (history.length > MAX_HISTORY_SIZE) history.pop();
       executeCommand(cmd);
     } else {
       writePrompt();
