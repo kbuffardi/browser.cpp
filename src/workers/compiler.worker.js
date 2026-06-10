@@ -508,7 +508,7 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
           // state === 1: copy the chunk into the internal queue
           const dataLen = Atomics.load(sabControl, 1);
           const chunk   = new Uint8Array(sharedBuffer, SAB_HEADER_BYTES, dataLen).slice();
-          for (let i = 0; i < chunk.length; i++) stdinQueue.push(chunk[i]);
+          Array.prototype.push.apply(stdinQueue, chunk);
 
           // Reset state to 0 so the terminal knows it can send the next chunk
           Atomics.store(sabControl, 0, 0);
