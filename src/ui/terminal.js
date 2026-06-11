@@ -730,7 +730,6 @@ function cmdGit(args) {
     const branch = workspaceGit.branch || 'unknown';
     term.write(`On branch ${branch}${CRLF}`);
     term.write(`${C.yellow}Working-tree state is unavailable in this browser terminal.${C.reset}${CRLF}`);
-    term.write(`${C.dim}Use your device terminal in this folder for full git status/pull/push using your SSH keys.${C.reset}${CRLF}`);
     return;
   }
 
@@ -753,7 +752,7 @@ function cmdGit(args) {
 
   term.write(
     `${C.yellow}Supported git commands: status, branch, remote -v.${C.reset}${CRLF}` +
-    `${C.dim}For clone/fetch/pull/push over SSH, use your device terminal in this folder.${C.reset}${CRLF}`
+    `${C.dim}Full git porcelain/plumbing commands are not yet available in this browser terminal.${C.reset}${CRLF}`
   );
 }
 
