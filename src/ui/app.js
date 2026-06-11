@@ -17,7 +17,7 @@ import './styles.css';
 import * as editorAPI   from './editor.js';
 import * as terminalAPI from './terminal.js';
 import * as fsAPI       from './filesystem.js';
-import { initToolbar, markDirty } from './toolbar.js';
+import { initToolbar, markDirty, getOpenTabPaths, getActiveTabPath, restoreWorkspace } from './toolbar.js';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -72,9 +72,66 @@ window.addEventListener('DOMContentLoaded', async () => {
   editorAPI.focus();
 });
 
-// ── Session persistence (chrome.storage.local) ────────────────────────────────
+// ── Session persistence (chrome.storage.local + IndexedDB) ───────────────────
 
 const STORAGE_KEY = 'browser_cpp_session';
+
+// ── IndexedDB helpers for FileSystemDirectoryHandle ──────────────────────────
+// FileSystemHandle objects are structured-cloneable and can be stored in IDB.
+
+const _IDB_NAME    = 'browser-cpp-handles';
+const _IDB_VERSION = 1;
+const _IDB_STORE   = 'handles';
+const _IDB_KEY     = 'workspace-dir';
+
+function _openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(_IDB_NAME, _IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(_IDB_STORE);
+    };
+    req.onsuccess  = (e) => resolve(e.target.result);
+    req.onerror    = ()  => reject(req.error);
+  });
+}
+
+async function _saveDirectoryHandle(handle) {
+  try {
+    const db = await _openHandleDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(_IDB_STORE, 'readwrite');
+      tx.objectStore(_IDB_STORE).put(handle, _IDB_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror    = () => reject(tx.error);
+    });
+  } catch (_) {}
+}
+
+async function _loadDirectoryHandle() {
+  try {
+    const db = await _openHandleDB();
+    return await new Promise((resolve, reject) => {
+      const tx  = db.transaction(_IDB_STORE, 'readonly');
+      const req = tx.objectStore(_IDB_STORE).get(_IDB_KEY);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror   = () => reject(req.error);
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _clearDirectoryHandle() {
+  try {
+    const db = await _openHandleDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(_IDB_STORE, 'readwrite');
+      tx.objectStore(_IDB_STORE).delete(_IDB_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror    = () => reject(tx.error);
+    });
+  } catch (_) {}
+}
 
 async function restoreSession() {
   try {
@@ -85,9 +142,34 @@ async function restoreSession() {
 
     if (!storage) return;
 
-    const data = await storage.get(STORAGE_KEY);
+    const data    = await storage.get(STORAGE_KEY);
     const session = data[STORAGE_KEY];
-    if (session?.source) {
+    if (!session) return;
+
+    // ── Workspace mode: restore folder + open tabs ─────────────────────────
+    const handle = await _loadDirectoryHandle();
+    if (handle && Array.isArray(session.openTabPaths)) {
+      let permission = await handle.queryPermission({ mode: 'read' });
+      if (permission !== 'granted') {
+        // requestPermission requires a user gesture; attempt it anyway — it
+        // works on Chrome extension pages that were opened by the user.
+        try {
+          permission = await handle.requestPermission({ mode: 'read' });
+        } catch (_err) {
+          // SecurityError if no user gesture is present; proceed without restore
+        }
+      }
+      if (permission === 'granted') {
+        const workspace = await fsAPI.openFolderFromHandle(handle);
+        if (workspace) {
+          await restoreWorkspace(workspace, session.openTabPaths, session.activeTabPath ?? null);
+          return;
+        }
+      }
+    }
+
+    // ── Single-file / plain-source fallback ────────────────────────────────
+    if (session.source) {
       editorAPI.setValue(session.source);
       markDirty(false);
     }
@@ -105,8 +187,26 @@ async function persistSession() {
 
     if (!storage) return;
 
-    await storage.set({
-      [STORAGE_KEY]: { source: editorAPI.getValue(), savedAt: Date.now() },
-    });
+    const dirHandle = fsAPI.getDirectoryHandle();
+    if (dirHandle) {
+      // Workspace mode – persist handle + tab list
+      await _saveDirectoryHandle(dirHandle);
+      await storage.set({
+        [STORAGE_KEY]: {
+          openTabPaths: getOpenTabPaths(),
+          activeTabPath: getActiveTabPath(),
+          savedAt: Date.now(),
+        },
+      });
+    } else {
+      // Single-file mode – persist current source only
+      await _clearDirectoryHandle();
+      await storage.set({
+        [STORAGE_KEY]: {
+          source: editorAPI.getValue(),
+          savedAt: Date.now(),
+        },
+      });
+    }
   } catch (_) {}
 }
