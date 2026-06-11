@@ -18,7 +18,7 @@ let _fsAPI       = null;
 let _dirty       = false;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
-const _expandedWorkspaceDirs = new Set();
+const _expandedWorkspaceDirectories = new Set();
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -330,7 +330,9 @@ function buildWorkspaceChildrenMap(entries) {
   for (const list of childrenByParent.values()) {
     list.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-      return workspaceBaseName(a.path).localeCompare(workspaceBaseName(b.path));
+      const aBaseName = workspaceBaseName(a.path);
+      const bBaseName = workspaceBaseName(b.path);
+      return aBaseName.localeCompare(bBaseName);
     });
   }
   return childrenByParent;
@@ -345,13 +347,13 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
     li.style.paddingLeft = `${16 + depth * 14}px`;
 
     if (entry.kind === 'directory') {
-      const isExpanded = _expandedWorkspaceDirs.has(entry.path);
+      const isExpanded = _expandedWorkspaceDirectories.has(entry.path);
       li.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
       li.addEventListener('click', () => {
-        if (_expandedWorkspaceDirs.has(entry.path)) {
-          _expandedWorkspaceDirs.delete(entry.path);
+        if (_expandedWorkspaceDirectories.has(entry.path)) {
+          _expandedWorkspaceDirectories.delete(entry.path);
         } else {
-          _expandedWorkspaceDirs.add(entry.path);
+          _expandedWorkspaceDirectories.add(entry.path);
         }
         renderWorkspaceSidebar(_workspace);
       });
@@ -418,13 +420,13 @@ function showOpenError(err) {
 
 function setWorkspaceMode(workspace) {
   _workspace = workspace;
-  _expandedWorkspaceDirs.clear();
+  _expandedWorkspaceDirectories.clear();
   _terminalAPI.setWorkspace?.(workspace);
 }
 
 function clearWorkspaceMode() {
   _workspace = null;
-  _expandedWorkspaceDirs.clear();
+  _expandedWorkspaceDirectories.clear();
   _terminalAPI.setWorkspace?.(null);
 }
 
