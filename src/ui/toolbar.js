@@ -18,6 +18,7 @@ let _fsAPI       = null;
 let _dirty       = false;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
+const _expandedWorkspaceDirs = new Set();
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -308,28 +309,66 @@ function renderWorkspaceSidebar(workspace) {
   const tree = document.getElementById('file-tree');
   if (!tree) return;
   tree.innerHTML = '';
-  const entries = [...workspace.entries].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-    return a.path.localeCompare(b.path);
-  });
+
+  const childrenByParent = buildWorkspaceChildrenMap(workspace.entries);
+  renderWorkspaceChildren(tree, childrenByParent, '', 0);
+  highlightWorkspaceFile(_fileName);
+}
+
+function buildWorkspaceChildrenMap(entries) {
+  const childrenByParent = new Map();
+  childrenByParent.set('', []);
 
   for (const entry of entries) {
+    const parent = parentWorkspacePath(entry.path);
+    if (!childrenByParent.has(parent)) {
+      childrenByParent.set(parent, []);
+    }
+    childrenByParent.get(parent).push(entry);
+  }
+
+  for (const list of childrenByParent.values()) {
+    list.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+      return workspaceBaseName(a.path).localeCompare(workspaceBaseName(b.path));
+    });
+  }
+  return childrenByParent;
+}
+
+function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
+  const children = childrenByParent.get(parentPath) || [];
+  for (const entry of children) {
     const li = document.createElement('li');
     li.setAttribute('role', 'treeitem');
     li.dataset.path = entry.path;
-    const depth = Math.max(0, entry.path.split('/').length - 1);
     li.style.paddingLeft = `${16 + depth * 14}px`;
-    li.textContent = entry.kind === 'directory' ? `📁 ${entry.path}` : `📄 ${entry.path}`;
 
-    if (entry.kind === 'file') {
+    if (entry.kind === 'directory') {
+      const isExpanded = _expandedWorkspaceDirs.has(entry.path);
+      li.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
       li.addEventListener('click', () => {
-        void openWorkspaceFile(entry.path);
+        if (_expandedWorkspaceDirs.has(entry.path)) {
+          _expandedWorkspaceDirs.delete(entry.path);
+        } else {
+          _expandedWorkspaceDirs.add(entry.path);
+        }
+        renderWorkspaceSidebar(_workspace);
       });
+      tree.appendChild(li);
+
+      if (isExpanded) {
+        renderWorkspaceChildren(tree, childrenByParent, entry.path, depth + 1);
+      }
+      continue;
     }
 
+    li.textContent = `📄 ${workspaceBaseName(entry.path)}`;
+    li.addEventListener('click', () => {
+      void openWorkspaceFile(entry.path);
+    });
     tree.appendChild(li);
   }
-  highlightWorkspaceFile(_fileName);
 }
 
 function highlightWorkspaceFile(path) {
@@ -379,12 +418,24 @@ function showOpenError(err) {
 
 function setWorkspaceMode(workspace) {
   _workspace = workspace;
+  _expandedWorkspaceDirs.clear();
   _terminalAPI.setWorkspace?.(workspace);
 }
 
 function clearWorkspaceMode() {
   _workspace = null;
+  _expandedWorkspaceDirs.clear();
   _terminalAPI.setWorkspace?.(null);
+}
+
+function parentWorkspacePath(path) {
+  const idx = path.lastIndexOf('/');
+  return idx === -1 ? '' : path.slice(0, idx);
+}
+
+function workspaceBaseName(path) {
+  const idx = path.lastIndexOf('/');
+  return idx === -1 ? path : path.slice(idx + 1);
 }
 
 async function openSingleFile() {
