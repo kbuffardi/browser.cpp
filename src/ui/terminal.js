@@ -590,11 +590,12 @@ function cmdGxx(args) {
       std = a.slice(5);
     } else if (a === '-std' && args[i + 1]) {
       std = args[++i];
-    } else if (
-      (a === '-o' && args[i + 1]) ||
-      (a.startsWith('-o') && a.length > 2)
-    ) {
-      if (a === '-o') i++;
+    } else if (a === '-o' && args[i + 1]) {
+      i += 2;
+      continue;
+    } else if (a.startsWith('-o') && a.length > 2) {
+      i += 1;
+      continue;
     } else if (!a.startsWith('-')) {
       // source file – ignored; we always compile the current editor content
     } else {

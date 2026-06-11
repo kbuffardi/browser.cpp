@@ -108,7 +108,7 @@ async function persistSession() {
     await storage.set({
       [STORAGE_KEY]: { source: editorAPI.getValue(), savedAt: Date.now() },
     });
-  } catch (_) {
-    return;
+  } catch (err) {
+    console.warn('Failed to persist browser.cpp session:', err);
   }
 }
