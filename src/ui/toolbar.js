@@ -343,13 +343,16 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
   for (const entry of children) {
     const li = document.createElement('li');
     li.setAttribute('role', 'treeitem');
+    li.setAttribute('aria-level', String(depth + 1));
     li.dataset.path = entry.path;
     li.style.paddingLeft = `${16 + depth * 14}px`;
 
     if (entry.kind === 'directory') {
       const isExpanded = _expandedWorkspaceDirectories.has(entry.path);
+      li.setAttribute('aria-expanded', String(isExpanded));
       li.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
-      li.addEventListener('click', () => {
+      li.addEventListener('click', (event) => {
+        event.stopPropagation();
         if (_expandedWorkspaceDirectories.has(entry.path)) {
           _expandedWorkspaceDirectories.delete(entry.path);
         } else {
@@ -366,7 +369,8 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
     }
 
     li.textContent = `📄 ${workspaceBaseName(entry.path)}`;
-    li.addEventListener('click', () => {
+    li.addEventListener('click', (event) => {
+      event.stopPropagation();
       void openWorkspaceFile(entry.path);
     });
     tree.appendChild(li);
