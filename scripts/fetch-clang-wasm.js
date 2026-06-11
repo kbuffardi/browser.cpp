@@ -145,7 +145,7 @@ function hasNonEmptyFile(dest) {
   }
 }
 
-function isValidExistingArtifact({ name, isWasm }, dest) {
+function isValidExistingArtifact({ isWasm }, dest) {
   if (!fs.existsSync(dest)) return false;
   if (!hasNonEmptyFile(dest)) return false;
   if (isWasm) return hasWasmMagic(dest);

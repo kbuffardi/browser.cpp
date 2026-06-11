@@ -444,17 +444,6 @@ function workspaceBaseName(path) {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
-async function openSingleFile() {
-  const result = await _fsAPI.openFile();
-  if (!result) return false;
-  clearWorkspaceMode();
-  _editorAPI.setValue(result.content);
-  _editorAPI.clearDiagnostics();
-  setFileName(result.name);
-  markDirty(false);
-  return true;
-}
-
 async function openFolderWorkspace() {
   const workspace = await _fsAPI.openFolder();
   if (!workspace) return false;
