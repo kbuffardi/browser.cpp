@@ -224,8 +224,8 @@ export async function readAllWorkspaceFiles() {
       }
       const buf = await file.arrayBuffer();
       result.push({ path, bytes: new Uint8Array(buf) });
-    } catch (_) {
-      // Skip files that can't be read (e.g. permission revoked)
+    } catch (err) {
+      console.warn('[browser.cpp] Could not read workspace file for VFS:', path, err);
     }
   }
   return result;
@@ -255,8 +255,8 @@ export async function writeWorkspaceFile(path, content) {
       await writable.write(data);
       await writable.close();
       return;
-    } catch (_) {
-      // Fall through to directory-based creation
+    } catch (err) {
+      console.warn('[browser.cpp] Could not write via stored handle, retrying via directory:', key, err);
     }
   }
 
