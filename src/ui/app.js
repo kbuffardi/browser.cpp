@@ -65,12 +65,107 @@ window.addEventListener('DOMContentLoaded', async () => {
   const resizeObserver = new ResizeObserver(() => terminalAPI.fitTerminal());
   const terminalPanel  = document.getElementById('terminal-container');
   if (terminalPanel) resizeObserver.observe(terminalPanel);
+  initPanelResizers();
 
   // 9. Persist session on unload
   window.addEventListener('beforeunload', persistSession);
 
   editorAPI.focus();
 });
+
+function initPanelResizers() {
+  initTerminalResizer();
+  initSidebarResizer();
+}
+
+function initTerminalResizer() {
+  const panel = document.getElementById('terminal-panel');
+  const header = document.getElementById('terminal-panel-header');
+  const workspace = document.getElementById('workspace');
+  const tabBar = document.getElementById('tab-bar');
+  const toggleButton = document.getElementById('btn-toggle-terminal');
+  if (!panel || !header || !workspace || !tabBar || !toggleButton) return;
+
+  header.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+
+    const startY = event.clientY;
+    const startHeight = panel.getBoundingClientRect().height;
+    const minHeight = 80;
+
+    panel.classList.remove('collapsed');
+    toggleButton.textContent = '▾';
+
+    const onMouseMove = (moveEvent) => {
+      const workspaceHeight = workspace.getBoundingClientRect().height;
+      const maxHeight = Math.max(minHeight, workspaceHeight - tabBar.offsetHeight - minHeight);
+      const nextHeight = clamp(startHeight - (moveEvent.clientY - startY), minHeight, maxHeight);
+      panel.style.height = `${nextHeight}px`;
+    };
+
+    const onMouseUp = () => {
+      document.body.classList.remove('is-resizing');
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.body.classList.add('is-resizing');
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp, { once: true });
+    event.preventDefault();
+  });
+}
+
+function initSidebarResizer() {
+  const sidebar = document.getElementById('sidebar');
+  const main = document.getElementById('main');
+  if (!sidebar || !main) return;
+
+  const edgeThreshold = 6;
+
+  sidebar.addEventListener('mousemove', (event) => {
+    sidebar.style.cursor = isNearRightEdge(event, sidebar, edgeThreshold) ? 'ew-resize' : '';
+  });
+
+  sidebar.addEventListener('mouseleave', () => {
+    sidebar.style.cursor = '';
+  });
+
+  sidebar.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || !isNearRightEdge(event, sidebar, edgeThreshold)) return;
+
+    const startX = event.clientX;
+    const startWidth = sidebar.getBoundingClientRect().width;
+    const minWidth = 120;
+
+    const onMouseMove = (moveEvent) => {
+      const maxWidth = Math.max(minWidth, main.getBoundingClientRect().width - 240);
+      const nextWidth = clamp(startWidth + (moveEvent.clientX - startX), minWidth, maxWidth);
+      sidebar.style.width = `${nextWidth}px`;
+    };
+
+    const onMouseUp = () => {
+      document.body.classList.remove('is-resizing-horizontal');
+      sidebar.style.cursor = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.body.classList.add('is-resizing-horizontal');
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp, { once: true });
+    event.preventDefault();
+  });
+}
+
+function isNearRightEdge(event, element, threshold) {
+  const rect = element.getBoundingClientRect();
+  return rect.right - event.clientX <= threshold;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
 // ── Session persistence (chrome.storage.local + IndexedDB) ───────────────────
 

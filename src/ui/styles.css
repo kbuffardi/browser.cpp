@@ -156,7 +156,6 @@ select:focus {
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
-  resize: horizontal;
 }
 
 .panel-header {
@@ -218,6 +217,7 @@ select:focus {
   overflow-y: hidden;
   flex-shrink: 0;
   scrollbar-width: thin;
+  scrollbar-color: var(--surface1) var(--mantle);
 }
 
 .tab {
@@ -233,6 +233,15 @@ select:focus {
   white-space: nowrap;
   user-select: none;
   min-width: 100px;
+  flex: 0 0 auto;
+  max-width: 240px;
+  overflow: hidden;
+}
+
+.tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab:hover {
@@ -286,7 +295,6 @@ select:focus {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  resize: vertical;
   overflow: hidden;
 }
 
@@ -371,6 +379,18 @@ select:focus {
   height: 1px;
   clip: rect(0,0,0,0);
   overflow: hidden;
+}
+
+body.is-resizing,
+body.is-resizing * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-horizontal,
+body.is-resizing-horizontal * {
+  cursor: ew-resize !important;
+  user-select: none !important;
 }
 
 /* Scrollbars */
