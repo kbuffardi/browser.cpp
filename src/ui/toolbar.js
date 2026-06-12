@@ -98,7 +98,10 @@ function bindKeyboardShortcuts() {
 // ── Worker message handler ────────────────────────────────────────────────────
 
 function handleWorkerMessages() {
-  _worker.onmessage = ({ data }) => void handleWorkerMessage(data);
+  _worker.onmessage = ({ data }) =>
+    handleWorkerMessage(data).catch((err) =>
+      console.error('[browser.cpp] Worker message handler error:', err)
+    );
 }
 
 async function handleWorkerMessage(data) {

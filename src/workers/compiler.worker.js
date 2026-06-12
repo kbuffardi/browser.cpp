@@ -103,6 +103,7 @@ const VFS_PREOPEN_FD = 3;
 /**
  * Normalise a path for VFS lookup.
  * Strips leading "./" and "/" sequences and resolves "." / ".." components.
+ * ".." at the root is silently ignored to prevent escaping the workspace.
  * @param {string} p
  * @returns {string}
  */
@@ -110,7 +111,10 @@ function normVfsPath(p) {
   const parts = [];
   for (const seg of String(p || '').split('/')) {
     if (seg === '' || seg === '.') continue;
-    if (seg === '..') { parts.pop(); continue; }
+    if (seg === '..') {
+      if (parts.length > 0) parts.pop(); // ignore '..' at root (can't escape workspace)
+      continue;
+    }
     parts.push(seg);
   }
   return parts.join('/');
@@ -810,6 +814,9 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
 
       let initialData;
       if (runVfs.has(path)) {
+        // Defensive copy: prevents the open fd's buffer from aliasing the VFS
+        // entry, so writes to the fd don't corrupt the stored original until
+        // the fd is explicitly closed (or flushed at program exit).
         initialData = trunc ? new Uint8Array(0) : new Uint8Array(runVfs.get(path));
       } else if (creat) {
         initialData = new Uint8Array(0);
