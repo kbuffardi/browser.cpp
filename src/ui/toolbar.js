@@ -98,71 +98,83 @@ function bindKeyboardShortcuts() {
 // ── Worker message handler ────────────────────────────────────────────────────
 
 function handleWorkerMessages() {
-  _worker.onmessage = ({ data }) => {
-    switch (data.type) {
-      case 'compiler-loading':
-        updateStatusBar(
-          'compiler', 'loading',
-          `Loading compiler… ${data.progress}%`
-        );
-        break;
+  _worker.onmessage = ({ data }) => void handleWorkerMessage(data);
+}
 
-      case 'compiler-ready':
-        updateStatusBar('compiler', 'ready', 'Compiler ready');
-        _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
-        break;
+async function handleWorkerMessage(data) {
+  switch (data.type) {
+    case 'compiler-loading':
+      updateStatusBar(
+        'compiler', 'loading',
+        `Loading compiler… ${data.progress}%`
+      );
+      break;
 
-      case 'compiler-error':
-        updateStatusBar('compiler', 'error', 'Compiler unavailable');
-        _terminalAPI.printInfo(
-          `⚠ Compiler not available:\n${data.message}\n\n` +
-          'Run:  npm run fetch-clang  then reload the extension.'
-        );
-        break;
+    case 'compiler-ready':
+      updateStatusBar('compiler', 'ready', 'Compiler ready');
+      _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
+      break;
 
-      case 'compile-start':
-        updateStatusBar('compiler', 'busy', 'Compiling…');
-        setButtonsEnabled(false);
-        _editorAPI.clearDiagnostics();
-        break;
+    case 'compiler-error':
+      updateStatusBar('compiler', 'error', 'Compiler unavailable');
+      _terminalAPI.printInfo(
+        `⚠ Compiler not available:\n${data.message}\n\n` +
+        'Run:  npm run fetch-clang  then reload the extension.'
+      );
+      break;
 
-      case 'compile-result': {
-        setButtonsEnabled(true);
-        updateStatusBar('compiler', 'ready', 'Compiler ready');
+    case 'compile-start':
+      updateStatusBar('compiler', 'busy', 'Compiling…');
+      setButtonsEnabled(false);
+      _editorAPI.clearDiagnostics();
+      break;
 
-        // Parse and render inline diagnostics in the editor
-        if (data.diagnostics) {
-          const items = _editorAPI.parseDiagnostics(data.diagnostics);
-          if (items.length) _editorAPI.markDiagnostics(items);
-        }
+    case 'compile-result': {
+      setButtonsEnabled(true);
+      updateStatusBar('compiler', 'ready', 'Compiler ready');
 
-        _terminalAPI.onCompileResult(data);
-        break;
+      // Parse and render inline diagnostics in the editor
+      if (data.diagnostics) {
+        const items = _editorAPI.parseDiagnostics(data.diagnostics);
+        if (items.length) _editorAPI.markDiagnostics(items);
       }
 
-      case 'run-start':
-        updateStatusBar('compiler', 'busy', 'Running…');
-        setButtonsEnabled(false);
-        break;
-
-      case 'stdout':
-        _terminalAPI.writeStdout(data.data);
-        break;
-
-      case 'stderr':
-        _terminalAPI.writeStderr(data.data);
-        break;
-
-      case 'run-result':
-        setButtonsEnabled(true);
-        updateStatusBar('compiler', 'ready', 'Compiler ready');
-        _terminalAPI.onRunResult(data);
-        break;
-
-      default:
-        break;
+      _terminalAPI.onCompileResult(data);
+      break;
     }
-  };
+
+    case 'run-start':
+      updateStatusBar('compiler', 'busy', 'Running…');
+      setButtonsEnabled(false);
+      break;
+
+    case 'stdout':
+      _terminalAPI.writeStdout(data.data);
+      break;
+
+    case 'stderr':
+      _terminalAPI.writeStderr(data.data);
+      break;
+
+    case 'run-result':
+      setButtonsEnabled(true);
+      updateStatusBar('compiler', 'ready', 'Compiler ready');
+      _terminalAPI.onRunResult(data);
+      // Write any files created or modified by the program back to the workspace
+      if (data.vfsChanges?.length && _fsAPI?.writeWorkspaceFile) {
+        for (const change of data.vfsChanges) {
+          try {
+            await _fsAPI.writeWorkspaceFile(change.path, change.bytes);
+          } catch (err) {
+            console.warn('[browser.cpp] Failed to write file to workspace:', change.path, err);
+          }
+        }
+      }
+      break;
+
+    default:
+      break;
+  }
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────

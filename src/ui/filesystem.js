@@ -81,7 +81,7 @@ export async function openFolder() {
 
   let handle;
   try {
-    handle = await window.showDirectoryPicker();
+    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
   } catch (err) {
     if (err.name === 'AbortError') return null;
     throw err;
@@ -203,6 +203,95 @@ export async function readWorkspaceFile(path) {
     return item.file.text();
   }
   return null;
+}
+
+/**
+ * Read all files in the currently opened workspace as raw bytes.
+ * Returns an array of { path: string, bytes: Uint8Array } objects.
+ * Returns an empty array when no workspace is open.
+ */
+export async function readAllWorkspaceFiles() {
+  const result = [];
+  for (const [path, item] of workspaceFiles) {
+    try {
+      let file;
+      if (item.handle) {
+        file = await item.handle.getFile();
+      } else if (item.file) {
+        file = item.file;
+      } else {
+        continue;
+      }
+      const buf = await file.arrayBuffer();
+      result.push({ path, bytes: new Uint8Array(buf) });
+    } catch (_) {
+      // Skip files that can't be read (e.g. permission revoked)
+    }
+  }
+  return result;
+}
+
+/**
+ * Write content to a file in the currently opened workspace folder.
+ * Creates the file (and any missing parent directories) if it does not exist.
+ * Does nothing when no workspace folder is open or write permission is unavailable.
+ *
+ * @param {string}            path    – workspace-relative path (e.g. "output.txt")
+ * @param {Uint8Array|string} content – bytes or text to write
+ */
+export async function writeWorkspaceFile(path, content) {
+  const key = normalizeWorkspacePath(path);
+  if (!key) return;
+
+  const data = content instanceof Uint8Array
+    ? content
+    : new TextEncoder().encode(content);
+
+  // Prefer the stored handle if we already have one
+  const item = workspaceFiles.get(key);
+  if (item?.handle) {
+    try {
+      const writable = await item.handle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      return;
+    } catch (_) {
+      // Fall through to directory-based creation
+    }
+  }
+
+  // No stored handle – navigate the directory tree and create the file
+  if (!currentDirectoryHandle) return;
+
+  const parts = key.split('/');
+  const filename = parts.pop();
+  let dirHandle = currentDirectoryHandle;
+
+  for (const part of parts) {
+    if (!part) continue;
+    try {
+      dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
+    } catch (_) {
+      return; // Cannot create directory (e.g. permission denied)
+    }
+  }
+
+  let fileHandle;
+  try {
+    fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+  } catch (_) {
+    return;
+  }
+
+  try {
+    const writable = await fileHandle.createWritable();
+    await writable.write(data);
+    await writable.close();
+    // Update the in-memory index so future reads/writes use the same handle
+    workspaceFiles.set(key, { handle: fileHandle });
+  } catch (_) {
+    // Write permission denied – changes remain in-memory only
+  }
 }
 
 // ── Feature detection ─────────────────────────────────────────────────────────
