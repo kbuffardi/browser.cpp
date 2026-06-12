@@ -39,8 +39,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   terminalAPI.createTerminal(terminalContainer, {
     onCompile: (source, flags, std) =>
       worker.postMessage({ type: 'compile', source, flags, std }),
-    onRun: (sab) =>
-      worker.postMessage({ type: 'run', sharedBuffer: sab }),
+    onRun: async (sab) => {
+      const vfsFiles = await fsAPI.readAllWorkspaceFiles();
+      worker.postMessage({ type: 'run', sharedBuffer: sab, vfsFiles });
+    },
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
   });
@@ -254,12 +256,12 @@ async function restoreSession() {
     // ── Workspace mode: restore folder + open tabs ─────────────────────────
     const handle = await _loadDirectoryHandle();
     if (handle && Array.isArray(session.openTabPaths)) {
-      let permission = await handle.queryPermission({ mode: 'read' });
+      let permission = await handle.queryPermission({ mode: 'readwrite' });
       if (permission !== 'granted') {
         // requestPermission requires a user gesture; attempt it anyway — it
         // works on Chrome extension pages that were opened by the user.
         try {
-          permission = await handle.requestPermission({ mode: 'read' });
+          permission = await handle.requestPermission({ mode: 'readwrite' });
         } catch (_err) {
           // SecurityError if no user gesture is present; proceed without restore
         }

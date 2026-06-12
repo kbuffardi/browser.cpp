@@ -64,6 +64,102 @@ let sysrootBuffer = null;
  */
 let compiledBinary = null;
 
+// ── Per-run virtual filesystem (VFS) ──────────────────────────────────────────
+
+/**
+ * Map from normalised workspace-relative path to the file's current content.
+ * Populated from the workspace before each run and updated as the program
+ * writes files.
+ * @type {Map<string, Uint8Array>}
+ */
+let runVfs = new Map();
+
+/**
+ * Set of paths that the WASM program wrote to during the current run.
+ * These are sent back to the main thread as `vfsChanges` in `run-result`.
+ * @type {Set<string>}
+ */
+let runVfsDirty = new Set();
+
+/**
+ * Open file-descriptor table.  Keys 0–2 are stdin/stdout/stderr (handled
+ * directly in the WASI shim); key 3 is the pre-opened root directory.
+ * Keys 4+ are file descriptors opened via path_open.
+ *
+ * Each entry has shape:
+ *   { type: 'preopen' }
+ *   { type: 'file', path: string, data: Uint8Array, cursor: number, dirty: boolean }
+ *
+ * @type {Map<number, object>}
+ */
+let runFds = new Map();
+
+/** Next file-descriptor number to allocate (starts at 4). */
+let runNextFd = 4;
+
+/** fd number for the single pre-opened root directory exposed to the program. */
+const VFS_PREOPEN_FD = 3;
+
+/**
+ * Normalise a path for VFS lookup.
+ * Strips leading "./" and "/" sequences and resolves "." / ".." components.
+ * @param {string} p
+ * @returns {string}
+ */
+function normVfsPath(p) {
+  const parts = [];
+  for (const seg of String(p || '').split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { parts.pop(); continue; }
+    parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+/**
+ * Initialise the per-run VFS state before each `run()` call.
+ * @param {Array<{path: string, bytes: Uint8Array}>} vfsFiles
+ */
+function initRunVfs(vfsFiles) {
+  runVfs       = new Map();
+  runVfsDirty  = new Set();
+  runFds       = new Map();
+  runNextFd    = 4;
+  runFds.set(VFS_PREOPEN_FD, { type: 'preopen' });
+  for (const { path, bytes } of (vfsFiles || [])) {
+    const key = normVfsPath(path);
+    if (key) runVfs.set(key, new Uint8Array(bytes));
+  }
+}
+
+/**
+ * Flush all still-open writable file descriptors back into `runVfs` and mark
+ * them dirty.  Called after the WASM program exits (even abnormally) so that
+ * files the program didn't explicitly close are still saved.
+ */
+function flushRunFds() {
+  for (const file of runFds.values()) {
+    if (file.type === 'file' && file.dirty) {
+      runVfs.set(file.path, file.data);
+      runVfsDirty.add(file.path);
+    }
+  }
+}
+
+/**
+ * Collect all VFS entries that were written to during this run.
+ * @returns {Array<{path: string, bytes: Uint8Array}>}
+ */
+function getDirtyVfsFiles() {
+  const result = [];
+  for (const path of runVfsDirty) {
+    if (runVfs.has(path)) {
+      result.push({ path, bytes: runVfs.get(path) });
+    }
+  }
+  return result;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function send(msg) {
@@ -465,10 +561,27 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
       const spans = iovSpans(iovsPtr, iovsLen);
       let total = 0;
       for (const { base, len } of spans) {
-        const bytes = u8().subarray(base, base + len);
-        const text  = new TextDecoder().decode(bytes);
-        if (fd === 1) onStdout(text);
-        else if (fd === 2) onStderr(text);
+        if (fd === 1 || fd === 2) {
+          const text = new TextDecoder().decode(u8().subarray(base, base + len));
+          if (fd === 1) onStdout(text);
+          else onStderr(text);
+        } else {
+          // File fd: write raw bytes into the open file's buffer
+          const file = runFds.get(fd);
+          if (!file || file.type !== 'file') {
+            view().setUint32(nwrittenPtr, total, true);
+            return 8; // __WASI_ERRNO_BADF
+          }
+          const needed = file.cursor + len;
+          if (needed > file.data.length) {
+            const grown = new Uint8Array(needed);
+            grown.set(file.data);
+            file.data = grown;
+          }
+          file.data.set(u8().subarray(base, base + len), file.cursor);
+          file.cursor += len;
+          file.dirty   = true;
+        }
         total += len;
       }
       view().setUint32(nwrittenPtr, total, true);
@@ -477,14 +590,37 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
 
     // fd_read(fd, iovs_ptr, iovs_len, nread_ptr) → errno
     //
-    // Blocks (via Atomics.wait) until the terminal writes a line into the SAB,
-    // then drains bytes from an internal queue into the WASM memory buffer.
+    // For fd 0 (stdin): blocks (via Atomics.wait) until the terminal writes a
+    // line into the SAB, then drains bytes from an internal queue into WASM memory.
+    // For file fds: reads sequentially from the open file's in-memory buffer.
     fd_read(fd, iovsPtr, iovsLen, nreadPtr) {
+      // ── File fds ──────────────────────────────────────────────────────────
+      if (fd > 2) {
+        const file = runFds.get(fd);
+        if (!file || file.type !== 'file') {
+          view().setUint32(nreadPtr, 0, true);
+          return 8; // __WASI_ERRNO_BADF
+        }
+        const spans = iovSpans(iovsPtr, iovsLen);
+        let total = 0;
+        for (const { base, len } of spans) {
+          const avail = file.data.length - file.cursor;
+          if (avail <= 0) break; // EOF
+          const toRead = Math.min(len, avail);
+          u8().set(file.data.subarray(file.cursor, file.cursor + toRead), base);
+          file.cursor += toRead;
+          total += toRead;
+        }
+        view().setUint32(nreadPtr, total, true);
+        return 0;
+      }
+
       if (fd !== 0) {
         view().setUint32(nreadPtr, 0, true);
         return 8; // __WASI_ERRNO_BADF
       }
 
+      // ── stdin (fd 0): SAB + Atomics blocking read ──────────────────────
       const spans = iovSpans(iovsPtr, iovsLen);
       let total = 0;
 
@@ -559,22 +695,55 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
     },
 
     // fd_close(fd) → errno
-    fd_close() { return 0; },
+    fd_close(fd) {
+      if (fd <= 2) return 0; // stdin/stdout/stderr: no-op
+      const file = runFds.get(fd);
+      if (!file) return 8; // __WASI_ERRNO_BADF
+      if (file.type === 'file' && file.dirty) {
+        runVfs.set(file.path, file.data);
+        runVfsDirty.add(file.path);
+      }
+      runFds.delete(fd);
+      return 0;
+    },
 
-    // fd_seek(fd, offset_lo, offset_hi, whence, newoffset_ptr) → errno
-    fd_seek() { return 70; }, // __WASI_ERRNO_SPIPE
+    // fd_seek(fd, offset, whence, newoffset_ptr) → errno
+    // offset is i64 (BigInt in JS).
+    fd_seek(fd, offset, whence, newoffsetPtr) {
+      const file = runFds.get(fd);
+      if (!file || file.type !== 'file') return 70; // __WASI_ERRNO_SPIPE
+      const SEEK_SET = 0, SEEK_CUR = 1, SEEK_END = 2;
+      const off = Number(offset); // safe for files well under 2^53 bytes
+      let newPos;
+      if (whence === SEEK_SET)      newPos = off;
+      else if (whence === SEEK_CUR) newPos = file.cursor + off;
+      else if (whence === SEEK_END) newPos = file.data.length + off;
+      else                          return 28; // __WASI_ERRNO_INVAL
+      if (newPos < 0) return 28; // __WASI_ERRNO_INVAL
+      file.cursor = newPos;
+      view().setBigUint64(newoffsetPtr, BigInt(newPos), true);
+      return 0;
+    },
 
     // fd_fdstat_get(fd, stat_ptr) → errno
     fd_fdstat_get(fd, statPtr) {
-      // Return a minimal fdstat for fd 0/1/2
-      if (fd > 2) return 8; // BADF
+      // __wasi_fdstat_t layout (24 bytes):
+      //   filetype(1) pad(1) fs_flags(2) pad(4) rights_base(8) rights_inheriting(8)
       const dv = view();
-      dv.setUint8(statPtr,   2);   // filetype = CHARACTER_DEVICE
-      dv.setUint8(statPtr+1, 0);
-      dv.setUint32(statPtr+2, 0, true); // fdflags
-      // rights fields (8 bytes each) – grant all
-      dv.setBigUint64(statPtr+8,  0xFFFFFFFFFFFFFFFFn, true);
-      dv.setBigUint64(statPtr+16, 0xFFFFFFFFFFFFFFFFn, true);
+      let filetype;
+      if (fd <= 2) {
+        filetype = 2; // __WASI_FILETYPE_CHARACTER_DEVICE
+      } else {
+        const file = runFds.get(fd);
+        if (!file) return 8; // __WASI_ERRNO_BADF
+        filetype = file.type === 'preopen' ? 3 : 4; // DIRECTORY or REGULAR_FILE
+      }
+      dv.setUint8(statPtr,     filetype);
+      dv.setUint8(statPtr + 1, 0);
+      dv.setUint32(statPtr + 2, 0, true); // fdflags
+      // rights: grant all
+      dv.setBigUint64(statPtr +  8, 0xFFFFFFFFFFFFFFFFn, true);
+      dv.setBigUint64(statPtr + 16, 0xFFFFFFFFFFFFFFFFn, true);
       return 0;
     },
 
@@ -596,11 +765,90 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
     },
 
     // fd_prestat_get(fd, buf_ptr) → errno
-    // Signals that there are no pre-opened directories.
-    fd_prestat_get() { return 8; }, // __WASI_ERRNO_BADF
+    // Returns the pre-open descriptor for fd 3 (the workspace root ".").
+    // libc iterates fd 3, 4, ... until it gets EBADF to discover pre-opens.
+    fd_prestat_get(fd, bufPtr) {
+      if (fd === VFS_PREOPEN_FD) {
+        // __WASI_PREOPENTYPE_DIR = 0; pr_name_len = 1 (for ".")
+        view().setUint8(bufPtr, 0);
+        view().setUint32(bufPtr + 4, 1, true);
+        return 0;
+      }
+      return 8; // __WASI_ERRNO_BADF
+    },
 
     // fd_prestat_dir_name(fd, path_ptr, path_len) → errno
-    fd_prestat_dir_name() { return 8; }, // __WASI_ERRNO_BADF
+    fd_prestat_dir_name(fd, pathPtr) {
+      if (fd === VFS_PREOPEN_FD) {
+        u8()[pathPtr] = 46; // '.'
+        return 0;
+      }
+      return 8; // __WASI_ERRNO_BADF
+    },
+
+    // path_open(dirfd, dirflags, path_ptr, path_len, oflags,
+    //           fs_rights_base, fs_rights_inheriting, fdflags,
+    //           opened_fd_ptr) → errno
+    // fs_rights_base and fs_rights_inheriting are i64 (BigInt in JS).
+    // We ignore rights – all opened fds are readable and writable.
+    path_open(dirFd, _dirflags, pathPtr, pathLen, oflags,
+              _fsRightsBase, _fsRightsInheriting, _fdflags, openedFdPtr) {
+      if (dirFd !== VFS_PREOPEN_FD && !runFds.has(dirFd)) return 8; // EBADF
+
+      const rawPath = new TextDecoder().decode(u8().subarray(pathPtr, pathPtr + pathLen));
+      const path = normVfsPath(rawPath);
+
+      const OFLAGS_CREAT = 0x0001;
+      const OFLAGS_EXCL  = 0x0004;
+      const OFLAGS_TRUNC = 0x0008;
+
+      const creat = !!(oflags & OFLAGS_CREAT);
+      const excl  = !!(oflags & OFLAGS_EXCL);
+      const trunc = !!(oflags & OFLAGS_TRUNC);
+
+      if (excl && runVfs.has(path)) return 20; // __WASI_ERRNO_EXIST
+
+      let initialData;
+      if (runVfs.has(path)) {
+        initialData = trunc ? new Uint8Array(0) : new Uint8Array(runVfs.get(path));
+      } else if (creat) {
+        initialData = new Uint8Array(0);
+      } else {
+        return 44; // __WASI_ERRNO_NOENT
+      }
+
+      const newFd = runNextFd++;
+      runFds.set(newFd, { type: 'file', path, data: initialData, cursor: 0, dirty: false });
+      view().setUint32(openedFdPtr, newFd, true);
+      return 0;
+    },
+
+    // path_create_directory(fd, path_ptr, path_len) → errno
+    // Directories are implicit in the VFS; always succeed.
+    path_create_directory() {
+      return 0;
+    },
+
+    // path_filestat_get(fd, flags, path_ptr, path_len, stat_ptr) → errno
+    // Returns a minimal filestat for files that exist in the VFS.
+    path_filestat_get(_fd, _flags, pathPtr, pathLen, statPtr) {
+      const rawPath = new TextDecoder().decode(u8().subarray(pathPtr, pathPtr + pathLen));
+      const path = normVfsPath(rawPath);
+      if (!runVfs.has(path)) return 44; // __WASI_ERRNO_NOENT
+      const fileData = runVfs.get(path);
+      const dv = view();
+      // __wasi_filestat_t layout (64 bytes):
+      //   dev(8) ino(8) filetype(1)+pad(7) nlink(8) size(8) atim(8) mtim(8) ctim(8)
+      dv.setBigUint64(statPtr,      0n, true); // dev
+      dv.setBigUint64(statPtr +  8, 0n, true); // ino
+      dv.setUint8(statPtr + 16, 4);            // filetype = __WASI_FILETYPE_REGULAR_FILE
+      dv.setBigUint64(statPtr + 24, 1n, true); // nlink
+      dv.setBigUint64(statPtr + 32, BigInt(fileData.length), true); // size
+      dv.setBigUint64(statPtr + 40, 0n, true); // atim
+      dv.setBigUint64(statPtr + 48, 0n, true); // mtim
+      dv.setBigUint64(statPtr + 56, 0n, true); // ctim
+      return 0;
+    },
   };
 
   return { wasi, setMemory };
@@ -614,14 +862,18 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
  * @param {SharedArrayBuffer} sharedBuffer – SAB created by the terminal that
  *   provides interactive stdin via Atomics.  The SAB must be pre-zeroed (state
  *   = 0) so that fd_read blocks immediately when no input is ready.
+ * @param {Array<{path:string, bytes:Uint8Array}>} vfsFiles – workspace files
+ *   to expose to the program via fstream.  Written/created files are collected
+ *   and returned in the `run-result` message as `vfsChanges`.
  */
-async function run(sharedBuffer) {
+async function run(sharedBuffer, vfsFiles = []) {
   if (!compiledBinary) {
     send({ type: 'stderr', data: 'No compiled binary. Please compile first.\n' });
-    send({ type: 'run-result', exitCode: 1 });
+    send({ type: 'run-result', exitCode: 1, vfsChanges: [] });
     return;
   }
 
+  initRunVfs(vfsFiles);
   let exitCode = 0;
 
   const { wasi, setMemory } = createWASIImports({
@@ -652,7 +904,12 @@ async function run(sharedBuffer) {
     }
   }
 
-  send({ type: 'run-result', exitCode });
+  // Flush any still-open writable file descriptors so their content is saved
+  // even if the program exited without explicitly calling fclose / fstream dtor.
+  flushRunFds();
+  const vfsChanges = getDirtyVfsFiles();
+
+  send({ type: 'run-result', exitCode, vfsChanges });
 }
 
 // ── ensure ready helper ───────────────────────────────────────────────────────
@@ -683,7 +940,7 @@ self.onmessage = async ({ data }) => {
 
     case 'run':
       send({ type: 'run-start' });
-      await run(data.sharedBuffer);
+      await run(data.sharedBuffer, data.vfsFiles || []);
       break;
 
     case 'status':

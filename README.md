@@ -8,6 +8,7 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 | Compiler | WASM-native Clang (runs entirely in the browser, offline) |
 | Terminal | xterm.js with a bash-like shell (`g++`, `./a.out`, `ls`, `cat`, …) |
 | File access | File System Access API – open & save files on your local drive |
+| File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
 
 ---
@@ -116,7 +117,40 @@ terminal.js  →  xterm.js display
 
 ---
 
-## Keyboard shortcuts
+## fstream / File I/O
+
+When a folder is opened with **Ctrl+O** (or **Open folder**), the compiled program
+can read and write files in that folder using standard C++ file streams:
+
+```cpp
+#include <fstream>
+#include <string>
+
+int main() {
+    // Read a file
+    std::ifstream in("input.txt");
+    std::string line;
+    while (std::getline(in, line)) { /* … */ }
+
+    // Write a file
+    std::ofstream out("output.txt");
+    out << "Hello from browser.cpp!\n";
+}
+```
+
+**How it works:** Before each run the extension reads all workspace files into
+an in-memory virtual filesystem (VFS) that is exposed to the WASM program via
+the WASI `snapshot_preview1` file-system API.  After the program exits, any
+files the program created or modified are written back to the real folder on
+disk.  Opening a folder requests **read/write** permission so that outputs can
+be persisted.
+
+**When no folder is open,** `fstream` opens will fail as expected
+(`failbit` is set), and no files are written back.
+
+---
+
+
 
 | Action | Shortcut |
 |--------|----------|
@@ -187,7 +221,7 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
 - **Binary size**: The Clang WASM binary is large; first load may take a few
   seconds.  Subsequent loads use the browser cache.
 - **No network access**: Programs run in a sandboxed WASI environment with no
-  socket or file-I/O beyond stdin/stdout/stderr.
+  socket support.
 - **Standard library**: Only the subset of libc/libc++ compiled into the WASM
   sysroot is available.
 - **Execution time**: Long-running programs may trigger the browser's "unresponsive
