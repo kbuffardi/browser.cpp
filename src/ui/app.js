@@ -86,20 +86,25 @@ function initTerminalResizer() {
   const toggleButton = document.getElementById('btn-toggle-terminal');
   if (!panel || !header || !workspace || !tabBar || !toggleButton) return;
 
+  const minTerminalHeight = 80;
+  const minEditorHeight = 80;
+
   header.addEventListener('mousedown', (event) => {
     if (event.button !== 0 || event.target.closest('button')) return;
 
     const startY = event.clientY;
     const startHeight = panel.getBoundingClientRect().height;
-    const minHeight = 80;
+    const workspaceHeight = workspace.getBoundingClientRect().height;
+    const maxHeight = Math.max(
+      minTerminalHeight,
+      workspaceHeight - tabBar.offsetHeight - minEditorHeight
+    );
 
     panel.classList.remove('collapsed');
     toggleButton.textContent = '▾';
 
     const onMouseMove = (moveEvent) => {
-      const workspaceHeight = workspace.getBoundingClientRect().height;
-      const maxHeight = Math.max(minHeight, workspaceHeight - tabBar.offsetHeight - minHeight);
-      const nextHeight = clamp(startHeight - (moveEvent.clientY - startY), minHeight, maxHeight);
+      const nextHeight = clamp(startHeight - (moveEvent.clientY - startY), minTerminalHeight, maxHeight);
       panel.style.height = `${nextHeight}px`;
     };
 
@@ -122,6 +127,8 @@ function initSidebarResizer() {
   if (!sidebar || !main) return;
 
   const edgeThreshold = 6;
+  const minSidebarWidth = 120;
+  const minWorkspaceWidth = 240;
 
   sidebar.addEventListener('mousemove', (event) => {
     sidebar.style.cursor = isNearRightEdge(event, sidebar, edgeThreshold) ? 'ew-resize' : '';
@@ -136,11 +143,10 @@ function initSidebarResizer() {
 
     const startX = event.clientX;
     const startWidth = sidebar.getBoundingClientRect().width;
-    const minWidth = 120;
+    const maxWidth = Math.max(minSidebarWidth, main.getBoundingClientRect().width - minWorkspaceWidth);
 
     const onMouseMove = (moveEvent) => {
-      const maxWidth = Math.max(minWidth, main.getBoundingClientRect().width - 240);
-      const nextWidth = clamp(startWidth + (moveEvent.clientX - startX), minWidth, maxWidth);
+      const nextWidth = clamp(startWidth + (moveEvent.clientX - startX), minSidebarWidth, maxWidth);
       sidebar.style.width = `${nextWidth}px`;
     };
 
