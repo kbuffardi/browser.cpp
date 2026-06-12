@@ -311,6 +311,7 @@ function clearWorkspace() {
   workspaceEntries.length = 0;
   workspaceFiles.clear();
   workspaceGit = { isRepo: false, branch: null, remotes: [] };
+  currentDirectoryHandle = null;
 }
 
 async function walkDirectoryHandle(dirHandle, prefix) {
