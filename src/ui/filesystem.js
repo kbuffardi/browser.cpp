@@ -15,6 +15,8 @@ const BLOB_URL_REVOKE_DELAY_MS = 2_000;
 
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
+/** @type {FileSystemDirectoryHandle|null} */
+let currentDirectoryHandle = null;
 let workspaceName = null;
 const workspaceEntries = [];
 const workspaceFiles = new Map();
@@ -164,6 +166,30 @@ export function newFile() {
   currentHandle = null;
 }
 
+/** Return the currently open directory handle (for session persistence). */
+export function getDirectoryHandle() {
+  return currentDirectoryHandle;
+}
+
+/**
+ * Restore a workspace from a previously stored FileSystemDirectoryHandle.
+ * The caller must ensure the handle has read permission before calling.
+ * @param {FileSystemDirectoryHandle} handle
+ * @returns {Promise<{name:string, entries:Array, git:object}>}
+ */
+export async function openFolderFromHandle(handle) {
+  clearWorkspace();
+  currentDirectoryHandle = handle;
+  workspaceName = handle.name;
+  await walkDirectoryHandle(handle, '');
+  workspaceGit = await detectGitMetadata();
+  return {
+    name: workspaceName,
+    entries: [...workspaceEntries],
+    git: workspaceGit,
+  };
+}
+
 /** Read a file from the currently opened workspace folder. */
 export async function readWorkspaceFile(path) {
   const key = normalizeWorkspacePath(path);
@@ -285,6 +311,7 @@ function clearWorkspace() {
   workspaceEntries.length = 0;
   workspaceFiles.clear();
   workspaceGit = { isRepo: false, branch: null, remotes: [] };
+  currentDirectoryHandle = null;
 }
 
 async function walkDirectoryHandle(dirHandle, prefix) {

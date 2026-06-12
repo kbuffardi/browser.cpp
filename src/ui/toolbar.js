@@ -15,10 +15,16 @@ let _worker      = null;
 let _editorAPI   = null;
 let _terminalAPI = null;
 let _fsAPI       = null;
-let _dirty       = false;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
 const _expandedWorkspaceDirectories = new Set();
+
+// ── Multi-tab state ───────────────────────────────────────────────────────────
+// Map<path, { content: string, dirty: boolean }>
+const _openTabs = new Map();
+let _activeTabPath = null;
+/** When true, programmatic setValue calls do not trigger markDirty(true). */
+let _loadingFile = false;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -162,13 +168,12 @@ function handleWorkerMessages() {
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 function actionNew() {
-  if (_dirty && !confirm('Discard unsaved changes?')) return;
+  if (hasUnsavedChanges() && !confirm('Discard unsaved changes?')) return;
+  closeAllTabs();
   _fsAPI.newFile();
   clearWorkspaceMode();
-  _editorAPI.setValue(_editorAPI.DEFAULT_SOURCE ?? '');
-  _editorAPI.clearDiagnostics();
-  setFileName('main.cpp');
-  markDirty(false);
+  const defaultContent = _editorAPI.DEFAULT_SOURCE ?? '';
+  openTabForFile('main.cpp', defaultContent);
 }
 
 async function actionSave() {
@@ -260,13 +265,11 @@ function setButtonsEnabled(enabled) {
   });
 }
 
-/** Update the filename shown in the tab and status bar. */
+/** Update the filename shown in the status bar and sidebar. */
 function setFileName(name) {
   _fileName = name;
   const statusFile = document.getElementById('status-file');
   if (statusFile) statusFile.textContent = name;
-  // Update the single tab
-  updateTab(name, _dirty);
   if (_workspace) {
     highlightWorkspaceFile(name);
   } else {
@@ -276,22 +279,152 @@ function setFileName(name) {
 
 /** Mark the current file as dirty (has unsaved changes). */
 export function markDirty(isDirty) {
-  _dirty = isDirty;
-  updateTab(_fileName, isDirty);
+  if (_loadingFile && isDirty) return; // suppress during programmatic loads
+  if (_activeTabPath !== null && _openTabs.has(_activeTabPath)) {
+    _openTabs.get(_activeTabPath).dirty = isDirty;
+  }
+  renderTabBar();
 }
 
-function updateTab(name, dirty) {
+/** Infer Monaco language identifier from a file path. */
+function inferLanguage(path) {
+  const lower = path.toLowerCase();
+  if (/\.(cpp|cc|cxx|c\+\+)$/.test(lower)) return 'cpp';
+  if (/\.c$/.test(lower)) return 'c';
+  if (/\.(h|hpp|hxx)$/.test(lower)) return 'cpp';
+  if (/\.md$/.test(lower)) return 'markdown';
+  if (/\.json$/.test(lower)) return 'json';
+  if (/\.js$/.test(lower)) return 'javascript';
+  if (/\.ts$/.test(lower)) return 'typescript';
+  if (/\.(html|htm)$/.test(lower)) return 'html';
+  if (/\.css$/.test(lower)) return 'css';
+  if (/\.py$/.test(lower)) return 'python';
+  return 'plaintext';
+}
+
+/** Returns true if any open tab has unsaved changes. */
+function hasUnsavedChanges() {
+  for (const tab of _openTabs.values()) {
+    if (tab.dirty) return true;
+  }
+  return false;
+}
+
+/** Re-render the entire tab bar from _openTabs. */
+function renderTabBar() {
   const tabBar = document.getElementById('tab-bar');
   if (!tabBar) return;
-  let tab = tabBar.querySelector('.tab');
-  if (!tab) {
-    tab = document.createElement('div');
-    tab.className = 'tab active';
-    tab.innerHTML = `<span class="tab-name"></span>`;
-    tabBar.appendChild(tab);
+  tabBar.innerHTML = '';
+  for (const [path, tab] of _openTabs.entries()) {
+    const active = path === _activeTabPath;
+    const div = document.createElement('div');
+    div.className = `tab${active ? ' active' : ''}${tab.dirty ? ' dirty' : ''}`;
+    div.setAttribute('role', 'tab');
+    div.setAttribute('aria-selected', String(active));
+    div.setAttribute('title', path);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tab-name';
+    nameSpan.textContent = workspaceBaseName(path) || path;
+    div.appendChild(nameSpan);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'tab-close';
+    closeBtn.title = `Close ${workspaceBaseName(path) || path}`;
+    closeBtn.setAttribute('aria-label', `Close ${workspaceBaseName(path) || path}`);
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(path);
+    });
+    div.appendChild(closeBtn);
+
+    div.addEventListener('click', () => switchToTab(path));
+    tabBar.appendChild(div);
   }
-  tab.querySelector('.tab-name').textContent = name;
-  tab.classList.toggle('dirty', dirty);
+}
+
+/** Switch the editor to the tab for the given path. */
+function switchToTab(path) {
+  if (!_openTabs.has(path)) return;
+
+  // Snapshot the current editor content before leaving the active tab
+  if (_activeTabPath !== null && _openTabs.has(_activeTabPath)) {
+    _openTabs.get(_activeTabPath).content = _editorAPI.getValue();
+  }
+
+  _activeTabPath = path;
+  const tab = _openTabs.get(path);
+
+  _loadingFile = true;
+  _editorAPI.setValue(tab.content);
+  _editorAPI.clearDiagnostics();
+  _editorAPI.setLanguage(inferLanguage(path));
+  _loadingFile = false;
+
+  _fileName = workspaceBaseName(path) || path;
+  const statusFile = document.getElementById('status-file');
+  if (statusFile) statusFile.textContent = _fileName;
+
+  if (_workspace) {
+    highlightWorkspaceFile(path);
+  } else {
+    updateSidebar(_fileName);
+  }
+
+  renderTabBar();
+}
+
+/**
+ * Open a file as a new tab (or switch to its existing tab).
+ * @param {string} path  – workspace-relative path used as tab key
+ * @param {string} content
+ */
+function openTabForFile(path, content) {
+  if (!_openTabs.has(path)) {
+    _openTabs.set(path, { content, dirty: false });
+  }
+  switchToTab(path);
+}
+
+/** Close the tab for the given path, prompting if it has unsaved changes. */
+function closeTab(path) {
+  if (!_openTabs.has(path)) return;
+  const tab = _openTabs.get(path);
+  const name = workspaceBaseName(path) || path;
+
+  if (tab.dirty && !confirm(`Close "${name}" with unsaved changes?`)) return;
+
+  const paths = [..._openTabs.keys()];
+  const idx = paths.indexOf(path);
+  _openTabs.delete(path);
+
+  if (_activeTabPath === path) {
+    const remaining = [..._openTabs.keys()];
+    if (remaining.length > 0) {
+      _activeTabPath = null; // reset before switchToTab to avoid snapshot of deleted tab
+      switchToTab(remaining[Math.min(idx, remaining.length - 1)]);
+    } else {
+      _activeTabPath = null;
+      _fileName = '';
+      _loadingFile = true;
+      _editorAPI.setValue('');
+      _editorAPI.clearDiagnostics();
+      _loadingFile = false;
+      const statusFile = document.getElementById('status-file');
+      if (statusFile) statusFile.textContent = '';
+      renderTabBar();
+    }
+  } else {
+    renderTabBar();
+  }
+}
+
+/** Close all open tabs without prompting. */
+function closeAllTabs() {
+  _openTabs.clear();
+  _activeTabPath = null;
+  renderTabBar();
 }
 
 function updateSidebar(name) {
@@ -392,29 +525,31 @@ function highlightWorkspaceFile(path) {
 async function openWorkspaceInitialFile(workspace) {
   const file = pickInitialWorkspaceFile(workspace.entries);
   if (!file) {
-    _editorAPI.setValue(_editorAPI.DEFAULT_SOURCE ?? '');
+    // No README.md at root – clear editor but open no tab automatically
+    _loadingFile = true;
+    _editorAPI.setValue('');
     _editorAPI.clearDiagnostics();
-    setFileName('main.cpp');
+    _loadingFile = false;
     return;
   }
   await openWorkspaceFile(file.path);
 }
 
 async function openWorkspaceFile(path) {
+  if (_openTabs.has(path)) {
+    switchToTab(path);
+    return;
+  }
   const content = await _fsAPI.readWorkspaceFile(path);
   if (content == null) return;
-  _editorAPI.setValue(content);
-  _editorAPI.clearDiagnostics();
-  setFileName(path);
-  markDirty(false);
+  openTabForFile(path, content);
 }
 
 function pickInitialWorkspaceFile(entries) {
-  const files = entries.filter((entry) => entry.kind === 'file');
-  const preferred = files.find((entry) =>
-    /\.(cpp|cc|cxx|c\+\+|c|h|hpp|hxx)$/i.test(entry.path)
-  );
-  return preferred || files[0] || null;
+  // Only auto-open README.md if it exists at the workspace root
+  return entries.find(
+    (entry) => entry.kind === 'file' && entry.path.toLowerCase() === 'readme.md'
+  ) || null;
 }
 
 function showOpenError(err) {
@@ -447,18 +582,66 @@ function workspaceBaseName(path) {
 async function openFolderWorkspace() {
   const workspace = await _fsAPI.openFolder();
   if (!workspace) return false;
+  closeAllTabs();
   setWorkspaceMode(workspace);
   await openWorkspaceInitialFile(workspace);
   renderWorkspaceSidebar(workspace);
-  markDirty(false);
   return true;
 }
 
 async function actionOpen() {
-  if (_dirty && !confirm('Discard unsaved changes?')) return;
+  if (hasUnsavedChanges() && !confirm('Discard unsaved changes?')) return;
   try {
     await openFolderWorkspace();
   } catch (err) {
     showOpenError(err);
+  }
+}
+
+// ── Session persistence helpers ───────────────────────────────────────────────
+
+/** Return the workspace-relative paths of all currently open tabs. */
+export function getOpenTabPaths() {
+  return [..._openTabs.keys()];
+}
+
+/** Return the path of the currently active tab, or null. */
+export function getActiveTabPath() {
+  return _activeTabPath;
+}
+
+/**
+ * Restore a previously persisted workspace and its open tabs.
+ * Called from app.js after the directory handle has been re-authenticated.
+ *
+ * @param {object} workspace – value returned by openFolderFromHandle / openFolder
+ * @param {string[]} openPaths – ordered list of tab paths to restore
+ * @param {string|null} activePath – which tab should be active
+ */
+export async function restoreWorkspace(workspace, openPaths, activePath) {
+  closeAllTabs();
+  setWorkspaceMode(workspace);
+  renderWorkspaceSidebar(workspace);
+
+  for (const path of openPaths) {
+    const content = await _fsAPI.readWorkspaceFile(path);
+    if (content != null) {
+      _openTabs.set(path, { content, dirty: false });
+    }
+  }
+
+  const target = activePath && _openTabs.has(activePath)
+    ? activePath
+    : [..._openTabs.keys()][0] ?? null;
+
+  if (target) {
+    switchToTab(target);
+  } else {
+    // No tabs to restore – clear the editor so no stale content is shown
+    _loadingFile = true;
+    _editorAPI.setValue('');
+    _editorAPI.clearDiagnostics();
+    _loadingFile = false;
+    renderTabBar();
   }
 }

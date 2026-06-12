@@ -142,7 +142,6 @@ terminal.js  →  xterm.js display
 | `cd [dir]` | Change the current workspace directory |
 | `cat <file>` | Print file contents |
 | `pwd` | Print working directory |
-| `git <cmd>` | Basic git repo info (`status`, `branch`, `remote -v`) |
 | `help` | Show command list |
 
 ---
