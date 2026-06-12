@@ -15,7 +15,6 @@ let _worker      = null;
 let _editorAPI   = null;
 let _terminalAPI = null;
 let _fsAPI       = null;
-let _dirty       = false;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
 const _expandedWorkspaceDirectories = new Set();
@@ -281,7 +280,6 @@ function setFileName(name) {
 /** Mark the current file as dirty (has unsaved changes). */
 export function markDirty(isDirty) {
   if (_loadingFile && isDirty) return; // suppress during programmatic loads
-  _dirty = isDirty;
   if (_activeTabPath !== null && _openTabs.has(_activeTabPath)) {
     _openTabs.get(_activeTabPath).dirty = isDirty;
   }
@@ -365,7 +363,6 @@ function switchToTab(path) {
   _loadingFile = false;
 
   _fileName = workspaceBaseName(path) || path;
-  _dirty = tab.dirty;
   const statusFile = document.getElementById('status-file');
   if (statusFile) statusFile.textContent = _fileName;
 
@@ -409,7 +406,6 @@ function closeTab(path) {
       switchToTab(remaining[Math.min(idx, remaining.length - 1)]);
     } else {
       _activeTabPath = null;
-      _dirty = false;
       _fileName = '';
       _loadingFile = true;
       _editorAPI.setValue('');
@@ -428,7 +424,6 @@ function closeTab(path) {
 function closeAllTabs() {
   _openTabs.clear();
   _activeTabPath = null;
-  _dirty = false;
   renderTabBar();
 }
 
@@ -582,15 +577,6 @@ function parentWorkspacePath(path) {
 function workspaceBaseName(path) {
   const idx = path.lastIndexOf('/');
   return idx === -1 ? path : path.slice(idx + 1);
-}
-
-async function openSingleFile() {
-  const result = await _fsAPI.openFile();
-  if (!result) return false;
-  closeAllTabs();
-  clearWorkspaceMode();
-  openTabForFile(result.name, result.content);
-  return true;
 }
 
 async function openFolderWorkspace() {

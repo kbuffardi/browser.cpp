@@ -580,7 +580,6 @@ function executeCommand(cmdLine) {
 function cmdGxx(args) {
   // Parse: [flags] [source.cpp] [-std=c++NN] [-o outname]
   let std      = 'c++20';
-  let outName  = 'a.out';
   const extra  = [];
 
   // Extract -std= and -o flags; collect the rest as extra flags
@@ -592,9 +591,11 @@ function cmdGxx(args) {
     } else if (a === '-std' && args[i + 1]) {
       std = args[++i];
     } else if (a === '-o' && args[i + 1]) {
-      outName = args[++i];
+      i += 2;
+      continue;
     } else if (a.startsWith('-o') && a.length > 2) {
-      outName = a.slice(2);
+      i += 1;
+      continue;
     } else if (!a.startsWith('-')) {
       // source file – ignored; we always compile the current editor content
     } else {
@@ -615,7 +616,7 @@ function cmdGxx(args) {
   _onCompile?.(source, extra, std);
 }
 
-function cmdRun(args) {
+function cmdRun() {
   startRun();
 }
 

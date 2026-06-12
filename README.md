@@ -36,6 +36,7 @@ npm run fetch-clang
 ### 3 – Build the extension
 
 ```bash
+npm run lint           # lint the repository
 npm run build          # production build → dist/
 # or
 npm run dev            # development build with watch mode

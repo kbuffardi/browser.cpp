@@ -15,6 +15,7 @@ const BLOB_URL_REVOKE_DELAY_MS = 2_000;
 
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
+/** @type {FileSystemDirectoryHandle|null} */
 let currentDirectoryHandle = null;
 let workspaceName = null;
 const workspaceEntries = [];
@@ -86,7 +87,6 @@ export async function openFolder() {
     throw err;
   }
 
-  currentDirectoryHandle = handle;
   workspaceName = handle.name;
   await walkDirectoryHandle(handle, '');
   workspaceGit = await detectGitMetadata();
@@ -307,7 +307,6 @@ function saveFileFallback(content, suggestedName) {
 }
 
 function clearWorkspace() {
-  currentDirectoryHandle = null;
   workspaceName = null;
   workspaceEntries.length = 0;
   workspaceFiles.clear();

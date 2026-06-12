@@ -104,7 +104,9 @@ async function _saveDirectoryHandle(handle) {
       tx.oncomplete = resolve;
       tx.onerror    = () => reject(tx.error);
     });
-  } catch (_) {}
+  } catch (_err) {
+    // IDB not available – skip persistence
+  }
 }
 
 async function _loadDirectoryHandle() {
@@ -130,7 +132,9 @@ async function _clearDirectoryHandle() {
       tx.oncomplete = resolve;
       tx.onerror    = () => reject(tx.error);
     });
-  } catch (_) {}
+  } catch (_err) {
+    // IDB not available – skip deletion
+  }
 }
 
 async function restoreSession() {
@@ -208,5 +212,7 @@ async function persistSession() {
         },
       });
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn('Failed to persist browser.cpp session:', err);
+  }
 }

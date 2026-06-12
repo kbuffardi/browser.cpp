@@ -415,10 +415,9 @@ async function compile(source, flags = [], std = 'c++20') {
  * SharedArrayBuffer layout used for interactive stdin:
  *   Int32[0]  – state:  0 = waiting for input, 1 = data ready, -1 = EOF
  *   Int32[1]  – length: number of bytes in the data section
- *   Uint8[8…] – data:   up to SAB_DATA_BYTES bytes of stdin content
+ *   Uint8[8…] – data:   up to 4096 bytes of stdin content
  */
 const SAB_HEADER_BYTES = 8;
-const SAB_DATA_BYTES   = 4096;
 
 /**
  * Minimal WASI "snapshot_preview1" implementation sufficient for running
