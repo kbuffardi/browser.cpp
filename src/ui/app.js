@@ -37,8 +37,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   //    Pass callbacks so the terminal's `g++` command dispatches to the worker.
   const terminalContainer = document.getElementById('terminal-container');
   terminalAPI.createTerminal(terminalContainer, {
-    onCompile: (source, flags, std) =>
-      worker.postMessage({ type: 'compile', source, flags, std }),
+    onCompile: async (source, flags, std) => {
+      const vfsFiles = await fsAPI.readAllWorkspaceFiles();
+      worker.postMessage({
+        type: 'compile',
+        source,
+        flags,
+        std,
+        fileName: getActiveTabPath() || 'input.cpp',
+        vfsFiles,
+      });
+    },
     onRun: async (sab) => {
       const vfsFiles = await fsAPI.readAllWorkspaceFiles();
       worker.postMessage({ type: 'run', sharedBuffer: sab, vfsFiles });

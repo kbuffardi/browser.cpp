@@ -401,6 +401,28 @@ async function getCompilerInvocation(fileName, source, flags) {
   };
 }
 
+function normalizeCompilePath(path) {
+  const value = String(path || 'input.cpp').replace(/^\/+/, '');
+  return value || 'input.cpp';
+}
+
+function writeCompileFile(moduleFs, path, content) {
+  const normalized = normalizeCompilePath(path);
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash > 0) {
+    moduleFs.mkdirTree(normalized.slice(0, lastSlash));
+  }
+  moduleFs.writeFile(normalized, content);
+}
+
+function populateCompileFs(moduleFs, sourcePath, source, vfsFiles) {
+  for (const file of (vfsFiles || [])) {
+    if (!file?.path || !file.bytes) continue;
+    writeCompileFile(moduleFs, file.path, file.bytes);
+  }
+  writeCompileFile(moduleFs, sourcePath, source);
+}
+
 // ── Compile ──────────────────────────────────────────────────────────────────
 
 /**
@@ -415,14 +437,17 @@ async function getCompilerInvocation(fileName, source, flags) {
  * fail with "RuntimeError: null function".
  *
  * @param {string}   source  – C++ source text
- * @param {string[]} flags   – extra compiler flags (e.g. ['-O2'])
- * @param {string}   std     – C++ standard (e.g. 'c++20')
+ * @param {string[]} flags      – extra compiler flags (e.g. ['-O2'])
+ * @param {string}   std        – C++ standard (e.g. 'c++20')
+ * @param {string}   sourcePath – workspace-relative source path
+ * @param {Array<{path: string, bytes: Uint8Array}>} vfsFiles – workspace files
  * @returns {{ success: boolean, diagnostics: string }}
  */
-async function compile(source, flags = [], std = 'c++20') {
+async function compile(source, flags = [], std = 'c++20', sourcePath = 'input.cpp', vfsFiles = []) {
   if (!await ensureReady()) return { success: false, diagnostics: 'Compiler not ready.' };
 
   compiledBinary = null;
+  const normalizedSourcePath = normalizeCompilePath(sourcePath);
 
   const userFlags = [`-std=${std}`, '-Wall', '-Wextra', ...flags];
 
@@ -430,7 +455,7 @@ async function compile(source, flags = [], std = 'c++20') {
 
   let invocation;
   try {
-    invocation = await getCompilerInvocation('input.cpp', source, userFlags);
+    invocation = await getCompilerInvocation(normalizedSourcePath, source, userFlags);
   } catch (err) {
     return { success: false, diagnostics: `Driver error: ${err.message}` };
   }
@@ -452,7 +477,7 @@ async function compile(source, flags = [], std = 'c++20') {
     return { success: false, diagnostics: `Clang init failed: ${err.message}` };
   }
 
-  clang.FS.writeFile('input.cpp', source);
+  populateCompileFs(clang.FS, normalizedSourcePath, source, vfsFiles);
   setUpSysroot(clang, sysrootBuffer);
 
   let exitCode;
@@ -938,7 +963,13 @@ self.onmessage = async ({ data }) => {
     case 'compile':
       send({ type: 'compile-start' });
       try {
-        const result = await compile(data.source, data.flags || [], data.std || 'c++20');
+        const result = await compile(
+          data.source,
+          data.flags || [],
+          data.std || 'c++20',
+          data.fileName || 'input.cpp',
+          data.vfsFiles || []
+        );
         send({ type: 'compile-result', ...result });
       } catch (err) {
         send({ type: 'compile-result', success: false, diagnostics: String(err) });
