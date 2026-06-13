@@ -215,19 +215,28 @@ async function actionSaveAs() {
   }
 }
 
-function actionCompile() {
+async function actionCompile() {
   const source = _editorAPI.getValue();
   const std    = document.getElementById('cpp-standard')?.value || 'c++20';
-  _worker.postMessage({ type: 'compile', source, flags: [], std });
+  const vfsFiles = await _fsAPI.readAllWorkspaceFiles();
+  _worker.postMessage({
+    type: 'compile',
+    source,
+    flags: [],
+    std,
+    fileName: _activeTabPath || 'input.cpp',
+    vfsFiles,
+  });
 }
 
 function actionRun() {
   _terminalAPI.startRun();
 }
 
-function actionCompileRun() {
+async function actionCompileRun() {
   const source = _editorAPI.getValue();
   const std    = document.getElementById('cpp-standard')?.value || 'c++20';
+  const vfsFiles = await _fsAPI.readAllWorkspaceFiles();
 
   // Chain: compile → on success, immediately run
   const originalOnMessage = _worker.onmessage;
@@ -243,7 +252,14 @@ function actionCompileRun() {
     }
   };
   _worker.onmessage = oneShot;
-  _worker.postMessage({ type: 'compile', source, flags: [], std });
+  _worker.postMessage({
+    type: 'compile',
+    source,
+    flags: [],
+    std,
+    fileName: _activeTabPath || 'input.cpp',
+    vfsFiles,
+  });
 }
 
 // ── Terminal panel toggle ─────────────────────────────────────────────────────
