@@ -26,21 +26,35 @@ let _activeTabPath = null;
 /** When true, programmatic setValue calls do not trigger markDirty(true). */
 let _loadingFile = false;
 
+// ── Session persistence callback ──────────────────────────────────────────────
+/** Optional callback supplied by app.js to persist the session after state changes. */
+let _persistSession = null;
+let _persistTimer = null;
+
+/** Schedule a debounced session persist (e.g. after active-tab switches). */
+function schedulePersist() {
+  if (!_persistSession) return;
+  clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => _persistSession(), 300);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Initialise the toolbar, hooking up all buttons and keyboard shortcuts.
  *
- * @param {Worker}  worker       – compiler.worker instance
- * @param {object}  editorAPI    – module exports from editor.js
- * @param {object}  terminalAPI  – module exports from terminal.js
- * @param {object}  fsAPI        – module exports from filesystem.js
+ * @param {Worker}  worker         – compiler.worker instance
+ * @param {object}  editorAPI      – module exports from editor.js
+ * @param {object}  terminalAPI    – module exports from terminal.js
+ * @param {object}  fsAPI          – module exports from filesystem.js
+ * @param {Function} [persistSession] – optional callback to persist session state
  */
-export function initToolbar(worker, editorAPI, terminalAPI, fsAPI) {
+export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSession) {
   _worker      = worker;
   _editorAPI   = editorAPI;
   _terminalAPI = terminalAPI;
   _fsAPI       = fsAPI;
+  _persistSession = persistSession ?? null;
 
   bindButtons();
   bindKeyboardShortcuts();
@@ -404,6 +418,7 @@ function switchToTab(path) {
   }
 
   renderTabBar();
+  schedulePersist(); // debounced – tracks active tab changes
 }
 
 /**
@@ -412,10 +427,12 @@ function switchToTab(path) {
  * @param {string} content
  */
 function openTabForFile(path, content) {
-  if (!_openTabs.has(path)) {
+  const isNew = !_openTabs.has(path);
+  if (isNew) {
     _openTabs.set(path, { content, dirty: false });
   }
   switchToTab(path);
+  if (isNew) _persistSession?.(); // persist immediately when a new tab is added
 }
 
 /** Close the tab for the given path, prompting if it has unsaved changes. */
@@ -449,6 +466,7 @@ function closeTab(path) {
   } else {
     renderTabBar();
   }
+  _persistSession?.(); // persist immediately after a tab is closed
 }
 
 /** Close all open tabs without prompting. */
@@ -617,6 +635,7 @@ async function openFolderWorkspace() {
   setWorkspaceMode(workspace);
   await openWorkspaceInitialFile(workspace);
   renderWorkspaceSidebar(workspace);
+  _persistSession?.(); // persist immediately so the new workspace survives unload
   return true;
 }
 
