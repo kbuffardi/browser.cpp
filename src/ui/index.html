@@ -14,8 +14,7 @@
       <span id="toolbar-brand">browser.cpp</span>
 
       <div id="toolbar-file-actions">
-        <button id="btn-new"   title="New file  (Ctrl+N)">New</button>
-        <button id="btn-open"  title="Open folder (Ctrl+O)">Open</button>
+        <button id="btn-open"  title="Open folder (Ctrl+O)"><span class="codicon codicon-folder-opened"></span> Open</button>
         <button id="btn-save"  title="Save file (Ctrl+S)">Save</button>
         <button id="btn-save-as" title="Save As…">Save As…</button>
       </div>
@@ -30,10 +29,9 @@
           <option value="c++14">C++14</option>
         </select>
 
-        <button id="btn-compile" title="Compile  (Ctrl+Shift+B)">Compile</button>
-        <button id="btn-run"     title="Run      (Ctrl+Shift+R)">Run</button>
+        <button id="btn-compile" title="Compile  (Ctrl+Shift+B)"><span class="codicon codicon-tools"></span> Compile</button>
         <button id="btn-compile-run" class="btn-primary" title="Compile &amp; Run  (F5)">
-          ▶ Run
+          ▶ Compile and Run
         </button>
       </div>
 
@@ -45,7 +43,10 @@
 
       <!-- File explorer -->
       <aside id="sidebar">
-        <div class="panel-header">EXPLORER</div>
+        <div class="panel-header">
+          <span>EXPLORER</span>
+          <button id="btn-new" title="New file  (Ctrl+N)" class="panel-header-btn"><span class="codicon codicon-new-file"></span></button>
+        </div>
         <ul id="file-tree" role="tree" aria-label="Open files"></ul>
       </aside>
 

@@ -290,7 +290,7 @@ function updateStatusBar(area, state, message) {
 }
 
 function setButtonsEnabled(enabled) {
-  ['btn-compile', 'btn-run', 'btn-compile-run'].forEach((id) => {
+  ['btn-compile', 'btn-compile-run'].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = !enabled;
   });
