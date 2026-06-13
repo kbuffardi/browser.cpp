@@ -190,7 +190,6 @@ select:focus {
 .panel-header-btn:hover {
   background: var(--surface0);
   color: var(--text);
-  border-color: transparent;
 }
 
 #file-tree {
