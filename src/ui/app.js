@@ -57,7 +57,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 4. Toolbar (wires buttons + worker messages + keyboard shortcuts)
-  initToolbar(worker, editorAPI, terminalAPI, fsAPI);
+  initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSession);
 
   // 5. Track unsaved changes
   editorAPI.onDidChangeContent(() => markDirty(true));

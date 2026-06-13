@@ -87,6 +87,7 @@ export async function openFolder() {
     throw err;
   }
 
+  currentDirectoryHandle = handle;
   workspaceName = handle.name;
   await walkDirectoryHandle(handle, '');
   workspaceGit = await detectGitMetadata();
