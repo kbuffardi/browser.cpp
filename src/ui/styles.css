@@ -83,6 +83,9 @@ body {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--surface0);
   color: var(--text);
   border: 1px solid transparent;
@@ -159,13 +162,34 @@ select:focus {
 }
 
 .panel-header {
-  padding: 8px 12px 4px;
+  padding: 4px 4px 4px 12px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--subtext0);
   text-transform: uppercase;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-header-btn {
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  color: var(--subtext0);
+  font-size: 14px;
+  border-radius: 3px;
+  text-transform: none;
+  font-weight: normal;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.panel-header-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
 }
 
 #file-tree {
