@@ -83,6 +83,9 @@ body {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--surface0);
   color: var(--text);
   border: 1px solid transparent;
