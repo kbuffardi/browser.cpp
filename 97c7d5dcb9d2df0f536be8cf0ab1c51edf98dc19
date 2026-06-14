@@ -1,0 +1,37 @@
+Complete start-new relaunch path + e2e tooling
+
+CONTEXT
+The reload-vs-start-new prompt was implemented on this branch in f950b2c via a
+`confirmReload` callback in createSessionPersistence. A concurrent loop had
+authored a parallel implementation (separate startup-controller module); that
+duplicate was discarded in favor of the already-merged remote design (single
+source of truth). This commit extends the remote design rather than replacing it.
+
+GAPS CLOSED (vs spec acceptance criteria)
+1. Start-new only cleared persisted storage + the stored directory handle. It
+   left live in-memory filesystem workspace state (currentDirectoryHandle,
+   workspaceName, workspaceFiles) intact, so a subsequent persist/restore could
+   resurrect the abandoned folder. Now clearPersistedSession() also calls
+   fsAPI.resetWorkspace() (new export -> clearWorkspace()).
+2. Start-new did not load the default new-project state. Spec requires main.cpp +
+   editorAPI.DEFAULT_SOURCE with no workspace. Added a startNewProject callback
+   wired to toolbar.resetToNewProject() (actionNew body without the unsaved
+   confirm). abandonForNewProject() = clearPersistedSession() + startNewProject().
+3. test:e2e was broken on Node < 22.7: src/ui modules use ESM syntax in .js files
+   which Node loads as CJS (cjs-module-lexer finds no named exports). Added
+   --experimental-detect-module and included both suites.
+4. CI ran only lint + build. Added a test:e2e step.
+
+TEST FILE
+scripts/e2e-session-restore-choice.test.mjs targets the confirmReload +
+startNewProject API directly: reload-chosen re-requests readwrite and restores
+live workspace; start-new clears session+handle+live-fs and loads default; next
+persist after start-new records fresh source-only state (handle nulled by
+resetWorkspace) not the abandoned workspace; snapshot-only still confirms before
+restoring; source-only auto-restores with zero prompts; already-granted restores
+with zero prompts.
+
+SAFETY
+startNewProject and fsAPI.resetWorkspace are optional (default no-op / guarded),
+so the existing persistence suite and non-DOM contexts are unaffected. All 17
+e2e tests + lint + build pass.
