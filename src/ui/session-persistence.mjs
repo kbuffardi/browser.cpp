@@ -149,3 +149,16 @@ export function createSessionPersistence({
 
   return { restoreSession, persistSession };
 }
+
+export function createPersistenceGate(persistSession) {
+  let enabled = false;
+  return {
+    persist() {
+      if (!enabled) return;
+      return persistSession();
+    },
+    enable() {
+      enabled = true;
+    },
+  };
+}
