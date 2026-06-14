@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSessionPersistence } from '../src/ui/session-persistence.mjs';
+import {
+  createSessionPersistence,
+  createPersistenceGate,
+} from '../src/ui/session-persistence.mjs';
 
 function createStorageArea() {
   const data = new Map();
@@ -161,4 +164,65 @@ test('e2e: restores source fallback when no workspace handle is available', asyn
 
   assert.equal(restoredSource, 'int main() { return 0; }\n');
   assert.equal(dirtyState, false);
+});
+
+test('e2e: startup gate prevents pre-restore persistence from wiping workspace session', async () => {
+  const storage = createStorageArea();
+  const handleStore = createHandleStore();
+  const restored = [];
+
+  const directoryHandle = {
+    async queryPermission() {
+      return 'granted';
+    },
+    async requestPermission() {
+      return 'granted';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.h', 'bitmap.cpp', 'test_runner.sh'],
+    getActiveTabPath: () => 'test_runner.sh',
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => ({ name: 'project', entries: [] }),
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['main.cpp'],
+    getActiveTabPath: () => 'main.cpp',
+    restoreWorkspace: async (workspace, openTabPaths, activeTabPath) => {
+      restored.push({ workspace, openTabPaths, activeTabPath });
+    },
+    storage,
+    handleStore,
+  });
+
+  const gate = createPersistenceGate(secondSession.persistSession);
+  await gate.persist(); // startup timer fires before restore; must be ignored
+  await secondSession.restoreSession();
+  gate.enable();
+
+  assert.equal(restored.length, 1);
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
+  assert.equal(restored[0].activeTabPath, 'test_runner.sh');
 });
