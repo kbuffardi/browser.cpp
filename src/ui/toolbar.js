@@ -198,6 +198,16 @@ async function handleWorkerMessage(data) {
 
 function actionNew() {
   if (hasUnsavedChanges() && !confirm('Discard unsaved changes?')) return;
+  resetToNewProject();
+}
+
+/**
+ * Load the default new-project state (no workspace, a single `main.cpp` tab with
+ * `editorAPI.DEFAULT_SOURCE`). Unlike {@link actionNew} this skips the
+ * unsaved-changes confirmation so it can drive the relaunch "Start new project"
+ * path, where the prior session is being intentionally abandoned.
+ */
+export function resetToNewProject() {
   closeAllTabs();
   _fsAPI.newFile();
   clearWorkspaceMode();
