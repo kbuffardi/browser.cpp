@@ -1,0 +1,51 @@
+Relaunch restore prompt — implementation reasoning
+
+PROBLEM
+The previous startup called restoreSession() unconditionally and, inside
+session-persistence.mjs, tried queryPermission/requestPermission({mode:
+'readwrite'}) during automatic restore, silently falling back to the
+serialized workspace+tab snapshot when handle restore could not complete.
+That auto-restore (a) could not reliably grant write permission because
+requestPermission needs a transient user activation that an automatic boot
+path lacks, and (b) gave the user no choice to start fresh.
+
+CONTRACT CHANGE (session-persistence.mjs)
+Split the monolithic restoreSession into:
+  - inspectSession(): side-effect-free descriptor used by startup to decide
+    whether to prompt. Distinguishes workspace sessions (openTabPaths is an
+    array) from source-only (typeof source === 'string').
+  - reloadWorkspaceSession(): the explicit reload, MUST run under the prompt
+    button click. Returns 'restored' | 'permission-denied' | 'no-session'.
+    Denial returns 'permission-denied' (controller re-prompts) instead of the
+    old silent snapshot fallback. Snapshot restore (session.workspace) happens
+    only here, after an explicit reload, and only when no handle reload worked.
+  - restoreSourceSession(): unchanged auto-restore for source-only sessions.
+  - clearSession(): clears storage key (set null), handle store, and live fs
+    state via fsAPI.resetWorkspace().
+
+ORCHESTRATION (startup-controller.mjs)
+runStartup() is DOM-free and fully injected (persistence, showPrompt,
+hidePrompt, resetToDefault, enableGate) so it is unit-testable. State machine:
+no workspace + source -> restore source + enable gate; no workspace + nothing
+-> enable gate (first run); workspace -> show prompt, keep gate disabled until
+the user resolves. A `settling` guard prevents double-resolution and, on a
+failed reload, resets in finally so the prompt stays retryable.
+
+GESTURE SAFETY
+reloadWorkspaceSession awaits loadSession()+handleStore.load() before
+requestPermission. Chromium transient activation is time-based (~5s) and
+survives sub-millisecond storage reads, so the click gesture remains valid.
+
+TEST STRATEGY / WHY
+Existing persistence suite kept (mechanics) but migrated to the new method
+names; the denied-permission test was rewritten because the old silent-restore
+behavior is exactly what the spec removes. New e2e-session-restore-choice suite
+covers the prompt contract end-to-end with fakes: first-run/no-prompt,
+source-only auto-restore, prompt shown for workspace, reload restores,
+deny->retry, start-new clears storage+handle+fs, dismiss==start-new,
+snapshot-only-after-reload, and immediate-persist-after-start-new records the
+fresh state rather than the abandoned workspace.
+
+TOOLING
+Node UI modules use ESM syntax in .js files; test:e2e passes
+--experimental-detect-module so Node < 22.7 imports them. CI now runs test:e2e.
