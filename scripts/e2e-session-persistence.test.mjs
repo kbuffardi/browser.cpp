@@ -451,11 +451,12 @@ test('e2e: relaunch requests readwrite permission before restoring workspace', a
   const handleStore = createHandleStore();
   const permissionModes = [];
   const restored = [];
+  const queryResults = { readwrite: 'prompt', read: 'denied' };
 
   const directoryHandle = {
     async queryPermission({ mode }) {
       permissionModes.push(`query:${mode}`);
-      return mode === 'readwrite' ? 'prompt' : 'denied';
+      return queryResults[mode] ?? 'denied';
     },
     async requestPermission({ mode }) {
       permissionModes.push(`request:${mode}`);
