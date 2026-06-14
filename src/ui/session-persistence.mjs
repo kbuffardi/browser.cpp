@@ -12,6 +12,76 @@ function getStorageArea() {
     : null;
 }
 
+function getRuntimeError() {
+  return typeof chrome !== 'undefined' && chrome.runtime?.lastError
+    ? chrome.runtime.lastError
+    : null;
+}
+
+function asPromise(value) {
+  return value && typeof value.then === 'function' ? value : null;
+}
+
+async function storageGet(storage, key) {
+  if (!storage?.get) return {};
+
+  if (storage.get.length < 2) {
+    try {
+      const result = storage.get(key);
+      const pending = asPromise(result);
+      if (pending) return await pending;
+      if (result !== undefined) return result;
+    } catch (_) {
+      // Fallback to callback-style API below.
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      storage.get(key, (value) => {
+        const err = getRuntimeError();
+        if (err) {
+          reject(new Error(err.message || String(err)));
+          return;
+        }
+        resolve(value ?? {});
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+async function storageSet(storage, value) {
+  if (!storage?.set) return;
+
+  if (storage.set.length < 2) {
+    try {
+      const result = storage.set(value);
+      const pending = asPromise(result);
+      if (pending) await pending;
+      return;
+    } catch (_) {
+      // Fallback to callback-style API below.
+    }
+  }
+
+  await new Promise((resolve, reject) => {
+    try {
+      storage.set(value, () => {
+        const err = getRuntimeError();
+        if (err) {
+          reject(new Error(err.message || String(err)));
+          return;
+        }
+        resolve();
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 function createIndexedDBHandleStore() {
   function openHandleDB() {
     return new Promise((resolve, reject) => {
@@ -83,7 +153,7 @@ export function createSessionPersistence({
     try {
       if (!storage) return;
 
-      const data = await storage.get(STORAGE_KEY);
+      const data = await storageGet(storage, STORAGE_KEY);
       const session = data[STORAGE_KEY];
       if (!session) return;
 
@@ -126,7 +196,7 @@ export function createSessionPersistence({
       const dirHandle = fsAPI.getDirectoryHandle();
       if (dirHandle) {
         await handleStore.save(dirHandle);
-        await storage.set({
+        await storageSet(storage, {
           [STORAGE_KEY]: {
             openTabPaths: getOpenTabPaths(),
             activeTabPath: getActiveTabPath(),
@@ -135,7 +205,7 @@ export function createSessionPersistence({
         });
       } else {
         await handleStore.clear();
-        await storage.set({
+        await storageSet(storage, {
           [STORAGE_KEY]: {
             source: editorAPI.getValue(),
             savedAt: Date.now(),

@@ -20,6 +20,21 @@ function createStorageArea() {
   };
 }
 
+function createCallbackStorageArea() {
+  const data = new Map();
+  return {
+    get(key, callback) {
+      queueMicrotask(() => callback({ [key]: data.get(key) }));
+    },
+    set(value, callback) {
+      for (const [key, item] of Object.entries(value)) {
+        data.set(key, item);
+      }
+      queueMicrotask(() => callback?.());
+    },
+  };
+}
+
 function createHandleStore() {
   let handle = null;
   return {
@@ -222,6 +237,67 @@ test('e2e: startup gate prevents pre-restore persistence from wiping workspace s
   await secondSession.restoreSession();
   gate.enable();
 
+  assert.equal(restored.length, 1);
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
+  assert.equal(restored[0].activeTabPath, 'test_runner.sh');
+});
+
+test('e2e: restores workspace tabs across reopen with callback-style storage', async () => {
+  const storage = createCallbackStorageArea();
+  const handleStore = createHandleStore();
+  const permissionModes = [];
+  const restored = [];
+
+  const directoryHandle = {
+    async queryPermission({ mode }) {
+      permissionModes.push(`query:${mode}`);
+      return 'granted';
+    },
+    async requestPermission({ mode }) {
+      permissionModes.push(`request:${mode}`);
+      return 'denied';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.h', 'bitmap.cpp', 'test_runner.sh'],
+    getActiveTabPath: () => 'test_runner.sh',
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => ({ name: 'project', entries: [] }),
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async (workspace, openTabPaths, activeTabPath) => {
+      restored.push({ workspace, openTabPaths, activeTabPath });
+    },
+    storage,
+    handleStore,
+  });
+  await secondSession.restoreSession();
+
+  assert.deepEqual(permissionModes, ['query:read']);
   assert.equal(restored.length, 1);
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
   assert.equal(restored[0].activeTabPath, 'test_runner.sh');
