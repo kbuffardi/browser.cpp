@@ -193,7 +193,7 @@ function createFailingHandleStore() {
   };
 }
 
-test('e2e: restores workspace tabs when only read permission is granted', async () => {
+test('e2e: does not fall back to read-only permission when readwrite is denied', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
   const permissionModes = [];
@@ -234,13 +234,12 @@ test('e2e: restores workspace tabs when only read permission is granted', async 
 
   await firstSession.persistSession();
 
-  const expectedWorkspace = { name: 'project', entries: [] };
   const secondSession = createSessionPersistence({
     fsAPI: {
       getDirectoryHandle: () => null,
       openFolderFromHandle: async (handle) => {
         assert.equal(handle, directoryHandle);
-        return expectedWorkspace;
+        return { name: 'project', entries: [] };
       },
     },
     editorAPI: {
@@ -259,13 +258,8 @@ test('e2e: restores workspace tabs when only read permission is granted', async 
 
   await secondSession.restoreSession();
 
-  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite', 'query:read']);
-  assert.equal(restored.length, 1);
-  assert.deepEqual(restored[0], {
-    workspace: expectedWorkspace,
-    openTabPaths: ['src/main.cpp', 'include/main.hpp'],
-    activeTabPath: 'include/main.hpp',
-  });
+  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
+  assert.equal(restored.length, 0);
 });
 
 test('e2e: restores source fallback when no workspace handle is available', async () => {
