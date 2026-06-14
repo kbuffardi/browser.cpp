@@ -17,7 +17,14 @@ import './styles.css';
 import * as editorAPI   from './editor.js';
 import * as terminalAPI from './terminal.js';
 import * as fsAPI       from './filesystem.js';
-import { initToolbar, markDirty, getOpenTabPaths, getActiveTabPath, restoreWorkspace } from './toolbar.js';
+import {
+  initToolbar,
+  markDirty,
+  getOpenTabPaths,
+  getActiveTabPath,
+  getOpenTabsSnapshot,
+  restoreWorkspace,
+} from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -64,6 +71,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     markDirty,
     getOpenTabPaths,
     getActiveTabPath,
+    getOpenTabsSnapshot,
     restoreWorkspace,
   });
   const persistenceGate = createPersistenceGate(persistSession);

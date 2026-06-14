@@ -144,10 +144,21 @@ export function createSessionPersistence({
   markDirty,
   getOpenTabPaths,
   getActiveTabPath,
+  getOpenTabsSnapshot = () => null,
   restoreWorkspace,
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
 }) {
+  function filterTabContentSnapshot(session) {
+    const entries = session?.openTabContentsByPath;
+    if (!entries || typeof entries !== 'object') return null;
+    const snapshot = {};
+    for (const [path, content] of Object.entries(entries)) {
+      if (typeof content === 'string') snapshot[path] = content;
+    }
+    return snapshot;
+  }
+
   async function restoreSession() {
     try {
       if (!storage) return;
@@ -172,11 +183,22 @@ export function createSessionPersistence({
             await restoreWorkspace(
               workspace,
               session.openTabPaths,
-              session.activeTabPath ?? null
+              session.activeTabPath ?? null,
+              filterTabContentSnapshot(session)
             );
             return;
           }
         }
+      }
+
+      if (session.workspace && Array.isArray(session.openTabPaths)) {
+        await restoreWorkspace(
+          session.workspace,
+          session.openTabPaths,
+          session.activeTabPath ?? null,
+          filterTabContentSnapshot(session)
+        );
+        return;
       }
 
       if (session.source) {
@@ -194,11 +216,23 @@ export function createSessionPersistence({
 
       const dirHandle = fsAPI.getDirectoryHandle();
       if (dirHandle) {
-        await handleStore.save(dirHandle);
+        try {
+          await handleStore.save(dirHandle);
+        } catch (err) {
+          // Keep persisting serializable workspace/tab state even if handle storage fails.
+          console.warn(
+            'Failed to persist workspace directory handle (workspace state will still be saved):',
+            err
+          );
+        }
         await storageSet(storage, {
           [STORAGE_KEY]: {
             openTabPaths: getOpenTabPaths(),
             activeTabPath: getActiveTabPath(),
+            openTabContentsByPath: getOpenTabsSnapshot(),
+            workspace: typeof fsAPI.getWorkspaceSnapshot === 'function'
+              ? fsAPI.getWorkspaceSnapshot()
+              : null,
             savedAt: Date.now(),
           },
         });

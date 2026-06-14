@@ -660,6 +660,15 @@ export function getActiveTabPath() {
   return _activeTabPath;
 }
 
+/** Return current tab contents keyed by workspace path. */
+export function getOpenTabsSnapshot() {
+  const snapshot = {};
+  for (const [path, tab] of _openTabs.entries()) {
+    snapshot[path] = tab.content;
+  }
+  return snapshot;
+}
+
 /**
  * Restore a previously persisted workspace and its open tabs.
  * Called from app.js after the directory handle has been re-authenticated.
@@ -667,17 +676,20 @@ export function getActiveTabPath() {
  * @param {object} workspace – value returned by openFolderFromHandle / openFolder
  * @param {string[]} openPaths – ordered list of tab paths to restore
  * @param {string|null} activePath – which tab should be active
+ * @param {Object<string,string>|null} [tabContentByPath] – fallback tab contents
  */
-export async function restoreWorkspace(workspace, openPaths, activePath) {
+export async function restoreWorkspace(workspace, openPaths, activePath, tabContentByPath = null) {
   closeAllTabs();
   setWorkspaceMode(workspace);
   renderWorkspaceSidebar(workspace);
 
   for (const path of openPaths) {
-    const content = await _fsAPI.readWorkspaceFile(path);
-    if (content != null) {
-      _openTabs.set(path, { content, dirty: false });
+    let content = await _fsAPI.readWorkspaceFile(path);
+    if (content == null && tabContentByPath && typeof tabContentByPath[path] === 'string') {
+      content = tabContentByPath[path];
     }
+    if (content == null) continue;
+    _openTabs.set(path, { content, dirty: false });
   }
 
   const target = activePath && _openTabs.has(activePath)
