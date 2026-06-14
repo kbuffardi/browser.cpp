@@ -262,6 +262,75 @@ test('e2e: does not fall back to read-only permission when readwrite is denied',
   assert.equal(restored.length, 0);
 });
 
+test('e2e: denied workspace permission resets to default state instead of restoring snapshots', async () => {
+  const storage = createStorageArea();
+  const handleStore = createHandleStore();
+  const permissionModes = [];
+  const restored = [];
+  let restoredSource = null;
+
+  const directoryHandle = {
+    async queryPermission({ mode }) {
+      permissionModes.push(`query:${mode}`);
+      return 'prompt';
+    },
+    async requestPermission({ mode }) {
+      permissionModes.push(`request:${mode}`);
+      return 'denied';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      getWorkspaceSnapshot: () => ({
+        name: 'project',
+        entries: [{ path: 'bitmap.cpp', kind: 'file' }],
+      }),
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.cpp'],
+    getActiveTabPath: () => 'bitmap.cpp',
+    getOpenTabsSnapshot: () => ({ 'bitmap.cpp': '#include <iostream>\n' }),
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => ({ name: 'project', entries: [] }),
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: (source) => {
+        restoredSource = source;
+      },
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async () => {
+      restored.push('workspace');
+    },
+    storage,
+    handleStore,
+  });
+
+  await secondSession.restoreSession();
+
+  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
+  assert.equal(restored.length, 0);
+  assert.equal(restoredSource, null);
+});
+
 test('e2e: restores source fallback when no workspace handle is available', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
