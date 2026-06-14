@@ -167,6 +167,7 @@ export function createSessionPersistence({
       const session = data[STORAGE_KEY];
       if (!session) return;
 
+      let deniedWorkspacePermission = false;
       const handle = await handleStore.load();
       if (handle && Array.isArray(session.openTabPaths)) {
         let permission = await handle.queryPermission({ mode: 'readwrite' });
@@ -188,8 +189,12 @@ export function createSessionPersistence({
             );
             return;
           }
+        } else {
+          deniedWorkspacePermission = true;
         }
       }
+
+      if (deniedWorkspacePermission) return;
 
       if (session.workspace && Array.isArray(session.openTabPaths)) {
         await restoreWorkspace(
