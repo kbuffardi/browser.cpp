@@ -432,7 +432,6 @@ function openTabForFile(path, content) {
     _openTabs.set(path, { content, dirty: false });
   }
   switchToTab(path);
-  if (isNew) _persistSession?.(); // persist immediately when a new tab is added
 }
 
 /** Close the tab for the given path, prompting if it has unsaved changes. */
@@ -440,6 +439,7 @@ function closeTab(path) {
   if (!_openTabs.has(path)) return;
   const tab = _openTabs.get(path);
   const name = workspaceBaseName(path) || path;
+  let switchedTabs = false;
 
   if (tab.dirty && !confirm(`Close "${name}" with unsaved changes?`)) return;
 
@@ -452,6 +452,7 @@ function closeTab(path) {
     if (remaining.length > 0) {
       _activeTabPath = null; // reset before switchToTab to avoid snapshot of deleted tab
       switchToTab(remaining[Math.min(idx, remaining.length - 1)]);
+      switchedTabs = true;
     } else {
       _activeTabPath = null;
       _fileName = '';
@@ -466,7 +467,9 @@ function closeTab(path) {
   } else {
     renderTabBar();
   }
-  _persistSession?.(); // persist immediately after a tab is closed
+  if (!switchedTabs) {
+    _persistSession?.(); // switching tabs already schedules a debounced persist
+  }
 }
 
 /** Close all open tabs without prompting. */
@@ -589,7 +592,26 @@ async function openWorkspaceFile(path) {
     switchToTab(path);
     return;
   }
-  const content = await _fsAPI.readWorkspaceFile(path);
+  let content = null;
+  try {
+    content = await _fsAPI.readWorkspaceFile(path);
+  } catch (_) {
+    content = null;
+  }
+  if (content == null && _workspace && !_fsAPI.getDirectoryHandle?.()) {
+    let reconnectedWorkspace;
+    try {
+      reconnectedWorkspace = await _fsAPI.openFolder();
+    } catch (err) {
+      showOpenError(err);
+      return;
+    }
+    if (!reconnectedWorkspace) return;
+    setWorkspaceMode(reconnectedWorkspace);
+    renderWorkspaceSidebar(reconnectedWorkspace);
+    _persistSession?.();
+    content = await _fsAPI.readWorkspaceFile(path);
+  }
   if (content == null) return;
   openTabForFile(path, content);
 }

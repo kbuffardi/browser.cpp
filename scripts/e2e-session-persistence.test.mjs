@@ -5,6 +5,98 @@ import {
   createSessionPersistence,
   createPersistenceGate,
 } from '../src/ui/session-persistence.mjs';
+import {
+  initToolbar,
+  restoreWorkspace as restoreToolbarWorkspace,
+  getOpenTabPaths as getToolbarOpenTabPaths,
+} from '../src/ui/toolbar.js';
+
+class FakeElement {
+  constructor(tagName = 'div') {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.listeners = new Map();
+    this.dataset = {};
+    this.style = {};
+    this.className = '';
+    this.classList = {
+      add() {},
+      remove() {},
+    };
+    this.textContent = '';
+    this.title = '';
+    this.parentNode = null;
+  }
+
+  set innerHTML(value) {
+    if (value === '') {
+      this.children = [];
+    }
+  }
+
+  appendChild(child) {
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+
+  addEventListener(type, listener) {
+    this.listeners.set(type, listener);
+  }
+
+  setAttribute(name, value) {
+    if (name.startsWith('data-')) {
+      this.dataset[name.slice(5)] = value;
+    }
+  }
+
+  querySelectorAll(selector) {
+    if (selector !== 'li') return [];
+    const results = [];
+    const visit = (node) => {
+      for (const child of node.children) {
+        if (child.tagName === 'LI') results.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return results;
+  }
+
+  click() {
+    this.listeners.get('click')?.({
+      stopPropagation() {},
+      target: this,
+    });
+  }
+}
+
+function createFakeDocument() {
+  const ids = [
+    'btn-new',
+    'btn-open',
+    'btn-save',
+    'btn-save-as',
+    'btn-compile',
+    'btn-run',
+    'btn-compile-run',
+    'btn-clear-terminal',
+    'btn-toggle-terminal',
+    'tab-bar',
+    'file-tree',
+    'status-file',
+  ];
+  const elements = new Map(ids.map((id) => [id, new FakeElement('div')]));
+  return {
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+    getElementById(id) {
+      return elements.get(id) ?? null;
+    },
+    addEventListener() {},
+  };
+}
 
 function createStorageArea() {
   const data = new Map();
@@ -528,4 +620,64 @@ test('e2e: restores explorer folder and tabs when handle reload is unavailable',
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
   assert.equal(restored[0].activeTabPath, 'test_runner.sh');
   assert.deepEqual(restored[0].restoredTabContentByPath, tabContentByPath);
+});
+
+test('e2e: after snapshot restore, selecting another file re-prompts for folder and opens file', async () => {
+  const originalDocument = global.document;
+  global.document = createFakeDocument();
+  try {
+    const workspace = {
+      name: 'browser.cpp',
+      entries: [
+        { path: 'bitmap.h', kind: 'file' },
+        { path: 'bitmap.cpp', kind: 'file' },
+      ],
+    };
+    const filesByPath = {
+      'bitmap.h': '#pragma once\n',
+      'bitmap.cpp': '#include "bitmap.h"\n',
+    };
+    let connected = false;
+    let openFolderCalls = 0;
+
+    initToolbar(
+      { onmessage: null, postMessage() {} },
+      {
+        getValue: () => '',
+        setValue: () => {},
+        clearDiagnostics: () => {},
+        setLanguage: () => {},
+      },
+      {
+        setWorkspace: () => {},
+        clearTerminal: () => {},
+      },
+      {
+        getDirectoryHandle: () => (connected ? { name: 'browser.cpp' } : null),
+        openFolder: async () => {
+          openFolderCalls += 1;
+          connected = true;
+          return workspace;
+        },
+        readWorkspaceFile: async (path) => (connected ? filesByPath[path] ?? null : null),
+      },
+      () => {}
+    );
+
+    await restoreToolbarWorkspace(workspace, ['bitmap.h'], 'bitmap.h', {
+      'bitmap.h': filesByPath['bitmap.h'],
+    });
+    assert.deepEqual(getToolbarOpenTabPaths(), ['bitmap.h']);
+
+    const treeItems = global.document.getElementById('file-tree').querySelectorAll('li');
+    const bitmapCppItem = treeItems.find((item) => item.dataset.path === 'bitmap.cpp');
+    assert.ok(bitmapCppItem, 'expected bitmap.cpp in restored explorer');
+    bitmapCppItem.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(openFolderCalls, 1);
+    assert.deepEqual(getToolbarOpenTabPaths(), ['bitmap.h', 'bitmap.cpp']);
+  } finally {
+    global.document = originalDocument;
+  }
 });
