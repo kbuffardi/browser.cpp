@@ -172,6 +172,16 @@ export function getDirectoryHandle() {
   return currentDirectoryHandle;
 }
 
+/** Return a serializable snapshot of the current workspace metadata. */
+export function getWorkspaceSnapshot() {
+  if (!workspaceName) return null;
+  return {
+    name: workspaceName,
+    entries: [...workspaceEntries],
+    git: workspaceGit,
+  };
+}
+
 /**
  * Restore a workspace from a previously stored FileSystemDirectoryHandle.
  * The caller must ensure the handle has read permission before calling.
