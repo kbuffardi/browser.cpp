@@ -18,7 +18,7 @@ import * as editorAPI   from './editor.js';
 import * as terminalAPI from './terminal.js';
 import * as fsAPI       from './filesystem.js';
 import { initToolbar, markDirty, getOpenTabPaths, getActiveTabPath, restoreWorkspace } from './toolbar.js';
-import { createSessionPersistence } from './session-persistence.mjs';
+import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -66,7 +66,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     getActiveTabPath,
     restoreWorkspace,
   });
-  initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSession);
+  const persistenceGate = createPersistenceGate(persistSession);
+  initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
 
   // 5. Track unsaved changes
   editorAPI.onDidChangeContent(() => markDirty(true));
@@ -80,6 +81,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // 7. Restore last session from chrome.storage if available
   await restoreSession();
+  persistenceGate.enable();
 
   // 8. Resize terminal when the window or terminal panel is resized
   const resizeObserver = new ResizeObserver(() => terminalAPI.fitTerminal());
@@ -88,7 +90,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initPanelResizers();
 
   // 9. Persist session on unload
-  window.addEventListener('beforeunload', persistSession);
+  window.addEventListener('beforeunload', () => persistenceGate.persist());
 
   editorAPI.focus();
 });
