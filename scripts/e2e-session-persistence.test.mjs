@@ -98,6 +98,13 @@ function createFakeDocument() {
   };
 }
 
+async function waitFor(condition, retries = 10) {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 function createStorageArea() {
   const data = new Map();
   return {
@@ -622,7 +629,7 @@ test('e2e: restores explorer folder and tabs when handle reload is unavailable',
   assert.deepEqual(restored[0].restoredTabContentByPath, tabContentByPath);
 });
 
-test('e2e: after snapshot restore, selecting another file re-prompts for folder and opens file', async () => {
+test('e2e: after snapshot restore, selecting another file reconnects workspace and opens file', async () => {
   const originalDocument = global.document;
   global.document = createFakeDocument();
   try {
@@ -673,7 +680,7 @@ test('e2e: after snapshot restore, selecting another file re-prompts for folder 
     const bitmapCppItem = treeItems.find((item) => item.dataset.path === 'bitmap.cpp');
     assert.ok(bitmapCppItem, 'expected bitmap.cpp in restored explorer');
     bitmapCppItem.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => getToolbarOpenTabPaths().includes('bitmap.cpp'));
 
     assert.equal(openFolderCalls, 1);
     assert.deepEqual(getToolbarOpenTabPaths(), ['bitmap.h', 'bitmap.cpp']);

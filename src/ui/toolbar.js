@@ -595,10 +595,11 @@ async function openWorkspaceFile(path) {
   let content = null;
   try {
     content = await _fsAPI.readWorkspaceFile(path);
-  } catch (_) {
+  } catch (readError) {
+    void readError;
     content = null;
   }
-  if (content == null && _workspace && !_fsAPI.getDirectoryHandle?.()) {
+  if (content === null && _workspace && !_fsAPI.getDirectoryHandle?.()) {
     let reconnectedWorkspace;
     try {
       reconnectedWorkspace = await _fsAPI.openFolder();
