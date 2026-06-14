@@ -148,6 +148,7 @@ export function createSessionPersistence({
   restoreWorkspace,
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
+  confirmReload = () => true,
 }) {
   function filterTabContentSnapshot(session) {
     const entries = session?.openTabContentsByPath;
@@ -159,6 +160,19 @@ export function createSessionPersistence({
     return snapshot;
   }
 
+  async function clearPersistedSession() {
+    try {
+      await handleStore.clear();
+    } catch (_) {
+      // Handle store not available – nothing to clear.
+    }
+    try {
+      await storageSet(storage, { [STORAGE_KEY]: null });
+    } catch (_) {
+      // Storage not available – nothing to clear.
+    }
+  }
+
   async function restoreSession() {
     try {
       if (!storage) return;
@@ -168,17 +182,27 @@ export function createSessionPersistence({
       if (!session) return;
 
       const handle = await handleStore.load();
+
       if (handle && Array.isArray(session.openTabPaths)) {
         let permission = await handle.queryPermission({ mode: 'readwrite' });
+
         if (permission !== 'granted') {
+          // Reloading the previous project needs the user to re-grant write
+          // access. Ask whether to reload the previous project or start fresh.
+          const reload = await confirmReload();
+          if (!reload) {
+            await clearPersistedSession();
+            return;
+          }
           try {
-            // requestPermission may be a no-op without a user gesture during
-            // automatic restore; the snapshot fallback below covers that case.
+            // Triggered from the user's "reload" gesture, so the browser can
+            // show its readwrite permission prompt.
             permission = await handle.requestPermission({ mode: 'readwrite' });
           } catch (_) {
-            // requestPermission may require user gesture
+            permission = 'denied';
           }
         }
+
         if (permission === 'granted') {
           const workspace = await fsAPI.openFolderFromHandle(handle);
           if (workspace) {
@@ -191,13 +215,30 @@ export function createSessionPersistence({
             return;
           }
         }
-        // Permission was not granted up front (e.g. no user gesture on relaunch)
-        // or the handle could not be reloaded. Fall through to the snapshot
-        // fallback so the previous session's Explorer + tabs still restore;
-        // write access is re-requested later when the user opens a file.
+
+        // The live folder could not be reloaded even though the user chose to
+        // reload (e.g. they denied the browser permission prompt). Fall through
+        // to the snapshot fallback so the previous Explorer + tabs still show;
+        // write access is re-requested when the user opens a file.
+        if (session.workspace) {
+          await restoreWorkspace(
+            session.workspace,
+            session.openTabPaths,
+            session.activeTabPath ?? null,
+            filterTabContentSnapshot(session)
+          );
+        }
+        return;
       }
 
       if (session.workspace && Array.isArray(session.openTabPaths)) {
+        // Snapshot-only restore (no reloadable directory handle). Opening files
+        // later requires re-granting folder access, so confirm reload first.
+        const reload = await confirmReload();
+        if (!reload) {
+          await clearPersistedSession();
+          return;
+        }
         await restoreWorkspace(
           session.workspace,
           session.openTabPaths,
