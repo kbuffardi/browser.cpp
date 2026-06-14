@@ -398,3 +398,65 @@ body.is-resizing-horizontal * {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface1); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--overlay0); }
+
+/* ── Session reload prompt ────────────────────────────────────────────────── */
+.session-reload-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 17, 27, 0.6);
+}
+
+.session-reload-dialog {
+  width: min(420px, 90vw);
+  padding: 20px;
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  background: var(--mantle);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.session-reload-dialog h2 {
+  margin-bottom: 8px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.session-reload-dialog p {
+  margin-bottom: 18px;
+  color: var(--subtext0);
+  line-height: 1.45;
+}
+
+.session-reload-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.session-reload-actions button {
+  padding: 6px 14px;
+  border: 1px solid var(--surface1);
+  border-radius: 5px;
+  background: var(--surface0);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.session-reload-actions button:hover {
+  background: var(--surface1);
+}
+
+.session-reload-actions .session-reload-primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--crust);
+}
+
+.session-reload-actions .session-reload-primary:hover {
+  filter: brightness(1.05);
+}
