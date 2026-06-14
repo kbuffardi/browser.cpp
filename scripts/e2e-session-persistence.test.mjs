@@ -259,7 +259,7 @@ test('e2e: restores workspace tabs when only read permission is granted', async 
 
   await secondSession.restoreSession();
 
-  assert.deepEqual(permissionModes, ['query:read']);
+  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite', 'query:read']);
   assert.equal(restored.length, 1);
   assert.deepEqual(restored[0], {
     workspace: expectedWorkspace,
@@ -440,10 +440,72 @@ test('e2e: restores workspace tabs across reopen with callback-style storage', a
   });
   await secondSession.restoreSession();
 
-  assert.deepEqual(permissionModes, ['query:read']);
+  assert.deepEqual(permissionModes, ['query:readwrite']);
   assert.equal(restored.length, 1);
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
   assert.equal(restored[0].activeTabPath, 'test_runner.sh');
+});
+
+test('e2e: relaunch requests readwrite permission before restoring workspace', async () => {
+  const storage = createStorageArea();
+  const handleStore = createHandleStore();
+  const permissionModes = [];
+  const restored = [];
+
+  const directoryHandle = {
+    async queryPermission({ mode }) {
+      permissionModes.push(`query:${mode}`);
+      return mode === 'readwrite' ? 'prompt' : 'denied';
+    },
+    async requestPermission({ mode }) {
+      permissionModes.push(`request:${mode}`);
+      return mode === 'readwrite' ? 'granted' : 'denied';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.h', 'bitmap.cpp'],
+    getActiveTabPath: () => 'bitmap.cpp',
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => ({ name: 'project', entries: [] }),
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async (workspace, openTabPaths, activeTabPath) => {
+      restored.push({ workspace, openTabPaths, activeTabPath });
+    },
+    storage,
+    handleStore,
+  });
+
+  await secondSession.restoreSession();
+
+  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
+  assert.equal(restored.length, 1);
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp']);
+  assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
 });
 
 test('e2e: launch/open-files/close/relaunch restores explorer folder and tabs', async () => {
@@ -538,7 +600,7 @@ test('e2e: launch/open-files/close/relaunch restores explorer folder and tabs', 
 
   await launchTwo.restoreSession();
 
-  assert.deepEqual(permissionModes, ['query:read']);
+  assert.deepEqual(permissionModes, ['query:readwrite']);
   assert.equal(restored.length, 1);
   assert.equal(restored[0].workspace.name, 'browser.cpp');
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);

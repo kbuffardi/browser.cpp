@@ -169,12 +169,22 @@ export function createSessionPersistence({
 
       const handle = await handleStore.load();
       if (handle && Array.isArray(session.openTabPaths)) {
-        let permission = await handle.queryPermission({ mode: 'read' });
+        let permission = await handle.queryPermission({ mode: 'readwrite' });
         if (permission !== 'granted') {
           try {
-            permission = await handle.requestPermission({ mode: 'read' });
+            permission = await handle.requestPermission({ mode: 'readwrite' });
           } catch (_) {
             // requestPermission may require user gesture
+          }
+        }
+        if (permission !== 'granted') {
+          permission = await handle.queryPermission({ mode: 'read' });
+          if (permission !== 'granted') {
+            try {
+              permission = await handle.requestPermission({ mode: 'read' });
+            } catch (_) {
+              // requestPermission may require user gesture
+            }
           }
         }
         if (permission === 'granted') {
