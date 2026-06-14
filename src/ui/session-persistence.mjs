@@ -18,22 +18,20 @@ function getRuntimeError() {
     : null;
 }
 
-function asPromise(value) {
+function getPromiseOrNull(value) {
   return value && typeof value.then === 'function' ? value : null;
 }
 
 async function storageGet(storage, key) {
   if (!storage?.get) return {};
 
-  if (storage.get.length < 2) {
-    try {
-      const result = storage.get(key);
-      const pending = asPromise(result);
-      if (pending) return await pending;
-      if (result !== undefined) return result;
-    } catch (err) {
-      // Fallback to callback-style API below.
-    }
+  try {
+    const result = storage.get(key);
+    const pending = getPromiseOrNull(result);
+    if (pending) return await pending;
+    if (result !== undefined) return result;
+  } catch (err) {
+    // Fall through to callback-style API.
   }
 
   return new Promise((resolve, reject) => {
@@ -55,15 +53,16 @@ async function storageGet(storage, key) {
 async function storageSet(storage, value) {
   if (!storage?.set) return;
 
-  if (storage.set.length < 2) {
-    try {
-      const result = storage.set(value);
-      const pending = asPromise(result);
-      if (pending) await pending;
+  try {
+    const result = storage.set(value);
+    const pending = getPromiseOrNull(result);
+    if (pending) {
+      await pending;
       return;
-    } catch (err) {
-      // Fallback to callback-style API below.
     }
+    if (result !== undefined) return;
+  } catch (err) {
+    // Fall through to callback-style API.
   }
 
   await new Promise((resolve, reject) => {
