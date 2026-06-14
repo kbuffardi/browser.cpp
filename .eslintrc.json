@@ -26,8 +26,25 @@
     },
     {
       "files": [
-        "scripts/**/*.js",
-        "webpack.config.js"
+      "src/**/*.mjs"
+      ],
+      "env": {
+      "browser": true,
+      "es2021": true,
+      "worker": true
+      },
+      "parserOptions": {
+      "ecmaVersion": 2021,
+      "sourceType": "module"
+      },
+      "globals": {
+      "chrome": "readonly"
+      }
+    },
+    {
+      "files": [
+      "scripts/**/*.js",
+      "webpack.config.js"
       ],
       "env": {
         "es2021": true,
@@ -36,6 +53,19 @@
       "parserOptions": {
         "ecmaVersion": 2021,
         "sourceType": "script"
+      }
+    },
+    {
+      "files": [
+        "scripts/**/*.mjs"
+      ],
+      "env": {
+        "es2021": true,
+        "node": true
+      },
+      "parserOptions": {
+        "ecmaVersion": 2021,
+        "sourceType": "module"
       }
     }
   ]
