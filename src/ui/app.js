@@ -73,6 +73,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     getActiveTabPath,
     getOpenTabsSnapshot,
     restoreWorkspace,
+    confirmReload: promptReloadPreviousProject,
   });
   const persistenceGate = createPersistenceGate(persistSession);
   initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
@@ -106,6 +107,67 @@ window.addEventListener('DOMContentLoaded', async () => {
 function initPanelResizers() {
   initTerminalResizer();
   initSidebarResizer();
+}
+
+/**
+ * Ask the user whether to reload the previous session's project or start fresh.
+ *
+ * Rendered as an in-page dialog so the user's button click counts as a user
+ * gesture – this lets the subsequent FileSystem `requestPermission()` call show
+ * the browser's read/write permission prompt for the saved folder.
+ *
+ * @returns {Promise<boolean>} true to reload the previous project, false to
+ *   start a new project (default state).
+ */
+function promptReloadPreviousProject() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'session-reload-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'session-reload-dialog';
+
+    const heading = document.createElement('h2');
+    heading.textContent = 'Reload previous project?';
+
+    const message = document.createElement('p');
+    message.textContent =
+      'A previous session was found. Reload it to reopen the folder and files ' +
+      '(you may be asked to re-grant read/write access), or start a new project.';
+
+    const actions = document.createElement('div');
+    actions.className = 'session-reload-actions';
+
+    const newButton = document.createElement('button');
+    newButton.type = 'button';
+    newButton.textContent = 'Start new project';
+
+    const reloadButton = document.createElement('button');
+    reloadButton.type = 'button';
+    reloadButton.className = 'session-reload-primary';
+    reloadButton.textContent = 'Reload previous project';
+
+    let settled = false;
+    const finish = (reload) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      resolve(reload);
+    };
+
+    newButton.addEventListener('click', () => finish(false));
+    reloadButton.addEventListener('click', () => finish(true));
+
+    actions.appendChild(newButton);
+    actions.appendChild(reloadButton);
+    dialog.appendChild(heading);
+    dialog.appendChild(message);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    reloadButton.focus();
+  });
 }
 
 function initTerminalResizer() {

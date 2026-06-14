@@ -262,12 +262,151 @@ test('e2e: does not fall back to read-only permission when readwrite is denied',
   assert.equal(restored.length, 0);
 });
 
-test('e2e: denied readwrite permission still restores previous session from snapshot', async () => {
+test('e2e: prompts to reload and re-requests readwrite, restoring live workspace', async () => {
+  const storage = createStorageArea();
+  const handleStore = createHandleStore();
+  const permissionModes = [];
+  const restored = [];
+  let confirmCalls = 0;
+
+  const directoryHandle = {
+    async queryPermission({ mode }) {
+      permissionModes.push(`query:${mode}`);
+      return 'prompt';
+    },
+    async requestPermission({ mode }) {
+      permissionModes.push(`request:${mode}`);
+      return 'granted';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.h', 'bitmap.cpp'],
+    getActiveTabPath: () => 'bitmap.cpp',
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async (handle) => {
+        assert.equal(handle, directoryHandle);
+        return { name: 'project', entries: [] };
+      },
+    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async (workspace, openTabPaths, activeTabPath) => {
+      restored.push({ workspace, openTabPaths, activeTabPath });
+    },
+    storage,
+    handleStore,
+    confirmReload: async () => {
+      confirmCalls += 1;
+      return true; // user chooses to reload the previous project
+    },
+  });
+
+  await secondSession.restoreSession();
+
+  assert.equal(confirmCalls, 1);
+  assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
+  assert.equal(restored.length, 1);
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp']);
+  assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
+});
+
+test('e2e: choosing start-new abandons previous state and clears persisted session', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
   const permissionModes = [];
   const restored = [];
   let restoredSource = null;
+
+  const directoryHandle = {
+    async queryPermission({ mode }) {
+      permissionModes.push(`query:${mode}`);
+      return 'prompt';
+    },
+    async requestPermission({ mode }) {
+      permissionModes.push(`request:${mode}`);
+      return 'granted';
+    },
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => directoryHandle,
+      getWorkspaceSnapshot: () => ({
+        name: 'project',
+        entries: [{ path: 'bitmap.cpp', kind: 'file' }],
+      }),
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.cpp'],
+    getActiveTabPath: () => 'bitmap.cpp',
+    getOpenTabsSnapshot: () => ({ 'bitmap.cpp': '#include <iostream>\n' }),
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  await firstSession.persistSession();
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => {
+        throw new Error('workspace restore should not be attempted');
+      },
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: (source) => {
+        restoredSource = source;
+      },
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async () => {
+      restored.push('workspace');
+    },
+    storage,
+    handleStore,
+    confirmReload: async () => false, // user chooses to start a new project
+  });
+
+  await secondSession.restoreSession();
+
+  // No permission request beyond the initial query, no restore, and the saved
+  // session is cleared so the next launch starts in the default state.
+  assert.deepEqual(permissionModes, ['query:readwrite']);
+  assert.equal(restored.length, 0);
+  assert.equal(restoredSource, null);
+
+  const remaining = await storage.get('browser_cpp_session');
+  assert.equal(remaining.browser_cpp_session, null);
+  assert.equal(await handleStore.load(), null);
+});
+
+test('e2e: reload chosen but browser denies permission still restores snapshot', async () => {
+  const storage = createStorageArea();
+  const handleStore = createHandleStore();
+  const permissionModes = [];
+  const restored = [];
 
   const directoryHandle = {
     async queryPermission({ mode }) {
@@ -289,10 +428,7 @@ test('e2e: denied readwrite permission still restores previous session from snap
       }),
       openFolderFromHandle: async () => null,
     },
-    editorAPI: {
-      getValue: () => '',
-      setValue: () => {},
-    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
     markDirty: () => {},
     getOpenTabPaths: () => ['bitmap.cpp'],
     getActiveTabPath: () => 'bitmap.cpp',
@@ -306,14 +442,9 @@ test('e2e: denied readwrite permission still restores previous session from snap
   const secondSession = createSessionPersistence({
     fsAPI: {
       getDirectoryHandle: () => null,
-      openFolderFromHandle: async () => ({ name: 'project', entries: [] }),
+      openFolderFromHandle: async () => null,
     },
-    editorAPI: {
-      getValue: () => '',
-      setValue: (source) => {
-        restoredSource = source;
-      },
-    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
     markDirty: () => {},
     getOpenTabPaths: () => [],
     getActiveTabPath: () => null,
@@ -322,21 +453,18 @@ test('e2e: denied readwrite permission still restores previous session from snap
     },
     storage,
     handleStore,
+    confirmReload: async () => true,
   });
 
   await secondSession.restoreSession();
 
-  // readwrite permission was requested (not read), but when it was denied the
-  // previous session is still restored from the persisted snapshot.
   assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
   assert.equal(restored.length, 1);
   assert.equal(restored[0].workspace.name, 'project');
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.cpp']);
-  assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
   assert.deepEqual(restored[0].tabContentByPath, {
     'bitmap.cpp': '#include <iostream>\n',
   });
-  assert.equal(restoredSource, null);
 });
 
 test('e2e: restores source fallback when no workspace handle is available', async () => {
