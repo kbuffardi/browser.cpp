@@ -24,7 +24,7 @@ function createCallbackStorageArea() {
   const data = new Map();
   return {
     get(key, callback) {
-      queueMicrotask(() => callback({ [key]: data.get(key) }));
+      queueMicrotask(() => callback?.({ [key]: data.get(key) }));
     },
     set(value, callback) {
       for (const [key, item] of Object.entries(value)) {
