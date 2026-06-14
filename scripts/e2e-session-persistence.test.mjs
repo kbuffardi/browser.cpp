@@ -462,6 +462,7 @@ test('e2e: reload chosen but browser denies permission still restores snapshot',
   assert.equal(restored.length, 1);
   assert.equal(restored[0].workspace.name, 'project');
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.cpp']);
+  assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
   assert.deepEqual(restored[0].tabContentByPath, {
     'bitmap.cpp': '#include <iostream>\n',
   });
