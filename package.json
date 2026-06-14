@@ -7,7 +7,7 @@
     "prebuild": "mkdir -p dist/clang",
     "lint": "eslint .",
     "build": "webpack --mode production",
-    "test:e2e": "node --test scripts/e2e-session-persistence.test.mjs",
+    "test:e2e": "node --experimental-detect-module --test scripts/e2e-session-persistence.test.mjs scripts/e2e-session-restore-choice.test.mjs",
     "dev": "webpack --mode development --watch",
     "fetch-clang": "node scripts/fetch-clang-wasm.js"
   },

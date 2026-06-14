@@ -172,6 +172,15 @@ export function getDirectoryHandle() {
   return currentDirectoryHandle;
 }
 
+/**
+ * Reset all in-memory workspace state so a previously opened folder is fully
+ * abandoned. Used by the relaunch "Start new project" path so the old
+ * workspace cannot be rehydrated later by accident.
+ */
+export function resetWorkspace() {
+  clearWorkspace();
+}
+
 /** Return a serializable snapshot of the current workspace metadata. */
 export function getWorkspaceSnapshot() {
   if (!workspaceName) return null;

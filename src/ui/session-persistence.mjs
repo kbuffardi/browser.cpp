@@ -149,6 +149,7 @@ export function createSessionPersistence({
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
   confirmReload = () => true,
+  startNewProject = () => {},
 }) {
   function filterTabContentSnapshot(session) {
     const entries = session?.openTabContentsByPath;
@@ -171,6 +172,16 @@ export function createSessionPersistence({
     } catch (_) {
       // Storage not available – nothing to clear.
     }
+    // Drop live in-memory workspace state so the abandoned folder cannot be
+    // re-persisted or restored later by accident.
+    if (typeof fsAPI.resetWorkspace === 'function') fsAPI.resetWorkspace();
+  }
+
+  // Abandon the saved session and load the default new-project state
+  // (no workspace, a `main.cpp` tab with editorAPI.DEFAULT_SOURCE).
+  async function abandonForNewProject() {
+    await clearPersistedSession();
+    await startNewProject();
   }
 
   async function restoreSession() {
@@ -191,7 +202,7 @@ export function createSessionPersistence({
           // access. Ask whether to reload the previous project or start fresh.
           const reload = await confirmReload();
           if (!reload) {
-            await clearPersistedSession();
+            await abandonForNewProject();
             return;
           }
           try {
@@ -236,7 +247,7 @@ export function createSessionPersistence({
         // later requires re-granting folder access, so confirm reload first.
         const reload = await confirmReload();
         if (!reload) {
-          await clearPersistedSession();
+          await abandonForNewProject();
           return;
         }
         await restoreWorkspace(
