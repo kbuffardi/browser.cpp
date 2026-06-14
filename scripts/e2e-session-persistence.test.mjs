@@ -262,7 +262,7 @@ test('e2e: does not fall back to read-only permission when readwrite is denied',
   assert.equal(restored.length, 0);
 });
 
-test('e2e: denied workspace permission resets to default state instead of restoring snapshots', async () => {
+test('e2e: denied readwrite permission still restores previous session from snapshot', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
   const permissionModes = [];
@@ -317,8 +317,8 @@ test('e2e: denied workspace permission resets to default state instead of restor
     markDirty: () => {},
     getOpenTabPaths: () => [],
     getActiveTabPath: () => null,
-    restoreWorkspace: async () => {
-      restored.push('workspace');
+    restoreWorkspace: async (workspace, openTabPaths, activeTabPath, tabContentByPath) => {
+      restored.push({ workspace, openTabPaths, activeTabPath, tabContentByPath });
     },
     storage,
     handleStore,
@@ -326,8 +326,16 @@ test('e2e: denied workspace permission resets to default state instead of restor
 
   await secondSession.restoreSession();
 
+  // readwrite permission was requested (not read), but when it was denied the
+  // previous session is still restored from the persisted snapshot.
   assert.deepEqual(permissionModes, ['query:readwrite', 'request:readwrite']);
-  assert.equal(restored.length, 0);
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].workspace.name, 'project');
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.cpp']);
+  assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
+  assert.deepEqual(restored[0].tabContentByPath, {
+    'bitmap.cpp': '#include <iostream>\n',
+  });
   assert.equal(restoredSource, null);
 });
 

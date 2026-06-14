@@ -167,12 +167,13 @@ export function createSessionPersistence({
       const session = data[STORAGE_KEY];
       if (!session) return;
 
-      let deniedWorkspacePermission = false;
       const handle = await handleStore.load();
       if (handle && Array.isArray(session.openTabPaths)) {
         let permission = await handle.queryPermission({ mode: 'readwrite' });
         if (permission !== 'granted') {
           try {
+            // requestPermission may be a no-op without a user gesture during
+            // automatic restore; the snapshot fallback below covers that case.
             permission = await handle.requestPermission({ mode: 'readwrite' });
           } catch (_) {
             // requestPermission may require user gesture
@@ -189,12 +190,12 @@ export function createSessionPersistence({
             );
             return;
           }
-        } else {
-          deniedWorkspacePermission = true;
         }
+        // Permission was not granted up front (e.g. no user gesture on relaunch)
+        // or the handle could not be reloaded. Fall through to the snapshot
+        // fallback so the previous session's Explorer + tabs still restore;
+        // write access is re-requested later when the user opens a file.
       }
-
-      if (deniedWorkspacePermission) return;
 
       if (session.workspace && Array.isArray(session.openTabPaths)) {
         await restoreWorkspace(
