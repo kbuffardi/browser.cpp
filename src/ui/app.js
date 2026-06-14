@@ -81,7 +81,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // 7. Restore last session from chrome.storage if available
   await restoreSession();
-  persistenceGate.enable();
+  await persistenceGate.enable();
 
   // 8. Resize terminal when the window or terminal panel is resized
   const resizeObserver = new ResizeObserver(() => terminalAPI.fitTerminal());

@@ -221,13 +221,20 @@ export function createSessionPersistence({
 
 export function createPersistenceGate(persistSession) {
   let enabled = false;
+  let pending = false;
   return {
     persist() {
-      if (!enabled) return;
+      if (!enabled) {
+        pending = true;
+        return;
+      }
       return persistSession();
     },
     enable() {
       enabled = true;
+      if (!pending) return;
+      pending = false;
+      return persistSession();
     },
   };
 }
