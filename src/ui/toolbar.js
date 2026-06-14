@@ -595,8 +595,7 @@ async function openWorkspaceFile(path) {
   let content = null;
   try {
     content = await _fsAPI.readWorkspaceFile(path);
-  } catch (readError) {
-    void readError;
+  } catch {
     content = null;
   }
   if (content === null && _workspace && !_fsAPI.getDirectoryHandle?.()) {
@@ -611,7 +610,11 @@ async function openWorkspaceFile(path) {
     setWorkspaceMode(reconnectedWorkspace);
     renderWorkspaceSidebar(reconnectedWorkspace);
     _persistSession?.();
-    content = await _fsAPI.readWorkspaceFile(path);
+    try {
+      content = await _fsAPI.readWorkspaceFile(path);
+    } catch {
+      content = null;
+    }
   }
   if (content == null) return;
   openTabForFile(path, content);

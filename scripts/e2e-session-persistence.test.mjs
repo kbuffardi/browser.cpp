@@ -98,11 +98,12 @@ function createFakeDocument() {
   };
 }
 
-async function waitFor(condition, retries = 10) {
+async function waitFor(condition, description, retries = 10) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (condition()) return;
     await new Promise((resolve) => setImmediate(resolve));
   }
+  throw new Error(`Condition not met within ${retries} retries: ${description}`);
 }
 
 function createStorageArea() {
@@ -680,7 +681,10 @@ test('e2e: after snapshot restore, selecting another file reconnects workspace a
     const bitmapCppItem = treeItems.find((item) => item.dataset.path === 'bitmap.cpp');
     assert.ok(bitmapCppItem, 'expected bitmap.cpp in restored explorer');
     bitmapCppItem.click();
-    await waitFor(() => getToolbarOpenTabPaths().includes('bitmap.cpp'));
+    await waitFor(
+      () => getToolbarOpenTabPaths().includes('bitmap.cpp'),
+      'bitmap.cpp tab should open after workspace reconnect'
+    );
 
     assert.equal(openFolderCalls, 1);
     assert.deepEqual(getToolbarOpenTabPaths(), ['bitmap.h', 'bitmap.cpp']);
