@@ -31,7 +31,7 @@ async function storageGet(storage, key) {
       const pending = asPromise(result);
       if (pending) return await pending;
       if (result !== undefined) return result;
-    } catch (_) {
+    } catch (err) {
       // Fallback to callback-style API below.
     }
   }
@@ -61,7 +61,7 @@ async function storageSet(storage, value) {
       const pending = asPromise(result);
       if (pending) await pending;
       return;
-    } catch (_) {
+    } catch (err) {
       // Fallback to callback-style API below.
     }
   }
