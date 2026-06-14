@@ -81,6 +81,18 @@ function createHandleStore() {
   };
 }
 
+function createFailingHandleStore() {
+  return {
+    async save() {
+      throw new Error('handle save failed');
+    },
+    async load() {
+      return null;
+    },
+    async clear() {},
+  };
+}
+
 test('e2e: restores workspace tabs when only read permission is granted', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
@@ -431,4 +443,89 @@ test('e2e: launch/open-files/close/relaunch restores explorer folder and tabs', 
   assert.equal(restored[0].workspace.name, 'browser.cpp');
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
   assert.equal(restored[0].activeTabPath, 'test_runner.sh');
+});
+
+test('e2e: restores explorer folder and tabs when handle reload is unavailable', async () => {
+  const storage = createStorageArea();
+  const handleStore = createFailingHandleStore();
+  const restored = [];
+  const workspace = {
+    name: 'browser.cpp',
+    entries: [
+      { path: 'bitmap.h', kind: 'file' },
+      { path: 'bitmap.cpp', kind: 'file' },
+      { path: 'test_runner.sh', kind: 'file' },
+    ],
+    git: { isRepo: true, branch: 'main', remotes: ['origin'] },
+  };
+  const tabContentByPath = {
+    'bitmap.h': '#pragma once\n',
+    'bitmap.cpp': '#include "bitmap.h"\n',
+    'test_runner.sh': '#!/bin/bash\n',
+  };
+
+  const firstSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => ({ name: 'browser.cpp' }),
+      getWorkspaceSnapshot: () => workspace,
+      openFolderFromHandle: async () => null,
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => ['bitmap.h', 'bitmap.cpp', 'test_runner.sh'],
+    getActiveTabPath: () => 'test_runner.sh',
+    getOpenTabsSnapshot: () => tabContentByPath,
+    restoreWorkspace: async () => {},
+    storage,
+    handleStore,
+  });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    warnings.push(args);
+  };
+  try {
+    await firstSession.persistSession();
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0][0]), /Failed to persist workspace directory handle/);
+
+  const secondSession = createSessionPersistence({
+    fsAPI: {
+      getDirectoryHandle: () => null,
+      openFolderFromHandle: async () => {
+        throw new Error('handle restore should not be attempted');
+      },
+    },
+    editorAPI: {
+      getValue: () => '',
+      setValue: () => {},
+    },
+    markDirty: () => {},
+    getOpenTabPaths: () => [],
+    getActiveTabPath: () => null,
+    restoreWorkspace: async (restoredWorkspace, openTabPaths, activeTabPath, restoredTabContentByPath) => {
+      restored.push({
+        restoredWorkspace,
+        openTabPaths,
+        activeTabPath,
+        restoredTabContentByPath,
+      });
+    },
+    storage,
+    handleStore,
+  });
+
+  await secondSession.restoreSession();
+
+  assert.equal(restored.length, 1);
+  assert.deepEqual(restored[0].restoredWorkspace, workspace);
+  assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp', 'test_runner.sh']);
+  assert.equal(restored[0].activeTabPath, 'test_runner.sh');
+  assert.deepEqual(restored[0].restoredTabContentByPath, tabContentByPath);
 });
