@@ -177,16 +177,6 @@ export function createSessionPersistence({
             // requestPermission may require user gesture
           }
         }
-        if (permission !== 'granted') {
-          permission = await handle.queryPermission({ mode: 'read' });
-          if (permission !== 'granted') {
-            try {
-              permission = await handle.requestPermission({ mode: 'read' });
-            } catch (_) {
-              // requestPermission may require user gesture
-            }
-          }
-        }
         if (permission === 'granted') {
           const workspace = await fsAPI.openFolderFromHandle(handle);
           if (workspace) {
