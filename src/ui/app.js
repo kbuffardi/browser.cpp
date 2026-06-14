@@ -24,6 +24,7 @@ import {
   getActiveTabPath,
   getOpenTabsSnapshot,
   restoreWorkspace,
+  resetToNewProject,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 
@@ -74,6 +75,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     getOpenTabsSnapshot,
     restoreWorkspace,
     confirmReload: promptReloadPreviousProject,
+    startNewProject: resetToNewProject,
   });
   const persistenceGate = createPersistenceGate(persistSession);
   initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
