@@ -6,8 +6,9 @@
  * consumed by toolbar.js:
  *
  *  Inbound messages (from main thread):
- *    { type: 'compile', source: string, flags: string[] }
- *    { type: 'run',     stdin:  string }
+ *    { type: 'compile', sourcePaths: string[], files: Array<{path,content}>,
+ *                       std: string, flags: string[], primarySourcePath, outputName }
+ *    { type: 'run',     sharedBuffer: SharedArrayBuffer, vfsFiles }
  *    { type: 'status'  }
  *
  *  Outbound messages (to main thread):
@@ -15,18 +16,19 @@
  *    { type: 'compiler-ready'   }
  *    { type: 'compiler-error',   message: string }
  *    { type: 'compile-start'    }
- *    { type: 'compile-result',   success: bool, diagnostics: string }
+ *    { type: 'compile-result',   success: bool, diagnostics: string,
+ *                                outputPath: string|null, diagnosticsByPath: object }
  *    { type: 'run-start'        }
  *    { type: 'stdout',           data: string }
  *    { type: 'stderr',           data: string }
  *    { type: 'run-result',       exitCode: number }
  *    { type: 'status-reply',     state: string }
  *
- * Compilation pipeline (mirrors browsercc's index.ts):
- *   1. Fresh Clang instance  – run `clang++ -###` to get the exact -cc1 and
- *                              wasm-ld argument lists from the driver
- *   2. Fresh Clang instance  – run `clang++ -cc1 …` to compile to object file
- *   3. Fresh LLD  instance   – run `wasm-ld …` to link to a WASM binary
+ * Compilation pipeline (multi-translation-unit project build):
+ *   1. Fresh Clang instance  – run `clang++ -###` to get the full compile plan
+ *                              (one `-cc1` step per source + one `wasm-ld` step)
+ *   2. Fresh Clang instance per source – run `clang++ -cc1 …` → one object each
+ *   3. Fresh LLD  instance   – run `wasm-ld …` to link all objects into a binary
  *
  * A fresh instance is required for each step because the binaries are built
  * with `-s EXIT_RUNTIME`, which tears down the Emscripten runtime after
@@ -34,6 +36,9 @@
  */
 
 'use strict';
+
+import { parseCompilePlan } from './compile-plan.mjs';
+import { parseDiagnostics } from '../ui/diagnostics.mjs';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -343,19 +348,17 @@ function callMainSafe(module, args) {
 // ── Compiler invocation discovery ─────────────────────────────────────────────
 
 /**
- * Ask the Clang driver which exact -cc1 and wasm-ld arguments it would use,
- * without actually compiling anything.  Uses the `-###` flag which prints the
- * subcommands to stderr and exits 0.
+ * Ask the Clang driver for the full multi-translation-unit build plan, without
+ * actually compiling anything.  Uses the `-###` flag which prints every `-cc1`
+ * and `wasm-ld` subcommand to stderr and exits 0.
  *
- * Ported from browsercc/index.ts (getCompilerInvocation).
- *
- * @param {string}   fileName  – source file name as it appears in the FS
- * @param {string}   source    – source text
- * @param {string[]} flags     – user flags (e.g. ['-std=c++20', '-Wall'])
- * @returns {{ compilerArgs: string[], compilerArtifact: string,
- *             linkerArgs: string[],   linkerArtifact: string }}
+ * @param {string[]} sources – workspace-relative source paths (one per TU)
+ * @param {Array<{path:string, content:string|Uint8Array}>} files – overlay
+ * @param {string[]} flags   – user flags (e.g. ['-std=c++20', '-Wall'])
+ * @param {string|null} outputName – optional `-o` artifact name
+ * @returns {ReturnType<typeof parseCompilePlan>}
  */
-async function getCompilerInvocation(fileName, source, flags) {
+async function getCompilePlan(sources, files, flags, outputName) {
   let stderr = '';
   const clang = await clangFactory({
     thisProgram: 'clang++',
@@ -364,7 +367,8 @@ async function getCompilerInvocation(fileName, source, flags) {
     printErr: (s) => { stderr += s + '\n'; },
   });
 
-  clang.FS.writeFile(fileName, source);
+  // Mount the project overlay so the driver can see every input source.
+  populateCompileFs(clang.FS, files);
 
   // Minimal stub sysroot so the driver can resolve library/include paths
   clang.FS.mkdirTree('/lib/wasm32-wasi');
@@ -372,37 +376,20 @@ async function getCompilerInvocation(fileName, source, flags) {
   clang.FS.writeFile('/lib/wasm32-wasi/crt1-command.o', new Uint8Array(0));
   clang.FS.writeFile('/lib/wasm32-wasi/crt1-reactor.o', new Uint8Array(0));
 
-  const ret = callMainSafe(clang, [fileName, ...flags, '-###']);
+  const driverArgs = [...sources, ...flags];
+  if (outputName) driverArgs.push('-o', outputName);
+  driverArgs.push('-###');
+
+  const ret = callMainSafe(clang, driverArgs);
   if (ret !== 0) {
     throw new Error(`Clang driver failed (exit ${ret}):\n${stderr}`);
   }
 
-  const lines = stderr.split('\n');
-
-  function extractArgs(key) {
-    const line = lines.find((l) => l.includes(key)) ?? '';
-    const matches = line.match(/"([^"]*)"/g);
-    if (!matches || matches.length < 2) {
-    throw new Error(`Could not find '${key}' subcommand in driver output:\n${stderr}`);
-    }
-    const args = matches.map((s) => s.slice(1, -1)).slice(1); // skip argv[0]
-    const oIndex = args.findIndex((a) => a === '-o');
-    return { args, outputFileName: args[oIndex + 1] };
-  }
-
-  const cc1    = extractArgs('-cc1');
-  const linker = extractArgs('wasm-ld');
-
-  return {
-    compilerArgs:     cc1.args,
-    compilerArtifact: cc1.outputFileName,
-    linkerArgs:       linker.args,
-    linkerArtifact:   linker.outputFileName,
-  };
+  return parseCompilePlan(stderr);
 }
 
 function normalizeCompilePath(path) {
-  const value = String(path || 'input.cpp').replace(/^\/+/, '');
+  const value = String(path || 'input.cpp').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
   return value || 'input.cpp';
 }
 
@@ -415,123 +402,158 @@ function writeCompileFile(moduleFs, path, content) {
   moduleFs.writeFile(normalized, content);
 }
 
-function populateCompileFs(moduleFs, sourcePath, source, vfsFiles) {
-  for (const file of (vfsFiles || [])) {
-    if (!file?.path || !file.bytes) continue;
-    writeCompileFile(moduleFs, file.path, file.bytes);
+/** Ensure the parent directory of an (absolute or relative) FS path exists. */
+function ensureParentDir(moduleFs, path) {
+  const value = String(path || '');
+  const lastSlash = value.lastIndexOf('/');
+  if (lastSlash > 0) {
+    try { moduleFs.mkdirTree(value.slice(0, lastSlash)); } catch (_) { /* exists */ }
   }
-  writeCompileFile(moduleFs, sourcePath, source);
+}
+
+/** Write every overlay file ({path, content}) into a module's virtual FS. */
+function populateCompileFs(moduleFs, files) {
+  for (const file of (files || [])) {
+    if (!file?.path || file.content == null) continue;
+    writeCompileFile(moduleFs, file.path, file.content);
+  }
 }
 
 // ── Compile ──────────────────────────────────────────────────────────────────
 
 /**
- * Compile C++ source to a WASM binary using the browsercc toolchain pipeline:
- *   1. Fresh Clang instance  →  -### to get exact driver args
- *   2. Fresh Clang instance  →  -cc1 … to produce an object file
- *   3. Fresh LLD   instance  →  wasm-ld … to link into a final WASM binary
+ * Compile a workspace project (one or more translation units) to a WASM binary:
+ *   1. Fresh Clang instance  →  `-###` to get the full multi-TU build plan
+ *   2. Fresh Clang instance *per source*  →  `-cc1 …` producing one object each
+ *   3. Fresh LLD instance    →  `wasm-ld …` linking all objects into one binary
  *
  * A fresh instance is required for each step because browsercc is built with
- * -s EXIT_RUNTIME, which destroys the Emscripten runtime after callMain()
- * completes.  Reusing the same instance for a second callMain() call would
- * fail with "RuntimeError: null function".
+ * `-s EXIT_RUNTIME`, which destroys the Emscripten runtime after callMain()
+ * completes; reusing an instance for a second callMain() fails.
  *
- * @param {string}   source  – C++ source text
- * @param {string[]} flags      – extra compiler flags (e.g. ['-O2'])
- * @param {string}   std        – C++ standard (e.g. 'c++20')
- * @param {string}   sourcePath – workspace-relative source path
- * @param {Array<{path: string, bytes: Uint8Array}>} vfsFiles – workspace files
- * @returns {{ success: boolean, diagnostics: string }}
+ * @param {{
+ *   sourcePaths: string[],
+ *   files: Array<{path:string, content:string|Uint8Array}>,
+ *   std?: string, flags?: string[],
+ *   primarySourcePath?: string, outputName?: string|null,
+ * }} request
+ * @returns {Promise<{success:boolean, diagnostics:string, outputPath:(string|null),
+ *                    diagnosticsByPath:object}>}
  */
-async function compile(source, flags = [], std = 'c++20', sourcePath = 'input.cpp', vfsFiles = []) {
-  if (!await ensureReady()) return { success: false, diagnostics: 'Compiler not ready.' };
+async function compile(request) {
+  const fail = (diagnostics) => ({ success: false, diagnostics, outputPath: null, diagnosticsByPath: {} });
+
+  if (!await ensureReady()) return fail('Compiler not ready.');
 
   compiledBinary = null;
-  const normalizedSourcePath = normalizeCompilePath(sourcePath);
+
+  const std       = request.std || 'c++20';
+  const flags     = request.flags || [];
+  const files     = request.files || [];
+  const outputName = request.outputName || null;
+  const sources = [...new Set((request.sourcePaths || []).map(normalizeCompilePath))];
+
+  if (sources.length === 0) return fail('No source files to compile.');
 
   const userFlags = [`-std=${std}`, '-Wall', '-Wextra', ...flags];
 
-  // ── Step 1: Invocation discovery ─────────────────────────────────────────
-
-  let invocation;
+  // ── Step 1: Build-plan discovery ─────────────────────────────────────────
+  let plan;
   try {
-    invocation = await getCompilerInvocation(normalizedSourcePath, source, userFlags);
+    plan = await getCompilePlan(sources, files, userFlags, outputName);
   } catch (err) {
-    return { success: false, diagnostics: `Driver error: ${err.message}` };
+    return fail(`Driver error: ${err.message}`);
   }
 
   let allOutput = '';
   const capture = (s) => { allOutput += s + '\n'; };
+  const diagnosticsByPath = () => groupDiagnostics(allOutput);
 
-  // ── Step 2: Compile (clang++ -cc1 …) ─────────────────────────────────────
+  // ── Step 2: Compile each translation unit ────────────────────────────────
+  const objects = new Map();
+  for (const step of plan.compileSteps) {
+    let clang;
+    try {
+      clang = await clangFactory({
+        thisProgram: 'clang++',
+        locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
+        print:    capture,
+        printErr: capture,
+      });
+    } catch (err) {
+      return fail(`Clang init failed: ${err.message}`);
+    }
 
-  let clang;
-  try {
-    clang = await clangFactory({
-    thisProgram: 'clang++',
-    locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
-    print:    capture,
-    printErr: capture,
-    });
-  } catch (err) {
-    return { success: false, diagnostics: `Clang init failed: ${err.message}` };
+    populateCompileFs(clang.FS, files);
+    setUpSysroot(clang, sysrootBuffer);
+    ensureParentDir(clang.FS, step.objectPath);
+
+    let exitCode;
+    try {
+      exitCode = callMainSafe(clang, step.args);
+    } catch (err) {
+      return { success: false, diagnostics: `Compiler crashed: ${err.message}\n${allOutput}`.trim(), outputPath: null, diagnosticsByPath: diagnosticsByPath() };
+    }
+
+    if (exitCode !== 0) {
+      return { success: false, diagnostics: allOutput.trim(), outputPath: null, diagnosticsByPath: diagnosticsByPath() };
+    }
+
+    try {
+      objects.set(step.objectPath, clang.FS.readFile(step.objectPath));
+    } catch (_) {
+      return { success: false, diagnostics: allOutput.trim() || 'Compiler produced no object file.', outputPath: null, diagnosticsByPath: diagnosticsByPath() };
+    }
   }
 
-  populateCompileFs(clang.FS, normalizedSourcePath, source, vfsFiles);
-  setUpSysroot(clang, sysrootBuffer);
-
-  let exitCode;
-  try {
-    exitCode = callMainSafe(clang, invocation.compilerArgs);
-  } catch (err) {
-    return { success: false, diagnostics: `Compiler crashed: ${err.message}\n${allOutput}`.trim() };
-  }
-
-  if (exitCode !== 0) {
-    return { success: false, diagnostics: allOutput.trim() };
-  }
-
-  let objectBinary;
-  try {
-    objectBinary = clang.FS.readFile(invocation.compilerArtifact);
-  } catch (_) {
-    return { success: false, diagnostics: allOutput.trim() || 'Compiler produced no object file.' };
-  }
-
-  // ── Step 3: Link (wasm-ld …) ─────────────────────────────────────────────
-
+  // ── Step 3: Link all objects into one binary ─────────────────────────────
   let lld;
   try {
     lld = await lldFactory({
-    thisProgram: 'wasm-ld',
-    locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
-    print:    capture,
-    printErr: capture,
+      thisProgram: 'wasm-ld',
+      locateFile:  (f) => workerRelativeUrl(`clang/${f}`),
+      print:    capture,
+      printErr: capture,
     });
   } catch (err) {
-    return { success: false, diagnostics: `LLD init failed: ${err.message}` };
+    return fail(`LLD init failed: ${err.message}`);
   }
 
-  lld.FS.writeFile(invocation.compilerArtifact, objectBinary);
+  for (const [path, bytes] of objects) {
+    ensureParentDir(lld.FS, path);
+    lld.FS.writeFile(path, bytes);
+  }
   setUpSysroot(lld, sysrootBuffer);
+  ensureParentDir(lld.FS, plan.linkStep.outputPath);
 
+  let exitCode;
   try {
-    exitCode = callMainSafe(lld, invocation.linkerArgs);
+    exitCode = callMainSafe(lld, plan.linkStep.args);
   } catch (err) {
-    return { success: false, diagnostics: `Linker crashed: ${err.message}\n${allOutput}`.trim() };
+    return { success: false, diagnostics: `Linker crashed: ${err.message}\n${allOutput}`.trim(), outputPath: null, diagnosticsByPath: diagnosticsByPath() };
   }
 
   if (exitCode !== 0) {
-    return { success: false, diagnostics: allOutput.trim() };
+    return { success: false, diagnostics: allOutput.trim(), outputPath: null, diagnosticsByPath: diagnosticsByPath() };
   }
 
   try {
-    compiledBinary = lld.FS.readFile(invocation.linkerArtifact);
+    compiledBinary = lld.FS.readFile(plan.linkStep.outputPath);
   } catch (_) {
-    return { success: false, diagnostics: allOutput.trim() || 'Linker produced no output binary.' };
+    return { success: false, diagnostics: allOutput.trim() || 'Linker produced no output binary.', outputPath: null, diagnosticsByPath: diagnosticsByPath() };
   }
 
-  return { success: true, diagnostics: allOutput.trim() };
+  const outputPath = normalizeCompilePath(outputName || plan.linkStep.outputPath);
+  return { success: true, diagnostics: allOutput.trim(), outputPath, diagnosticsByPath: diagnosticsByPath() };
+}
+
+/** Group parsed diagnostics by normalised source path for the UI. */
+function groupDiagnostics(text) {
+  const byPath = {};
+  for (const d of parseDiagnostics(text)) {
+    (byPath[d.path] ||= []).push(d);
+  }
+  return byPath;
 }
 
 // ── WASI shim ─────────────────────────────────────────────────────────────────
@@ -963,16 +985,17 @@ self.onmessage = async ({ data }) => {
     case 'compile':
       send({ type: 'compile-start' });
       try {
-        const result = await compile(
-          data.source,
-          data.flags || [],
-          data.std || 'c++20',
-          data.fileName || 'input.cpp',
-          data.vfsFiles || []
-        );
-        send({ type: 'compile-result', ...result });
+        const result = await compile({
+          sourcePaths:       data.sourcePaths || [],
+          files:             data.files || [],
+          std:               data.std || 'c++20',
+          flags:             data.flags || [],
+          primarySourcePath: data.primarySourcePath || null,
+          outputName:        data.outputName || null,
+        });
+        send({ type: 'compile-result', primarySourcePath: data.primarySourcePath || null, ...result });
       } catch (err) {
-        send({ type: 'compile-result', success: false, diagnostics: String(err) });
+        send({ type: 'compile-result', success: false, diagnostics: String(err), outputPath: null, diagnosticsByPath: {} });
       }
       break;
 
