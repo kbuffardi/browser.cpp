@@ -1,0 +1,37 @@
+Implementation reasoning — multi-file workspace builds
+
+WHY pure .mjs modules: terminal.js/toolbar.js/editor.js import xterm/monaco at
+top level and cannot be imported in Node. Following the existing
+session-persistence.mjs precedent, all testable logic was extracted into
+browser-free .mjs modules that BOTH the real UI/worker AND the Node E2E suite
+import — one source of truth, no duplication, no adapters. Webpack inlines these
+imports into the classic compiler worker (verified: "compiler.worker.js + 2
+modules" in build output), so importScripts() for the WASM glue still works.
+
+KEY DESIGN DECISIONS:
+- Compile request contract replaced wholesale (no migration shim):
+  {sourcePaths, files:[{path,content}], std, flags, primarySourcePath, outputName}.
+  `files` is the full overlay (disk + dirty tabs) assembled on the main thread in
+  toolbar.assembleCompilePayload — the worker can't read disk, so the main thread
+  owns project-state assembly. dirty tab content overrides disk per path.
+- Worker multi-TU: getCompilePlan runs `clang++ <sources> <flags> [-o name] -###`,
+  parseCompilePlan extracts EVERY -cc1 line (one object each) + the wasm-ld line.
+  Each source compiles in a fresh Clang instance (EXIT_RUNTIME tears down the
+  runtime after callMain), objects collected by path, then one LLD link. Objects
+  use the driver's temp paths (e.g. /tmp/x.o); ensureParentDir guards mkdir.
+- outputPath returned to UI = normalized(-o name || driver link output, usually
+  a.out). Terminal sets lastBuiltArtifactPath only on success, so a failed build
+  never strands the previous runnable binary. resolveRunTarget validates ./name
+  by full path or basename.
+- Diagnostics: parser broadened from hardcoded /input.cpp to any path and keyed
+  by path. Editor markers scoped to primarySourcePath via diagnosticsForPath;
+  the terminal still prints the complete multi-file output.
+- MVP tradeoffs are intentional product constraints, surfaced not hidden:
+  .c/.cc ignored by discovery and rejected by terminal; multiple main() ->
+  link error in terminal; active-file markers only.
+
+TESTS (scripts/e2e-multifile-build.test.mjs, 16): source discovery incl/excl,
+g++ arg preservation, cwd path resolution, dirty-overlay precedence, unsaved
+sibling include, -o artifact + run target, failed-build artifact retention,
+compile-plan single/multi/-o/error, diagnostics multi-path + active scoping,
+duplicate-source dedupe.
