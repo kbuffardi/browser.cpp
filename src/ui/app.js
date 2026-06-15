@@ -25,6 +25,7 @@ import {
   getOpenTabsSnapshot,
   restoreWorkspace,
   resetToNewProject,
+  assembleCompilePayload,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 
@@ -46,16 +47,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   //    Pass callbacks so the terminal's `g++` command dispatches to the worker.
   const terminalContainer = document.getElementById('terminal-container');
   terminalAPI.createTerminal(terminalContainer, {
-    onCompile: async (source, flags, std) => {
-      const vfsFiles = await fsAPI.readAllWorkspaceFiles();
-      worker.postMessage({
-        type: 'compile',
-        source,
-        flags,
-        std,
-        fileName: getActiveTabPath() || 'input.cpp',
-        vfsFiles,
+    onCompile: async (request) => {
+      // Terminal builds: explicit `g++ a.cpp b.cpp` sources (or null for the
+      // single editor buffer). Reuse the toolbar's overlay assembly so terminal
+      // and toolbar builds share one project-state model.
+      const payload = await assembleCompilePayload({
+        sourcePaths: request.sourcePaths,
+        std: request.std,
+        flags: request.flags,
+        outputName: request.outputName,
       });
+      worker.postMessage({ type: 'compile', ...payload });
     },
     onRun: async (sab) => {
       const vfsFiles = await fsAPI.readAllWorkspaceFiles();

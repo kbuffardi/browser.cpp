@@ -96,12 +96,12 @@ browser.cpp/
 ### Compile & run pipeline
 
 ```
-Editor source
-    │  postMessage {type:'compile', source, std}
+Workspace sources (+ unsaved tab overlay)
+    │  postMessage {type:'compile', sourcePaths, files, std, flags, outputName}
     ▼
 compiler.worker.js  ──importScripts──▶  dist/clang/clang.js
-    │                                        │
-    │  callMain(['--target=wasm32-wasi', …])  │
+    │   clang++ -###  → multi-TU compile plan (one -cc1 per source + wasm-ld)
+    │   compile each source in a fresh Clang, link all objects with LLD
     │◀── Emscripten Module ──────────────────┘
     │
     │  output.wasm (WASI binary) read from virtual FS
@@ -168,8 +168,8 @@ be persisted.
 
 | Command | Description |
 |---------|-------------|
-| `g++ [flags] [-std=c++NN] [-o out]` | Compile current editor source |
-| `./a.out` | Run the last compiled binary |
+| `g++ [files…] [flags] [-std=c++NN] [-o out]` | Compile explicit source files (e.g. `g++ main.cpp other.cpp`). With no files given, compiles the current editor buffer. `.c`/`.cc` inputs are rejected in this MVP. |
+| `./a.out` / `./<name>` | Run the last compiled binary (use `./<name>` after `-o <name>`) |
 | `clear` | Clear the terminal |
 | `echo <text>` | Print text |
 | `ls [-R] [dir]` | List files/folders from the opened workspace folder |
@@ -177,6 +177,22 @@ be persisted.
 | `cat <file>` | Print file contents |
 | `pwd` | Print working directory |
 | `help` | Show command list |
+
+### Project builds
+
+The toolbar **Compile** / **Compile & Run** buttons build the *whole opened
+workspace*: every recursive `.cpp` and `.cxx` file is compiled and linked
+together (`.c`/`.cc` are ignored for this MVP). When no folder is open, they fall
+back to compiling the single editor buffer.
+
+Builds reflect the live, in-memory project: unsaved edits in open tabs are
+overlaid on top of the on-disk files before compiling, so local includes such as
+`#include "other.cpp"` or `#include "app.hpp"` resolve against the opened folder
+even when the referenced file has unsaved changes. Compiler/linker diagnostics
+for all files print in the terminal, while inline editor markers stay scoped to
+the active file. **Compile & Run** runs the actual built artifact (honouring a
+`-o` name), not a hardcoded `a.out`.
+
 
 ---
 

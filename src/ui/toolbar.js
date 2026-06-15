@@ -10,6 +10,13 @@
 
 'use strict';
 
+import {
+  buildCompileOverlay,
+  selectWorkspaceSources,
+  normalizeOverlayPath,
+} from './build-request.mjs';
+import { parseDiagnostics, diagnosticsForPath } from './diagnostics.mjs';
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let _worker      = null;
 let _editorAPI   = null;
@@ -150,10 +157,12 @@ async function handleWorkerMessage(data) {
       setButtonsEnabled(true);
       updateStatusBar('compiler', 'ready', 'Compiler ready');
 
-      // Parse and render inline diagnostics in the editor
+      // Render inline editor markers, scoped to the active file. The terminal
+      // still prints the full multi-file compiler/linker output via onCompileResult.
       if (data.diagnostics) {
-        const items = _editorAPI.parseDiagnostics(data.diagnostics);
-        if (items.length) _editorAPI.markDiagnostics(items);
+        const items = parseDiagnostics(data.diagnostics);
+        const scoped = diagnosticsForPath(items, data.primarySourcePath || _activeTabPath);
+        if (scoped.length) _editorAPI.markDiagnostics(scoped);
       }
 
       _terminalAPI.onCompileResult(data);
@@ -240,17 +249,8 @@ async function actionSaveAs() {
 }
 
 async function actionCompile() {
-  const source = _editorAPI.getValue();
-  const std    = document.getElementById('cpp-standard')?.value || 'c++20';
-  const vfsFiles = await _fsAPI.readAllWorkspaceFiles();
-  _worker.postMessage({
-    type: 'compile',
-    source,
-    flags: [],
-    std,
-    fileName: _activeTabPath || 'input.cpp',
-    vfsFiles,
-  });
+  const payload = await assembleCompilePayload({});
+  _worker.postMessage({ type: 'compile', ...payload });
 }
 
 function actionRun() {
@@ -258,11 +258,9 @@ function actionRun() {
 }
 
 async function actionCompileRun() {
-  const source = _editorAPI.getValue();
-  const std    = document.getElementById('cpp-standard')?.value || 'c++20';
-  const vfsFiles = await _fsAPI.readAllWorkspaceFiles();
+  const payload = await assembleCompilePayload({});
 
-  // Chain: compile → on success, immediately run
+  // Chain: compile → on success, immediately run the worker-built artifact
   const originalOnMessage = _worker.onmessage;
   const oneShot = ({ data }) => {
     if (data.type === 'compile-result') {
@@ -276,14 +274,64 @@ async function actionCompileRun() {
     }
   };
   _worker.onmessage = oneShot;
-  _worker.postMessage({
-    type: 'compile',
-    source,
-    flags: [],
-    std,
-    fileName: _activeTabPath || 'input.cpp',
-    vfsFiles,
-  });
+  _worker.postMessage({ type: 'compile', ...payload });
+}
+
+/**
+ * Assemble a worker compile request from the live UI state.
+ *
+ * Why: builds must reflect the exact in-memory project the user sees. We snapshot
+ * the active editor buffer into its tab, layer all dirty tab content over the
+ * on-disk workspace files, and choose the build target set:
+ *   - explicit `sourcePaths` (terminal `g++ a.cpp b.cpp`)
+ *   - otherwise every recursive `.cpp`/`.cxx` workspace file (toolbar project build)
+ *   - otherwise, with no folder open, the single editor buffer (legacy behaviour)
+ *
+ * @param {{ sourcePaths?:string[], std?:string, flags?:string[], outputName?:(string|null) }} opts
+ * @returns {Promise<object>} worker `compile` message payload
+ */
+export async function assembleCompilePayload({ sourcePaths = null, std, flags = [], outputName = null }) {
+  // Snapshot the active editor buffer so unsaved edits to the focused tab build.
+  if (_activeTabPath !== null && _openTabs.has(_activeTabPath)) {
+    _openTabs.get(_activeTabPath).content = _editorAPI.getValue();
+  }
+
+  const resolvedStd = std || document.getElementById('cpp-standard')?.value || 'c++20';
+  const primarySourcePath = _activeTabPath || 'input.cpp';
+
+  // No folder open → preserve single-buffer compile for new unsaved files.
+  if (!_workspace) {
+    const buffer = _editorAPI.getValue();
+    const path = normalizeOverlayPath(primarySourcePath) || 'input.cpp';
+    return {
+      sourcePaths: [path],
+      files: [{ path, content: buffer }],
+      std: resolvedStd,
+      flags,
+      outputName,
+      primarySourcePath: path,
+    };
+  }
+
+  const diskFiles = await _fsAPI.readAllWorkspaceFiles();
+  const dirtyContentByPath = {};
+  for (const [path, tab] of _openTabs.entries()) {
+    dirtyContentByPath[path] = tab.content;
+  }
+  const files = buildCompileOverlay(diskFiles, dirtyContentByPath);
+
+  const targets = (sourcePaths && sourcePaths.length)
+    ? sourcePaths.map(normalizeOverlayPath)
+    : selectWorkspaceSources(_workspace.entries);
+
+  return {
+    sourcePaths: targets,
+    files,
+    std: resolvedStd,
+    flags,
+    outputName,
+    primarySourcePath: normalizeOverlayPath(primarySourcePath),
+  };
 }
 
 // ── Terminal panel toggle ─────────────────────────────────────────────────────

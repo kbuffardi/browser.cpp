@@ -22,6 +22,14 @@ import { FitAddon }      from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
+import {
+  parseGxxArgs,
+  resolveWorkspacePath,
+  resolveRunTarget,
+  isRejectedSource,
+  normalizeOverlayPath,
+} from './build-request.mjs';
+
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
   reset:   '\x1b[0m',
@@ -58,6 +66,14 @@ const vfs = new Map();
 
 /** True while the compiler is working – all keyboard input is ignored. */
 let busy = false;
+
+/**
+ * Workspace-relative path of the last successfully built artifact (e.g. 'a.out'
+ * or a `-o custom-name`). Used to validate `./name` runs. A failed build never
+ * overwrites it, so the last good binary stays runnable.
+ * @type {string|null}
+ */
+let lastBuiltArtifactPath = null;
 
 /** True while a compiled program is executing – input is routed to stdin. */
 let running = false;
@@ -171,7 +187,7 @@ let _getSource = null;  // () => string  – returns current editor source
  *
  * @param {HTMLElement} container
  * @param {{
- *   onCompile: (source:string, flags:string[], std:string) => void,
+ *   onCompile: (request:{sourcePaths:(string[]|null), flags:string[], std:string, outputName:(string|null), cwd:string}) => void,
  *   onRun:     (sharedBuffer:SharedArrayBuffer) => void,
  *   getSource: () => string,
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
@@ -256,7 +272,7 @@ export function startRun() {
   if (!term) return;
   if (running) return; // already running
 
-  if (!vfs.has('/a.out')) {
+  if (!lastBuiltArtifactPath) {
     term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
     writePrompt();
     return;
@@ -294,16 +310,19 @@ export function writeStderr(text) {
 
 /**
  * Called when the compiler finishes.
- * @param {{ success:boolean, diagnostics:string }} result
+ * @param {{ success:boolean, diagnostics:string, outputPath?:(string|null) }} result
  */
-export function onCompileResult({ success, diagnostics }) {
+export function onCompileResult({ success, diagnostics, outputPath }) {
   if (diagnostics) {
     const col = success ? C.yellow : C.red;
     term?.write(`${col}${diagnostics.replace(/\n/g, CRLF)}${C.reset}${CRLF}`);
   }
   if (success) {
+    // A successful build updates the runnable artifact. Failed builds leave the
+    // previous artifact intact so `./name` keeps working.
+    lastBuiltArtifactPath = normalizeOverlayPath(outputPath || 'a.out') || 'a.out';
+    vfs.set(`/${lastBuiltArtifactPath}`, '<binary>');
     term?.write(`${C.green}Compilation successful.${C.reset}${CRLF}`);
-    vfs.set('/a.out', '<binary>');
   } else {
     term?.write(`${C.red}Compilation failed.${C.reset}${CRLF}`);
   }
@@ -564,7 +583,7 @@ function executeCommand(cmdLine) {
     default:
       // Detect ./exe invocations
       if (cmd.startsWith('./')) {
-        cmdRun(args);
+        cmdRun(cmd);
       } else {
         term.write(
           `${C.red}bash: ${cmd}: command not found${C.reset}${CRLF}` +
@@ -578,45 +597,60 @@ function executeCommand(cmdLine) {
 // ── Individual command handlers ───────────────────────────────────────────────
 
 function cmdGxx(args) {
-  // Parse: [flags] [source.cpp] [-std=c++NN] [-o outname]
-  let std      = 'c++20';
-  const extra  = [];
+  const { std, outputName, flags, sourcePaths } = parseGxxArgs(args);
 
-  // Extract -std= and -o flags; collect the rest as extra flags
-  let i = 0;
-  while (i < args.length) {
-    const a = args[i];
-    if (a.startsWith('-std=')) {
-      std = a.slice(5);
-    } else if (a === '-std' && args[i + 1]) {
-      std = args[++i];
-    } else if (a === '-o' && args[i + 1]) {
-      i += 2;
-      continue;
-    } else if (a.startsWith('-o') && a.length > 2) {
-      i += 1;
-      continue;
-    } else if (!a.startsWith('-')) {
-      // source file – ignored; we always compile the current editor content
-    } else {
-      extra.push(a);
-    }
-    i++;
-  }
-
-  const source = _getSource ? _getSource() : '';
-  if (!source.trim()) {
-    term.write(`${C.red}Nothing to compile – editor is empty.${C.reset}${CRLF}`);
+  // MVP policy: reject `.c`/`.cc` explicit inputs rather than compiling silently.
+  const rejected = sourcePaths.filter(isRejectedSource);
+  if (rejected.length) {
+    term.write(
+      `${C.red}g++: ${rejected.join(', ')}: .c/.cc sources are not supported in this MVP ` +
+      `(only .cpp and .cxx).${C.reset}${CRLF}`
+    );
     writePrompt();
     return;
   }
 
-  term.write(`${C.dim}Compiling with -std=${std}…${C.reset}${CRLF}`);
+  // No explicit sources → compile the single editor buffer (works with or
+  // without an open folder), preserving legacy behaviour.
+  if (sourcePaths.length === 0) {
+    const source = _getSource ? _getSource() : '';
+    if (!source.trim()) {
+      term.write(`${C.red}Nothing to compile – editor is empty.${C.reset}${CRLF}`);
+      writePrompt();
+      return;
+    }
+    term.write(`${C.dim}Compiling with -std=${std}…${C.reset}${CRLF}`);
+    busy = true;
+    _onCompile?.({ sourcePaths: null, flags, std, outputName, cwd: workspaceCwd });
+    return;
+  }
+
+  // Explicit source files require an open folder when more than one is given.
+  if (!workspaceName && sourcePaths.length > 1) {
+    term.write(
+      `${C.red}g++: multiple source files require an opened folder. Open a folder first.${C.reset}${CRLF}`
+    );
+    writePrompt();
+    return;
+  }
+
+  const resolved = sourcePaths.map((p) => resolveWorkspacePath(workspaceCwd, p));
+  term.write(`${C.dim}Compiling ${resolved.join(' ')} with -std=${std}…${C.reset}${CRLF}`);
   busy = true;
-  _onCompile?.(source, extra, std);
+  _onCompile?.({ sourcePaths: resolved, flags, std, outputName, cwd: workspaceCwd });
 }
 
-function cmdRun() {
+function cmdRun(cmd) {
+  const { ok, error } = resolveRunTarget(cmd, lastBuiltArtifactPath);
+  if (!ok) {
+    if (error === 'no-binary') {
+      term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
+    } else {
+      term.write(`${C.red}bash: ${cmd}: No such file or directory${C.reset}${CRLF}`);
+    }
+    writePrompt();
+    return;
+  }
   startRun();
 }
 

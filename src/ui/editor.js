@@ -14,6 +14,7 @@
 'use strict';
 
 import * as monaco from 'monaco-editor';
+import { parseDiagnostics as parseDiagnosticsShared } from './diagnostics.mjs';
 
 // ── Monaco worker bootstrap ───────────────────────────────────────────────────
 // Must run before any monaco API call. Tells Monaco where its worker scripts
@@ -153,24 +154,16 @@ export function clearDiagnostics() {
 /**
  * Parse Clang/GCC diagnostic output into structured objects.
  *
- * Example line: /input.cpp:5:10: error: use of undeclared identifier 'x'
+ * Delegates to the shared, browser-free parser in diagnostics.mjs so editor
+ * markers, the terminal, and the E2E suite all agree on diagnostic shape. The
+ * parser captures arbitrary workspace-relative paths (not just `/input.cpp`),
+ * which is required once builds target multiple project files.
  *
  * @param {string} diagnosticsText
  * @returns {Array}
  */
 export function parseDiagnostics(diagnosticsText) {
-  const pattern = /\/input\.cpp:(\d+):(\d+):\s+(error|warning|note):\s+(.+)/g;
-  const results = [];
-  let m;
-  while ((m = pattern.exec(diagnosticsText)) !== null) {
-    results.push({
-      line:     parseInt(m[1], 10),
-      col:      parseInt(m[2], 10),
-      severity: m[3],
-      message:  m[4],
-    });
-  }
-  return results;
+  return parseDiagnosticsShared(diagnosticsText);
 }
 
 /** Register a callback for cursor position changes. */
