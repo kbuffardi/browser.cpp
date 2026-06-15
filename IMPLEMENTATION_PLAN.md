@@ -51,3 +51,21 @@ workspace (disk + unsaved tabs) as N translation units linked together.
 - The multi-TU compile path is covered by pure-unit E2E (plan parsing, overlay,
   arg parsing, diagnostics). End-to-end WASM execution still requires the
   `npm run fetch-clang` toolchain in a browser; not exercised in CI.
+
+## Planned increment (new file tracking)
+- New-file button flow should prompt for a relative workspace path before
+  creating anything.
+- Path rules:
+  - nested relative paths are allowed (e.g. `src/utils/new.cpp`)
+  - if the user enters only a filename, create it at the workspace root
+  - normalize the path before creating/opening the file
+- After creation, the new file should open immediately in the editor and become
+  the active tab.
+- Workspace updates should be reflected immediately in the Explorer when:
+  - the user creates a file through the UI
+  - the program creates a new file via `fstream` output
+  - compilation produces a new artifact such as `a.out`
+- The Explorer refresh should preserve existing folder expansion state and
+  active selection where possible.
+- Validation should cover the prompt/create/open flow plus Explorer refresh for
+  newly created files in the workspace and runtime output files.
