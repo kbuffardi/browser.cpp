@@ -363,11 +363,29 @@ export function setWorkspace(workspace) {
     return;
   }
 
+  workspaceCwd = '/';
+  indexWorkspace(workspace);
+}
+
+/**
+ * Refresh the terminal's workspace index after an incremental mutation (file
+ * created in the Explorer, persisted compile artifact, or runtime `fstream`
+ * write) so `ls`/`cat`/`cd` see new files immediately. Unlike {@link setWorkspace}
+ * this preserves the current working directory when it still exists.
+ */
+export function refreshWorkspace(workspace) {
+  if (!workspace) return;
+  const previousCwd = workspaceCwd;
+  indexWorkspace(workspace);
+  workspaceCwd = workspaceDirs.has(previousCwd) ? previousCwd : '/';
+}
+
+/** Rebuild dir/file lookups from a workspace snapshot. */
+function indexWorkspace(workspace) {
   workspaceName = workspace.name || null;
   workspaceEntries = Array.isArray(workspace.entries) ? workspace.entries : [];
   workspaceDirs = new Set(['/']);
   workspaceFiles = new Set();
-  workspaceCwd = '/';
   workspaceGit = workspace.git || { isRepo: false, branch: null, remotes: [] };
 
   for (const entry of workspaceEntries) {

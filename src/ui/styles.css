@@ -221,6 +221,41 @@ select:focus {
   color: var(--blue);
 }
 
+/* Inline VS Code-style new-file naming row */
+#file-tree li.file-tree-new {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  cursor: default;
+}
+
+#file-tree li.file-tree-new:hover {
+  background: transparent;
+}
+
+.file-tree-new-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--base);
+  border: 1px solid var(--blue);
+  border-radius: 2px;
+  padding: 2px 4px;
+  outline: none;
+}
+
+.file-tree-new-error {
+  font-size: 11px;
+  color: var(--red);
+  min-height: 0;
+}
+
+.file-tree-new-error:empty {
+  display: none;
+}
+
 /* ── Workspace ────────────────────────────────────────────────────────────── */
 
 #workspace {

@@ -10,6 +10,13 @@
 
 'use strict';
 
+import {
+  validateNewFilePath,
+  applyWorkspaceMutation,
+  diffWorkspaceEntries,
+  entryExists,
+} from './workspace-fs.mjs';
+
 /** Milliseconds before a blob URL created for download is revoked. */
 const BLOB_URL_REVOKE_DELAY_MS = 2_000;
 
@@ -20,6 +27,7 @@ let currentDirectoryHandle = null;
 let workspaceName = null;
 const workspaceEntries = [];
 const workspaceFiles = new Map();
+const workspaceFileFingerprints = new Map();
 let workspaceGit = { isRepo: false, branch: null, remotes: [] };
 
 const CPP_TYPES = [
@@ -89,7 +97,7 @@ export async function openFolder() {
 
   currentDirectoryHandle = handle;
   workspaceName = handle.name;
-  await walkDirectoryHandle(handle, '');
+  replaceWorkspaceIndex(await scanDirectoryHandle(handle));
   workspaceGit = await detectGitMetadata();
 
   return {
@@ -201,7 +209,7 @@ export async function openFolderFromHandle(handle) {
   clearWorkspace();
   currentDirectoryHandle = handle;
   workspaceName = handle.name;
-  await walkDirectoryHandle(handle, '');
+  replaceWorkspaceIndex(await scanDirectoryHandle(handle));
   workspaceGit = await detectGitMetadata();
   return {
     name: workspaceName,
@@ -252,36 +260,72 @@ export async function readAllWorkspaceFiles() {
 }
 
 /**
- * Write content to a file in the currently opened workspace folder.
- * Creates the file (and any missing parent directories) if it does not exist.
- * Does nothing when no workspace folder is open or write permission is unavailable.
+ * Merge a newly written file into the in-memory workspace index so the Explorer
+ * and terminal reflect it immediately: store the file (with its handle when we
+ * have one) and add the file + any missing ancestor directory entries.
  *
- * @param {string}            path    – workspace-relative path (e.g. "output.txt")
- * @param {Uint8Array|string} content – bytes or text to write
+ * Single source of truth for index updates shared by Explorer-created files,
+ * persisted compile artifacts, and runtime `fstream` write-back.
+ *
+ * @param {string} key – normalised workspace-relative path
+ * @param {FileSystemFileHandle|null} fileHandle
  */
-export async function writeWorkspaceFile(path, content) {
-  const key = normalizeWorkspacePath(path);
-  if (!key) return;
+function indexWorkspaceFile(key, fileHandle) {
+  if (fileHandle) {
+    workspaceFiles.set(key, { handle: fileHandle });
+  } else if (!workspaceFiles.has(key)) {
+    workspaceFiles.set(key, {});
+  }
+  if (!entryExists(workspaceEntries, key)) {
+    const { entries } = applyWorkspaceMutation(workspaceEntries, key);
+    workspaceEntries.length = 0;
+    workspaceEntries.push(...entries);
+  }
+}
 
-  const data = content instanceof Uint8Array
-    ? content
-    : new TextEncoder().encode(content);
+async function updateFileFingerprint(key, fileHandle) {
+  if (!fileHandle) return;
+  try {
+    const file = await fileHandle.getFile();
+    const fingerprint = fingerprintForFile(file);
+    if (fingerprint) workspaceFileFingerprints.set(key, fingerprint);
+  } catch {
+    workspaceFileFingerprints.delete(key);
+  }
+}
 
-  // Prefer the stored handle if we already have one
+/**
+ * Write `data` to `key` in the opened folder, creating any missing parent
+ * directories, and update the in-memory index. Returns the file handle when the
+ * on-disk write succeeded, otherwise null (index is still updated in-memory).
+ *
+ * @param {string} key – normalised workspace-relative path
+ * @param {Uint8Array} data
+ * @returns {Promise<FileSystemFileHandle|null>}
+ */
+async function writeAndIndex(key, data) {
+  // Prefer the stored handle if we already have one.
   const item = workspaceFiles.get(key);
   if (item?.handle) {
     try {
       const writable = await item.handle.createWritable();
       await writable.write(data);
       await writable.close();
-      return;
+      indexWorkspaceFile(key, item.handle);
+      await updateFileFingerprint(key, item.handle);
+      return item.handle;
     } catch (err) {
       console.warn('[browser.cpp] Could not write via stored handle, retrying via directory:', key, err);
     }
   }
 
-  // No stored handle – navigate the directory tree and create the file
-  if (!currentDirectoryHandle) return;
+  // No usable handle – navigate the directory tree and create the file.
+  if (!currentDirectoryHandle) {
+    // Fallback (webkitdirectory) workspaces cannot write to disk, but the
+    // Explorer index should still reflect the new file.
+    indexWorkspaceFile(key, null);
+    return null;
+  }
 
   const parts = key.split('/');
   const filename = parts.pop();
@@ -292,7 +336,7 @@ export async function writeWorkspaceFile(path, content) {
     try {
       dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
     } catch (_) {
-      return; // Cannot create directory (e.g. permission denied)
+      return null; // Cannot create directory (e.g. permission denied)
     }
   }
 
@@ -300,18 +344,146 @@ export async function writeWorkspaceFile(path, content) {
   try {
     fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   } catch (_) {
-    return;
+    return null;
   }
 
   try {
     const writable = await fileHandle.createWritable();
     await writable.write(data);
     await writable.close();
-    // Update the in-memory index so future reads/writes use the same handle
-    workspaceFiles.set(key, { handle: fileHandle });
+    indexWorkspaceFile(key, fileHandle);
+    await updateFileFingerprint(key, fileHandle);
+    return fileHandle;
   } catch (_) {
-    // Write permission denied – changes remain in-memory only
+    // Write permission denied – changes remain in-memory only.
+    return null;
   }
+}
+
+/**
+ * Write content to a file in the currently opened workspace folder.
+ * Creates the file (and any missing parent directories) if it does not exist
+ * and refreshes the in-memory workspace index so the Explorer/terminal reflect
+ * the new file immediately. Does nothing when no workspace folder is open.
+ *
+ * @param {string}            path    – workspace-relative path (e.g. "output.txt")
+ * @param {Uint8Array|string} content – bytes or text to write
+ * @returns {Promise<object|null>} refreshed workspace snapshot, or null when no
+ *   workspace is open.
+ */
+export async function writeWorkspaceFile(path, content) {
+  const key = normalizeWorkspacePath(path);
+  if (!key) return null;
+  if (!workspaceName) return null; // no workspace open → no write-back
+
+  const data = content instanceof Uint8Array
+    ? content
+    : new TextEncoder().encode(content);
+
+  await writeAndIndex(key, data);
+  return getWorkspaceSnapshot();
+}
+
+/**
+ * Rescan the opened folder and diff the result against the in-memory workspace
+ * index. This is the authoritative sync path for changes made outside the
+ * current UI flow (external edits, deletes, and runtime delete write-back).
+ *
+ * @returns {Promise<{snapshot:object, added:Array, removed:Array, changed:Array}|null>}
+ */
+export async function refreshWorkspace() {
+  if (!workspaceName) return null;
+  if (!currentDirectoryHandle) {
+    return {
+      snapshot: getWorkspaceSnapshot(),
+      added: [],
+      removed: [],
+      changed: [],
+    };
+  }
+
+  const oldEntries = [...workspaceEntries];
+  const oldFingerprints = new Map(workspaceFileFingerprints);
+  const scanned = await scanDirectoryHandle(currentDirectoryHandle);
+  const diff = diffWorkspaceEntries(
+    oldEntries,
+    scanned.entries,
+    oldFingerprints,
+    scanned.fingerprints
+  );
+
+  replaceWorkspaceIndex(scanned);
+  workspaceGit = await detectGitMetadata();
+  return {
+    snapshot: getWorkspaceSnapshot(),
+    ...diff,
+  };
+}
+
+/**
+ * Delete a file from the opened workspace folder and return the refreshed
+ * snapshot. Missing files are treated as already deleted.
+ *
+ * @param {string} path
+ * @returns {Promise<object|null>}
+ */
+export async function deleteWorkspaceFile(path) {
+  const key = normalizeWorkspacePath(path);
+  if (!key || !workspaceName) return null;
+
+  if (!currentDirectoryHandle) {
+    workspaceFiles.delete(key);
+    workspaceFileFingerprints.delete(key);
+    const idx = workspaceEntries.findIndex((entry) => entry.path === key && entry.kind === 'file');
+    if (idx !== -1) workspaceEntries.splice(idx, 1);
+    return getWorkspaceSnapshot();
+  }
+
+  const parts = key.split('/').filter(Boolean);
+  const filename = parts.pop();
+  if (!filename) return getWorkspaceSnapshot();
+
+  let dirHandle = currentDirectoryHandle;
+  try {
+    for (const part of parts) {
+      dirHandle = await dirHandle.getDirectoryHandle(part);
+    }
+    await dirHandle.removeEntry(filename);
+  } catch (err) {
+    if (err.name !== 'NotFoundError') throw err;
+  }
+
+  const refreshed = await refreshWorkspace();
+  return refreshed?.snapshot ?? getWorkspaceSnapshot();
+}
+
+/**
+ * Create a new, empty (or seeded) file in the opened workspace from an
+ * Explorer-driven action. Validates/normalises the user-entered path, rejects
+ * paths that already exist, materialises the file on disk, updates the in-memory
+ * index, and returns the refreshed workspace snapshot plus the normalised path.
+ *
+ * @param {string} inputPath – user-entered workspace-relative path
+ * @param {string} [content='']
+ * @returns {Promise<{ok:true, path:string, snapshot:object} | {ok:false, error:string}>}
+ */
+export async function createWorkspaceFile(inputPath, content = '') {
+  if (!workspaceName) return { ok: false, error: 'no-workspace' };
+
+  const validated = validateNewFilePath(inputPath);
+  if (!validated.ok) return validated;
+  const key = validated.path;
+
+  if (entryExists(workspaceEntries, key)) {
+    return { ok: false, error: 'exists' };
+  }
+
+  const data = content instanceof Uint8Array
+    ? content
+    : new TextEncoder().encode(content);
+
+  await writeAndIndex(key, data);
+  return { ok: true, path: key, snapshot: getWorkspaceSnapshot() };
 }
 
 // ── Feature detection ─────────────────────────────────────────────────────────
@@ -371,6 +543,8 @@ function openFolderFallback() {
           : full;
         const path = normalizeWorkspacePath(withoutRoot);
         workspaceFiles.set(path, { file });
+        const fingerprint = fingerprintForFile(file);
+        if (fingerprint) workspaceFileFingerprints.set(path, fingerprint);
         workspaceEntries.push({ path, kind: 'file' });
 
         const segments = path.split('/');
@@ -419,22 +593,62 @@ function clearWorkspace() {
   workspaceName = null;
   workspaceEntries.length = 0;
   workspaceFiles.clear();
+  workspaceFileFingerprints.clear();
   workspaceGit = { isRepo: false, branch: null, remotes: [] };
   currentDirectoryHandle = null;
 }
 
-async function walkDirectoryHandle(dirHandle, prefix) {
+async function scanDirectoryHandle(dirHandle, prefix = '', scan = null) {
+  const result = scan || {
+    entries: [],
+    files: new Map(),
+    fingerprints: new Map(),
+  };
+
   for await (const [name, entry] of dirHandle.entries()) {
     const relPath = prefix ? `${prefix}/${name}` : name;
     if (entry.kind === 'directory') {
-      workspaceEntries.push({ path: relPath, kind: 'directory' });
-      await walkDirectoryHandle(entry, relPath);
+      result.entries.push({ path: relPath, kind: 'directory' });
+      await scanDirectoryHandle(entry, relPath, result);
     } else if (entry.kind === 'file') {
-      workspaceEntries.push({ path: relPath, kind: 'file' });
-      workspaceFiles.set(relPath, { handle: entry });
+      result.entries.push({ path: relPath, kind: 'file' });
+      result.files.set(relPath, { handle: entry });
+      const fingerprint = await fingerprintForFileHandle(entry);
+      if (fingerprint) result.fingerprints.set(relPath, fingerprint);
     }
   }
-  workspaceEntries.sort((a, b) => a.path.localeCompare(b.path));
+
+  if (!scan) {
+    result.entries.sort((a, b) => a.path.localeCompare(b.path));
+  }
+  return result;
+}
+
+function replaceWorkspaceIndex({ entries, files, fingerprints }) {
+  workspaceEntries.length = 0;
+  workspaceEntries.push(...entries);
+  workspaceFiles.clear();
+  for (const [path, item] of files) workspaceFiles.set(path, item);
+  workspaceFileFingerprints.clear();
+  for (const [path, fingerprint] of fingerprints) {
+    workspaceFileFingerprints.set(path, fingerprint);
+  }
+}
+
+async function fingerprintForFileHandle(handle) {
+  try {
+    return fingerprintForFile(await handle.getFile());
+  } catch {
+    return null;
+  }
+}
+
+function fingerprintForFile(file) {
+  if (!file) return null;
+  const size = Number(file.size);
+  const lastModified = Number(file.lastModified);
+  if (!Number.isFinite(size) || !Number.isFinite(lastModified)) return null;
+  return { size, lastModified };
 }
 
 async function detectGitMetadata() {
