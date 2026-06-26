@@ -16,6 +16,7 @@ import {
   normalizeOverlayPath,
 } from './build-request.mjs';
 import { parseDiagnostics, diagnosticsForPath } from './diagnostics.mjs';
+import { directoriesForPath } from './workspace-fs.mjs';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let _worker      = null;
@@ -25,6 +26,11 @@ let _fsAPI       = null;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
 const _expandedWorkspaceDirectories = new Set();
+const WORKSPACE_SYNC_INTERVAL_MS = 2_000;
+let _workspaceSyncTimer = null;
+let _workspaceSyncRunning = false;
+let _workspaceSyncQueued = false;
+let _workspaceSyncEventsBound = false;
 
 // ── Multi-tab state ───────────────────────────────────────────────────────────
 // Map<path, { content: string, dirty: boolean }>
@@ -65,6 +71,7 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
 
   bindButtons();
   bindKeyboardShortcuts();
+  bindWorkspaceSyncEvents();
   handleWorkerMessages();
   updateStatusBar('compiler', 'loading', 'Compiler loading…');
 }
@@ -72,7 +79,7 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
 // ── Button bindings ───────────────────────────────────────────────────────────
 
 function bindButtons() {
-  on('btn-new',          () => actionNew());
+  on('btn-new',          () => actionNewFile());
   on('btn-open',         () => actionOpen());
   on('btn-save',         () => actionSave());
   on('btn-save-as',      () => actionSaveAs());
@@ -108,7 +115,7 @@ function bindKeyboardShortcuts() {
       actionOpen();
     } else if (e.ctrlKey && e.key === 'n') {
       e.preventDefault();
-      actionNew();
+      actionNewFile();
     } else if (e.ctrlKey && e.key === 'k') {
       // Ctrl+K clears the terminal regardless of which element has focus
       _terminalAPI.clearTerminal();
@@ -166,6 +173,13 @@ async function handleWorkerMessage(data) {
       }
 
       _terminalAPI.onCompileResult(data);
+
+      // When a folder is open, materialise the built artifact (a.out or a custom
+      // -o target) into the workspace so it appears in the Explorer immediately.
+      // Failed builds carry no bytes, so no phantom artifact is ever created.
+      if (data.success && data.outputBytes && _workspace) {
+        await persistWorkspaceFile(data.outputPath || 'a.out', data.outputBytes);
+      }
       break;
     }
 
@@ -182,21 +196,43 @@ async function handleWorkerMessage(data) {
       _terminalAPI.writeStderr(data.data);
       break;
 
-    case 'run-result':
+    case 'run-result': {
       setButtonsEnabled(true);
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       _terminalAPI.onRunResult(data);
-      // Write any files created or modified by the program back to the workspace
-      if (data.vfsChanges?.length && _fsAPI?.writeWorkspaceFile) {
+      // Write files created/modified by the program back to the workspace and
+      // refresh the Explorer/terminal so runtime fstream output is visible.
+      let snapshot = null;
+      const changedPaths = [];
+      if (data.vfsChanges?.length && _workspace && _fsAPI?.writeWorkspaceFile) {
         for (const change of data.vfsChanges) {
           try {
-            await _fsAPI.writeWorkspaceFile(change.path, change.bytes);
+            const result = await _fsAPI.writeWorkspaceFile(change.path, change.bytes);
+            if (result) snapshot = result;
+            changedPaths.push(normalizeOverlayPath(change.path));
           } catch (err) {
             console.warn('[browser.cpp] Failed to write file to workspace:', change.path, err);
           }
         }
+        if (snapshot) {
+          applyWorkspaceSnapshot(snapshot, changedPaths);
+          await reloadOverwrittenTabs(changedPaths);
+        }
       }
+      if (data.vfsDeletes?.length && _workspace && _fsAPI?.deleteWorkspaceFile) {
+        for (const path of data.vfsDeletes) {
+          try {
+            const result = await _fsAPI.deleteWorkspaceFile(path);
+            if (result) snapshot = result;
+          } catch (err) {
+            console.warn('[browser.cpp] Failed to delete workspace file:', path, err);
+          }
+        }
+        if (snapshot) applyWorkspaceSnapshot(snapshot);
+      }
+      await syncWorkspaceFromDisk('run-result');
       break;
+    }
 
     default:
       break;
@@ -205,9 +241,247 @@ async function handleWorkerMessage(data) {
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
-function actionNew() {
-  if (hasUnsavedChanges() && !confirm('Discard unsaved changes?')) return;
-  resetToNewProject();
+/**
+ * Explorer **New file** action.
+ *
+ * Folder-first: managed workspace file creation requires an opened folder, so
+ * with no workspace we open the folder picker first and only proceed once a
+ * workspace exists (cancelling leaves the current UI/editor state untouched).
+ * With a workspace open we show an inline VS Code-style naming row in the
+ * Explorer rather than resetting the editor.
+ */
+async function actionNewFile() {
+  if (!_workspace) {
+    let opened = false;
+    try {
+      opened = await openFolderWorkspace();
+    } catch (err) {
+      showOpenError(err);
+      return;
+    }
+    if (!opened) return; // user cancelled the folder picker → unchanged
+  }
+  beginInlineFileCreation();
+}
+
+// ── Inline Explorer file creation ─────────────────────────────────────────────
+
+let _inlineCreationActive = false;
+
+/** Render the inline naming input at the top of the Explorer tree. */
+function beginInlineFileCreation() {
+  if (_inlineCreationActive) return;
+  const tree = document.getElementById('file-tree');
+  if (!tree) return;
+  _inlineCreationActive = true;
+
+  const li = document.createElement('li');
+  li.className = 'file-tree-new';
+  li.id = 'file-tree-new-row';
+  li.setAttribute('role', 'treeitem');
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'file-tree-new-input';
+  input.setAttribute('aria-label', 'New file name');
+  input.placeholder = 'name.cpp or dir/name.cpp';
+
+  const error = document.createElement('span');
+  error.className = 'file-tree-new-error';
+  error.id = 'file-tree-new-error';
+
+  let finishing = false;
+  const cancel = () => {
+    if (finishing) return;
+    finishing = true;
+    endInlineFileCreation();
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finishing = true;
+      void submitInlineFileCreation(input.value, error, () => {
+        finishing = false; // creation rejected – keep the row open for retry
+      });
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+    }
+  });
+  input.addEventListener('blur', () => cancel());
+
+  li.appendChild(input);
+  li.appendChild(error);
+  tree.insertBefore(li, tree.firstChild);
+  input.focus();
+}
+
+/** Remove the inline naming row and reset creation state. */
+function endInlineFileCreation() {
+  _inlineCreationActive = false;
+  const row = document.getElementById('file-tree-new-row');
+  row?.parentNode?.removeChild(row);
+}
+
+/**
+ * Validate + create the file named in the inline input. On success the file is
+ * created in the workspace, the Explorer/terminal refresh, and the file opens as
+ * the active tab. On failure the inline row stays open with an error message.
+ *
+ * @param {string} rawName
+ * @param {HTMLElement} errorEl – inline error message element
+ * @param {Function} onReject – invoked to keep the row open for another attempt
+ */
+async function submitInlineFileCreation(rawName, errorEl, onReject) {
+  let result;
+  try {
+    result = await _fsAPI.createWorkspaceFile(rawName, '');
+  } catch (err) {
+    if (errorEl) errorEl.textContent = err.message;
+    onReject();
+    return;
+  }
+
+  if (!result.ok) {
+    if (errorEl) errorEl.textContent = inlineCreateErrorMessage(result.error);
+    onReject();
+    return;
+  }
+
+  endInlineFileCreation();
+  applyWorkspaceSnapshot(result.snapshot, [result.path]);
+  openTabForFile(result.path, '');
+  markDirty(false);
+  highlightWorkspaceFile(result.path);
+  _persistSession?.();
+  void syncWorkspaceFromDisk('create-file');
+}
+
+function inlineCreateErrorMessage(error) {
+  switch (error) {
+    case 'empty':       return 'Enter a file name.';
+    case 'absolute':    return 'Use a path relative to the workspace.';
+    case 'traversal':   return '".." is not allowed in the path.';
+    case 'no-filename': return 'Enter a file name, not a folder.';
+    case 'exists':      return 'A file or folder with that path already exists.';
+    case 'no-workspace':return 'Open a folder first.';
+    default:            return 'Could not create file.';
+  }
+}
+
+/**
+ * Adopt a refreshed workspace snapshot after an incremental mutation: update the
+ * in-memory workspace, refresh the terminal index (preserving cwd), expand the
+ * ancestor directories of any newly created paths so they are visible, and
+ * re-render the Explorer.
+ *
+ * @param {object} snapshot – workspace snapshot from filesystem.js
+ * @param {string[]} [revealPaths] – paths whose ancestor dirs should be expanded
+ */
+function applyWorkspaceSnapshot(snapshot, revealPaths = []) {
+  if (!snapshot) return;
+  _workspace = snapshot;
+  _terminalAPI.refreshWorkspace?.(snapshot);
+  pruneExpandedWorkspaceDirectories(snapshot);
+  for (const path of revealPaths) {
+    for (const dir of directoriesForPath(path)) {
+      _expandedWorkspaceDirectories.add(dir);
+    }
+  }
+  renderWorkspaceSidebar(snapshot);
+}
+
+function pruneExpandedWorkspaceDirectories(snapshot) {
+  const existingDirs = new Set(
+    (snapshot.entries || [])
+      .filter((entry) => entry.kind === 'directory')
+      .map((entry) => entry.path)
+  );
+  for (const dir of _expandedWorkspaceDirectories) {
+    if (!existingDirs.has(dir)) _expandedWorkspaceDirectories.delete(dir);
+  }
+}
+
+async function syncWorkspaceFromDisk(reason) {
+  if (!_workspace || typeof _fsAPI?.refreshWorkspace !== 'function') return null;
+  if (_workspaceSyncRunning) {
+    _workspaceSyncQueued = true;
+    return null;
+  }
+
+  _workspaceSyncRunning = true;
+  try {
+    const result = await _fsAPI.refreshWorkspace({ reason });
+    if (!result?.snapshot) return null;
+    if (!hasWorkspaceDiff(result)) return result;
+
+    const revealPaths = (result.added || []).map((entry) => normalizeOverlayPath(entry.path));
+    applyWorkspaceSnapshot(result.snapshot, revealPaths);
+
+    const changedPaths = (result.changed || []).map((entry) => normalizeOverlayPath(entry.path));
+    if (changedPaths.length) {
+      await reloadOverwrittenTabs(changedPaths);
+    }
+
+    _persistSession?.();
+    return result;
+  } catch (err) {
+    console.warn('[browser.cpp] Failed to refresh workspace from disk:', err);
+    return null;
+  } finally {
+    _workspaceSyncRunning = false;
+    if (_workspaceSyncQueued) {
+      _workspaceSyncQueued = false;
+      void syncWorkspaceFromDisk('queued');
+    }
+  }
+}
+
+function hasWorkspaceDiff(result) {
+  return Boolean(
+    result.added?.length ||
+    result.removed?.length ||
+    result.changed?.length
+  );
+}
+
+/**
+ * Persist a file produced outside the Explorer (a compile artifact) into the
+ * workspace and refresh the Explorer/terminal so it appears immediately.
+ */
+async function persistWorkspaceFile(path, bytes) {
+  try {
+    const snapshot = await _fsAPI.writeWorkspaceFile(path, bytes);
+    if (snapshot) applyWorkspaceSnapshot(snapshot, [normalizeOverlayPath(path)]);
+    await syncWorkspaceFromDisk('compile-result');
+  } catch (err) {
+    console.warn('[browser.cpp] Failed to persist workspace file:', path, err);
+  }
+}
+
+/**
+ * Reload the on-disk content of any open, non-dirty tabs that the running
+ * program overwrote, so the editor never shows stale content.
+ */
+async function reloadOverwrittenTabs(changedPaths) {
+  for (const path of changedPaths) {
+    const tab = _openTabs.get(path);
+    if (!tab || tab.dirty) continue;
+    let content;
+    try {
+      content = await _fsAPI.readWorkspaceFile(path);
+    } catch {
+      content = null;
+    }
+    if (content == null) continue;
+    tab.content = content;
+    if (path === _activeTabPath) {
+      _loadingFile = true;
+      _editorAPI.setValue(content);
+      _loadingFile = false;
+    }
+  }
 }
 
 /**
@@ -694,12 +968,57 @@ function setWorkspaceMode(workspace) {
   _workspace = workspace;
   _expandedWorkspaceDirectories.clear();
   _terminalAPI.setWorkspace?.(workspace);
+  startWorkspaceSyncPolling();
 }
 
 function clearWorkspaceMode() {
   _workspace = null;
   _expandedWorkspaceDirectories.clear();
   _terminalAPI.setWorkspace?.(null);
+  stopWorkspaceSyncPolling();
+}
+
+function bindWorkspaceSyncEvents() {
+  if (_workspaceSyncEventsBound) return;
+  _workspaceSyncEventsBound = true;
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('focus', () => {
+      startWorkspaceSyncPolling();
+      void syncWorkspaceFromDisk('focus');
+    });
+  }
+
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (isDocumentVisible()) {
+        startWorkspaceSyncPolling();
+        void syncWorkspaceFromDisk('visibility');
+      } else {
+        stopWorkspaceSyncPolling();
+      }
+    });
+  }
+}
+
+function startWorkspaceSyncPolling() {
+  if (!_workspace || _workspaceSyncTimer || !isDocumentVisible()) return;
+  if (typeof window === 'undefined' || typeof window.setInterval !== 'function') return;
+  _workspaceSyncTimer = window.setInterval(() => {
+    if (isDocumentVisible()) void syncWorkspaceFromDisk('poll');
+  }, WORKSPACE_SYNC_INTERVAL_MS);
+}
+
+function stopWorkspaceSyncPolling() {
+  if (!_workspaceSyncTimer) return;
+  if (typeof window !== 'undefined' && typeof window.clearInterval === 'function') {
+    window.clearInterval(_workspaceSyncTimer);
+  }
+  _workspaceSyncTimer = null;
+}
+
+function isDocumentVisible() {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
 }
 
 function parentWorkspacePath(path) {
