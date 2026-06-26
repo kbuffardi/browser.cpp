@@ -1,214 +1,199 @@
-# Feature: Workspace project builds and multi-file C++ compilation
+# Feature: Workspace project builds, named file creation, and live Explorer sync
 
 ## Feature Description
-Enable browser.cpp to compile and run C++ workspaces that span multiple source files instead of treating compilation as a single-editor-buffer action. This includes supporting terminal commands like `g++ main.cpp other.cpp`, making toolbar builds compile the whole opened workspace project by default, and ensuring local includes such as `#include "other.cpp"` or `#include "other.hpp"` resolve against the opened folder even when related files have unsaved edits in open tabs. For this MVP, project discovery should compile only `.cpp` and `.cxx` files and ignore `.c` and `.cc`.
+Extend browser.cpp's workspace flow so project builds, user-created files, and program-created files all stay visible and actionable in the Explorer. The existing multi-file compile pipeline should continue to build whole workspaces and honor explicit terminal file lists, but the workspace UI also needs first-class file creation: clicking **New file** should require an opened folder, show an inline Explorer naming control similar to VS Code/Monaco's default file-creation UX, accept relative nested paths, create the new file in the workspace root when no subfolder is provided, and immediately open the created file in the editor. In addition, files produced by successful builds (for example `a.out` or a custom `-o` output) and files created at runtime through `fstream` should be added to the Explorer immediately so the workspace view never lags behind the actual workspace contents.
 
 ## User Story
 As a browser.cpp user working in an opened folder
-I want project builds to compile multiple C++ source files and resolve local cross-file includes
-So that I can build realistic C++ programs without manually flattening everything into one file
+I want to create files from the Explorer and immediately see files produced by builds or program output
+So that the workspace view behaves like a real IDE and always reflects the files I can edit, compile, and inspect
 
 ## Problem Statement
-The current implementation models compilation as exactly one source string plus one source path:
+The current branch already implements most of the multi-file build pipeline, but the workspace file-tracking experience is still incomplete:
 
-- `src/ui/terminal.js` ignores positional source-file arguments and always compiles the current editor buffer.
-- `src/ui/toolbar.js` also posts only the active editor content plus one `fileName`.
-- `src/workers/compiler.worker.js` discovers and executes only one `-cc1` compile step and one linker output, which matches a single translation unit build.
-- Workspace input for compilation comes from `readAllWorkspaceFiles()`, which reads disk-backed folder contents but does not overlay dirty tab contents from the editor before compile.
-- `src/ui/editor.js` only parses diagnostics that match `/input.cpp`, which is too narrow once builds can target arbitrary workspace paths and multiple files.
+- `src/ui/toolbar.js` still wires the Explorer **New file** button to `actionNew()`, which resets the editor to a fresh unsaved project instead of creating a file inside the opened workspace.
+- `src/ui/index.html` renders a static Explorer tree with no inline creation affordance, so there is no VS Code-style "type the new filename here" flow.
+- `src/ui/filesystem.js` can create missing parent directories during `writeWorkspaceFile(...)`, but it only updates `workspaceFiles`; it does not add missing directory/file entries to `workspaceEntries` or publish an updated workspace snapshot back to the UI.
+- Because `workspaceEntries` stays stale after writes, the Explorer in `toolbar.js` and the terminal workspace metadata in `terminal.js` do not immediately reflect files created through `fstream` output or any other workspace write path.
+- Successful compilation currently returns `outputPath`, but the built artifact lives only as `compiledBinary` inside `src/workers/compiler.worker.js`; it is not materialized back into the workspace, so outputs such as `a.out` never appear in the Explorer.
+- When no folder is open, there is no guided "open a folder first" flow for managed workspace file creation.
 
-Because of those constraints, explicit multi-file commands do not work, project-wide toolbar builds do not exist, and cross-file references can compile against stale or missing workspace content.
+Because of those gaps, browser.cpp can compile and run richer workspaces, but users still cannot create workspace files from the Explorer and cannot trust the Explorer to show newly created output artifacts immediately.
 
 ## Solution Statement
-Introduce a project-build pipeline that separates:
+Treat the Explorer as a live view over a mutable workspace index rather than a one-time folder snapshot. Add an explicit workspace file-creation flow for the Explorer and a shared workspace-mutation contract for all code paths that create files:
 
-1. **Build target selection** in the UI (`all workspace source files` for toolbar builds; explicit file arguments for terminal builds).
-2. **Workspace source overlay assembly** so compilation sees the opened folder plus unsaved tab content.
-3. **Multi-translation-unit orchestration** in the worker by parsing all `clang++ -###` compile steps, compiling each translation unit in a fresh Clang instance, and linking all produced objects in one LLD step.
-4. **Per-file diagnostics and output tracking** so the UI can render useful errors and the terminal can run the last built artifact consistently.
+1. **Explorer-driven file creation** under the **New file** button, with inline naming in the Explorer pane and support for nested relative paths such as `src/lib/util.hpp`.
+2. **Folder-first gating** so clicking **New file** with no opened folder first prompts the user to open a folder; file creation does not proceed until a workspace exists.
+3. **Shared workspace mutation helpers** in `filesystem.js` that create files/directories, update the in-memory workspace index (`workspaceEntries`, `workspaceFiles`), and return or emit the refreshed workspace snapshot for the UI and terminal.
+4. **Output artifact synchronization** so successful compile outputs and runtime `fstream` writes flow through the same workspace-mutation path and immediately refresh the Explorer and terminal-visible file list.
+5. **Behavior-safe validation** so failed builds do not create phantom output files, invalid creation paths are rejected clearly, and active-editor behavior remains deterministic after file creation.
 
-This keeps the existing browsercc-based architecture, but expands it from “single active file compile” to “workspace-aware project compile”.
-
-For this MVP, “whole workspace” is intentionally defined as “all recursive `.cpp` and `.cxx` files in the opened folder”. `.c` and `.cc` files are ignored by default project discovery, and workspaces with multiple entry points may fail at link time; that failure should be surfaced clearly rather than hidden.
+This keeps the existing workspace-aware compile architecture, but finishes the missing UX and state-management pieces so workspace files are created and tracked consistently regardless of whether they originate from the user, the compiler, or a running C++ program.
 
 ## Relevant Files
 Use these files to implement the feature:
 
 - `README.md`
-  - Update terminal/build behavior documentation so it no longer claims `g++` compiles only the current editor source.
-- `src/ui/app.js`
-  - Extend the compile bridge so worker messages can receive richer project-build payloads instead of a single source string/file name pair.
-- `src/ui/toolbar.js`
-  - Change toolbar Compile / Compile & Run to build the whole opened workspace project by default.
-  - Add helpers that snapshot current editor/tab content into the compile overlay before dispatching to the worker.
-- `src/ui/terminal.js`
-  - Stop discarding positional source-file arguments.
-  - Resolve explicit file arguments relative to the terminal working directory.
-  - Track the last compiled output path instead of hardcoding `/a.out`.
-- `src/ui/filesystem.js`
-  - Reuse workspace enumeration helpers and add any thin helper needed to support project source discovery or overlay generation without re-reading unrelated state ad hoc.
-- `src/ui/editor.js`
-  - Expand diagnostic parsing so it can capture arbitrary workspace-relative file paths and not just `/input.cpp`.
+  - Update the documented Explorer/file workflow so it explains the folder-first new-file flow and immediate visibility of build/runtime-created files.
 - `package.json`
-  - Update `test:e2e` to include the new multi-file build suite.
+  - Add the new E2E suite to `npm run test:e2e`.
+- `src/ui/index.html`
+  - Add the inline Explorer creation row/container and any accessibility hooks needed for the naming input.
+- `src/ui/styles.css`
+  - Style the inline Explorer input so it feels native to the current VS Code-inspired UI.
+- `src/ui/app.js`
+  - Keep the compile bridge aligned if compile success starts returning/exporting artifact bytes for workspace persistence.
+- `src/ui/toolbar.js`
+  - Replace the current reset-style **New file** behavior with workspace-aware creation, handle the folder-open prerequisite, open the newly created file in the editor, and refresh Explorer/terminal state after workspace mutations.
+- `src/ui/filesystem.js`
+  - Add the canonical helpers for creating workspace files, creating missing parent directories, updating `workspaceEntries`, and returning refreshed workspace snapshots after writes.
+- `src/ui/terminal.js`
+  - Consume refreshed workspace metadata so commands such as `ls`, `cd`, and `cat` immediately reflect created files and directories.
+- `src/ui/diagnostics.mjs`
+  - Keep active-file diagnostics scoped by exact normalized path as workspace file creation increases the chance of duplicate basenames in different directories.
 - `src/workers/compiler.worker.js`
-  - Replace the single-source compile pipeline with a multi-step compile plan that can build N translation units and link them together.
-- `scripts/e2e-session-persistence.test.mjs`
-  - Reference for the repository’s Node-based “real module with injected fakes” E2E style.
-- `scripts/e2e-session-restore-choice.test.mjs`
-  - Reference for writing additional E2E coverage in the existing test runner pattern.
+  - Expose successful compile output in a form the main thread can persist into the opened workspace when required.
+- `scripts/e2e-multifile-build.test.mjs`
+  - Reference for the current project-build coverage and a likely place to keep compile-output visibility assertions aligned.
 
 ### New Files
-- `scripts/e2e-multifile-build.test.mjs`
-  - Dedicated E2E coverage for terminal multi-file builds, workspace-default toolbar builds, dirty-tab overlay behavior, and local include resolution.
+- `scripts/e2e-workspace-file-tracking.test.mjs`
+  - Dedicated E2E coverage for Explorer new-file creation, folder-open gating, nested path handling, compile output visibility, and runtime-created file refresh behavior.
 
 ## Implementation Plan
-### Phase 1: Foundation
-Define a richer compile request contract shared by the toolbar, terminal, and worker. The new request should carry the selected source paths, workspace-relative current working directory, standard/flags, and a source-content overlay for dirty open tabs so the worker compiles the exact in-memory project state the user sees.
+### Phase 1: Workspace mutation contract
+Define one canonical workspace-mutation path in `filesystem.js` that every file-creation scenario uses. The contract should create any missing parent directories, update both `workspaceFiles` and `workspaceEntries`, and return a refreshed serializable workspace snapshot so `toolbar.js` and `terminal.js` can re-render immediately without re-walking the entire directory.
 
-### Phase 2: Core Implementation
-Rework the worker’s compile pipeline to support multiple translation units. The worker should derive a full compile plan from `clang++ -###`, execute one fresh Clang instance per compile step with the workspace overlay mounted into the module FS, then link all objects in one LLD invocation and return the actual output artifact path along with diagnostics.
+### Phase 2: Explorer new-file UX
+Replace the current **New file** reset action with an inline Explorer naming flow. If no folder is open, require the user to open one first; once a workspace exists, show a VS Code-style inline input in the Explorer, accept a relative nested path, create the file in the workspace root when only a basename is given, and open the created file in the editor.
 
-### Phase 3: Integration
-Wire the new compile contract into toolbar and terminal flows, surface multi-file diagnostics sensibly in the editor/terminal, update run behavior to use the actual built artifact, and document the new project-build semantics.
+### Phase 3: Build/runtime file visibility
+Route compile outputs and runtime `fstream` writes through the same workspace-mutation flow so new files such as `a.out`, custom `-o` targets, and program-generated files appear in the Explorer and terminal workspace state immediately after creation.
 
 ## Step by Step Tasks
 IMPORTANT: Execute every step in order, top to bottom.
 
 ### Create dedicated E2E coverage first
-- Add `scripts/e2e-multifile-build.test.mjs`.
-- Cover these scenarios with injected fakes around the existing UI modules:
-  - toolbar Compile chooses every recursive `.cpp` and `.cxx` workspace source file by default when a folder is open and ignores `.c` and `.cc`
-  - terminal `g++ main.cpp other.cpp` preserves both source arguments instead of ignoring them
-  - terminal relative paths are resolved from `workspaceCwd`
-  - dirty open-tab content overrides on-disk workspace content during compile request assembly
-  - local include resolution has the files mounted in the compile overlay even when the included file was edited but not saved
-  - `g++ main.cpp other.cpp -o custom-name` records `custom-name` as the runnable artifact and `./custom-name` runs it
-  - toolbar **Compile & Run** uses the worker-reported output path rather than assuming `a.out`
-  - active-file editor markers remain scoped to the active file while the terminal still prints complete multi-file diagnostics
+- Add `scripts/e2e-workspace-file-tracking.test.mjs`.
+- Cover these scenarios with injected fakes around the existing UI/filesystem modules:
+  - clicking **New file** with no workspace open first triggers the folder-open flow
+  - cancelling the folder-open flow leaves the current UI/editor state unchanged
+  - clicking **New file** with a workspace open shows an inline Explorer naming input
+  - entering `main.cpp` creates the file at the workspace root
+  - entering `src/main.cpp` creates any missing parent directories and the file beneath them
+  - submitting the new filename opens the created file in the editor and selects it in the Explorer
+  - cancelling inline creation removes the temporary input row cleanly
+  - absolute paths, empty names, duplicate paths, and `..` traversal inputs are rejected clearly
+  - successful compile output (default `a.out` and custom `-o`) appears in the Explorer immediately when a workspace is open
+  - runtime-created files returned through `vfsChanges` appear in the Explorer immediately, including nested output paths
+  - failed builds do not create phantom output files in the Explorer
+  - terminal workspace commands see the refreshed file list after creation
 
-### Define the compile request model
-- Replace the single-source request shape with a build request that includes:
-  - `sourcePaths: string[]`
-  - `sourceOverridesByPath: Record<string, string | Uint8Array>`
-  - `cwd: string`
-  - `std: string`
-  - `flags: string[]`
-  - `primarySourcePath` or equivalent for active-file-focused diagnostics/UX
-- Keep the payload workspace-relative so the worker and diagnostics stay consistent across folder roots.
-- Define the worker result contract explicitly so the UI can consume multi-file output predictably:
-  - `success: boolean`
-  - `diagnostics: string`
-  - `outputPath: string | null`
-  - `diagnosticsByPath?: Record<string, Array<Diagnostic>>`
+### Define the workspace mutation model
+- Add or expose filesystem helpers with responsibilities such as:
+  - normalize and validate a workspace-relative target path
+  - create missing parent directories in both the real folder handle and the in-memory index
+  - add new `workspaceEntries` for directories/files without duplicating existing entries
+  - write file content and retain a reusable file handle when available
+  - return the refreshed workspace snapshot after each mutation
+- Keep this as the single source of truth for:
+  - Explorer-created files
+  - compile-output artifact persistence
+  - runtime `fstream` write-back handling
+- Avoid a full directory re-scan after every write unless a specific browser API limitation makes incremental updates impossible.
 
-### Assemble an in-memory workspace overlay before each build
-- Add a toolbar/app-level helper that snapshots the active editor content into `_openTabs` before building.
-- Build the compile overlay from:
-  - all disk-backed workspace files via `readAllWorkspaceFiles()`
-  - dirty open tab contents layered on top by workspace path
-- Ensure files opened in tabs but not yet switched away from still contribute their latest editor buffer.
-- Decide explicitly how to handle a no-workspace state:
-  - preserve today’s single-buffer compile path for new unsaved files
-  - require an opened folder for whole-project toolbar builds and explicit multi-file terminal builds
+### Add the Explorer inline new-file UX
+- Update `src/ui/index.html` and `src/ui/styles.css` to support an inline naming row in the Explorer pane that visually matches the current UI.
+- Replace the current `btn-new -> actionNew()` mapping in `toolbar.js` with a workspace creation controller.
+- Make the controller:
+  - require an opened folder before entering file-creation mode
+  - open the folder picker first when no workspace exists
+  - render the inline input in the Explorer once a workspace is available
+  - place root-level filenames in the workspace root by default
+  - accept nested relative paths such as `src/lib/file.hpp`
+  - reject invalid or unsafe inputs before mutating the workspace
+- Keep the interaction keyboard-friendly:
+  - Enter confirms creation
+  - Escape cancels creation
+  - focus moves to the created file/editor after success
 
-### Make toolbar builds project-based by default
-- When a workspace is open, enumerate all recursive `.cpp` and `.cxx` files and pass them as the toolbar build target list, explicitly ignoring `.c` and `.cc`.
-- Preserve current single-buffer behavior only when no workspace is open.
-- Keep Compile & Run chained on successful build, but have it run the actual last-built artifact instead of assuming `a.out`.
-- Treat this whole-workspace discovery behavior as an MVP tradeoff: if the workspace contains multiple entry points, surface the linker failure clearly in the terminal and do not try to guess the intended target automatically.
+### Open the created file in the editor
+- After a successful creation, immediately:
+  - refresh the workspace snapshot in `toolbar.js`
+  - re-render the Explorer and terminal workspace state
+  - create/open a tab for the new file
+  - seed the new editor buffer with empty content
+  - make the new tab active and selected in the Explorer
+- Ensure this works whether the file is created at the root or inside a newly created nested directory.
 
-### Make terminal g++ honor explicit source arguments
-- Update `cmdGxx()` so it keeps positional source paths instead of discarding them.
-- Resolve non-flag arguments relative to `workspaceCwd` using the existing shell path helpers.
-- Continue supporting `-std=...`, optimization/warning flags, and now preserve `-o` so the output artifact can be named intentionally.
-- Keep terminal behavior predictable when no folder is open:
-  - one implicit unsaved buffer compile still works
-  - multiple explicit workspace file paths fail fast with a clear message
-- Validate explicit source-file arguments against the MVP extension policy and fail clearly for `.c` and `.cc` inputs rather than compiling them silently.
+### Synchronize compile outputs into the workspace
+- Decide the compile-output persistence contract explicitly:
+  - when a workspace is open, a successful compile should materialize the built artifact at `outputPath` inside that workspace
+  - when no workspace is open, compile success should continue to behave as an in-memory build only
+- Update `compiler.worker.js` and the compile bridge so the main thread can persist the successful output artifact bytes, not just the artifact path.
+- Route artifact persistence through the shared filesystem mutation helper so:
+  - `a.out` appears immediately after default builds
+  - custom `-o build/app` outputs create intermediate directories when needed
+  - repeated builds overwrite the existing artifact cleanly without duplicating Explorer entries
+  - failed builds leave the prior Explorer state unchanged
 
-### Rework worker invocation discovery for multiple translation units
-- Replace `getCompilerInvocation()` with a planner that parses all emitted `-cc1` subcommands from `clang++ -###`, not just the first one.
-- Return a structure such as:
-  - `compileSteps: Array<{ sourcePath, compilerArgs, objectPath }>`
-  - `linkStep: { linkerArgs, outputPath }`
-- Make the planner robust to multiple quoted subcommand lines in driver stderr and preserve user-specified flags like `-o`.
+### Synchronize runtime-created files into the workspace
+- Replace the current bare `writeWorkspaceFile(...)` loop in the `run-result` handling path with the shared workspace-mutation flow.
+- After applying `vfsChanges`, refresh:
+  - the Explorer tree
+  - the terminal workspace snapshot
+  - any relevant active-file selection if the currently viewed file was newly created or overwritten
+- Preserve the existing behavior that no workspace write-back happens when no folder is open.
 
-### Compile and link the whole project in the worker
-- For each compile step:
-  - create a fresh Clang instance
-  - mount the full workspace overlay into its FS
-  - write all overlay files plus any in-memory source overrides
-  - run that step’s `-cc1` args
-  - collect the produced object file bytes
-- For the link step:
-  - create a fresh LLD instance
-  - mount sysroot and all produced objects
-  - execute the linker args returned by the planner
-  - store `compiledBinary` and the actual output artifact path
-- Keep compile diagnostics aggregated in terminal order so linker errors still appear after compile errors when applicable.
+### Tighten diagnostics scoping for expanding workspaces
+- Update `src/ui/diagnostics.mjs` so active-file matching is based on exact normalized workspace-relative paths, not basename fallback.
+- Add coverage for duplicate basenames in different directories (for example `src/main.cpp` and `tests/main.cpp`) so editor markers cannot attach to the wrong file after nested file creation expands the workspace.
 
-### Fix include resolution and dirty-file visibility
-- Ensure the overlay writes files using their workspace-relative paths so Clang’s normal quoted-include search finds sibling files in the same directory.
-- Do not special-case `#include "other.cpp"`; once file paths are mounted correctly, Clang should resolve it naturally relative to the including source file.
-- Ensure unsaved sibling-file edits participate in build input so include-based workflows do not compile stale disk content.
-
-### Improve diagnostics for project builds
-- Expand `editor.js` diagnostic parsing to accept arbitrary source paths, not just `/input.cpp`.
-- Return structured diagnostics keyed by path so the active editor can still show markers for its file while the terminal prints the full multi-file compiler/linker output.
-- Keep this scoped to active-file marker rendering first; do not block the feature on implementing cross-tab marker persistence unless needed.
-
-### Track the actual output artifact in the terminal/run flow
-- Replace the hardcoded `/a.out` marker in `terminal.js` with `lastBuiltArtifactPath`, populated from the worker-reported `outputPath`.
-- Make `./a.out` continue to work for default builds, but also allow `./custom-name` after `-o custom-name`.
-- Keep the run button/command backed by the worker’s last compiled WASM binary so execution remains independent from whether the artifact was renamed.
-- Define terminal run semantics precisely:
-  - `./name` should validate against `lastBuiltArtifactPath`
-  - compile-only success should update `lastBuiltArtifactPath`
-  - failed builds must not overwrite the last successful runnable artifact
-
-### Update documentation
-- Revise `README.md` command documentation and any affected architecture notes.
-- Clarify that:
-  - toolbar builds compile the whole opened workspace project by default by selecting recursive `.cpp` and `.cxx` files only
-  - terminal `g++` accepts explicit file lists
-  - local includes resolve from the opened folder, including dirty tab overlays during compile
-
-### Update test entrypoints
-- Add `scripts/e2e-multifile-build.test.mjs` to `package.json`'s `test:e2e` script so the new suite runs in normal repository validation.
+### Update documentation and test entrypoints
+- Revise `README.md` to explain:
+  - **New file** now requires an opened folder
+  - the Explorer uses inline naming and accepts nested relative paths
+  - build outputs and runtime-created files appear in the Explorer immediately
+- Add `scripts/e2e-workspace-file-tracking.test.mjs` to `package.json` so it runs via `npm run test:e2e`.
 
 ### Run full validation
 - Execute the repository validation commands listed below after implementation and after adding the new E2E coverage.
 
 ## Testing Strategy
 ### Unit Tests
-- Add focused coverage for terminal command parsing and path resolution if that logic is extracted into testable helpers.
-- Add focused coverage for worker compile-plan parsing:
-  - single-source `-###` output still yields one compile step + one link step
-  - multi-source `-###` output yields multiple compile steps and one link step
-  - `-o custom-name` propagates to the final output artifact
-- Add focused coverage for diagnostics parsing across arbitrary file paths.
+- Add focused coverage for path normalization/validation used by workspace file creation.
+- Add coverage for incremental workspace-index updates:
+  - adding a root file
+  - adding nested directories plus a file
+  - overwriting an existing file without duplicating entries
+- Add focused coverage for compile-output persistence when a workspace is open versus absent.
+- Add focused coverage for diagnostics path matching with duplicate basenames.
 
 ### Edge Cases
-- Included file exists on disk but has unsaved edits in an open tab.
-- Active editor buffer has never been switched away from before compile.
-- Nested workspace paths such as `src/main.cpp` including `../include/app.hpp`.
-- Workspace contains multiple source files with two `main()` definitions and linker failure must surface clearly.
-- Terminal current directory is not `/` and the user runs `g++ ./src/main.cpp ./lib/other.cpp`.
-- No folder is open and the user attempts a multi-file command.
-- Duplicate or overlapping source arguments should not compile the same translation unit twice.
-- Header-only workspace still behaves correctly when there is only one actual source file.
-- Workspace contains `.c` or `.cc` files alongside `.cpp`/`.cxx`; project discovery ignores them and terminal validation reports them clearly if targeted explicitly.
+- User clicks **New file** with no workspace open and then cancels the folder picker.
+- User enters a nested path whose parent directories do not yet exist.
+- User enters `./file.cpp`, `../file.cpp`, `/absolute.cpp`, or an empty path.
+- User creates a file whose path already exists as a file or directory.
+- A successful build writes `a.out` repeatedly.
+- A successful build writes to a nested custom output path such as `build/bin/app`.
+- Runtime `fstream` output creates a previously unseen nested path.
+- Runtime output overwrites an existing open file.
+- Duplicate basenames exist in different directories and diagnostics must stay scoped to the exact active path.
+- No folder is open during compile/run, so no Explorer sync should be attempted.
 
 ## Acceptance Criteria
-- Opening a folder and clicking **Compile** builds every recursive `.cpp` and `.cxx` file in that workspace by default, while ignoring `.c` and `.cc`.
-- Opening a folder and clicking **Compile & Run** builds the same project target set and runs the produced binary on success.
-- `g++ main.cpp other.cpp` compiles both files instead of ignoring `other.cpp`.
-- `g++` rejects `.c` and `.cc` source arguments under this MVP rather than compiling them.
-- `#include "other.cpp"` and normal local header includes resolve when the referenced file exists in the opened workspace.
-- Dirty open-tab edits are used during compile even before the user saves them to disk.
-- Compiler/linker diagnostics still print in the terminal, and the active file continues to receive usable editor markers.
-- Default single-buffer compile behavior remains available when no workspace is open.
+- Clicking **New file** with no folder open first prompts the user to open a folder; file creation does not proceed until a workspace exists.
+- With a workspace open, clicking **New file** shows an inline Explorer naming input rather than resetting the editor.
+- Entering `name.cpp` creates the file at the workspace root; entering `dir/name.cpp` creates the file inside that relative nested path.
+- After a file is created, it appears immediately in the Explorer and opens in the editor as the active tab.
+- Invalid file paths are rejected without mutating the workspace.
+- When a workspace is open, successful compile outputs such as `a.out` or custom `-o` targets appear in the Explorer immediately.
+- When a workspace is open, files created by the running program through `fstream` appear in the Explorer immediately after the run completes.
+- Failed builds do not create phantom output artifacts in the Explorer.
+- Terminal workspace commands reflect newly created files without requiring the user to reopen the folder.
+- Multi-file build behavior, dirty-tab overlays, and existing no-workspace compile/run behavior continue to work.
+- Active-file diagnostics remain scoped to the exact file path even when multiple files share the same basename.
 
 ## Validation Commands
 Execute every command to validate the feature works correctly with zero regressions.
@@ -217,11 +202,11 @@ Execute every command to validate the feature works correctly with zero regressi
 npm run lint
 npm run build
 node --experimental-detect-module --test scripts/e2e-multifile-build.test.mjs
+node --experimental-detect-module --test scripts/e2e-workspace-file-tracking.test.mjs
 npm run test:e2e
 ```
 
 ## Notes
-- This plan intentionally keeps the existing browsercc + `clang++ -###` architecture rather than replacing it with a custom direct Clang invocation model.
-- The current README/help text and terminal behavior are out of sync around `g++ [file] [-o out]`; implementing this feature is a good point to realign them.
-- The worker already mounts workspace files for runtime `fstream`; the compile path should converge on the same workspace-relative model rather than inventing a second path scheme.
-- Ignoring `.c` and `.cc` is an intentional product constraint for this MVP, even though `.cc` is commonly used for C++ in some codebases.
+- This revision assumes the current multi-file compile pipeline remains in place; the work here is primarily about finishing workspace mutation UX/state management around it.
+- The current code already has most of the plumbing needed for runtime write-back (`vfsChanges` and `writeWorkspaceFile(...)`), but not the Explorer/terminal refresh path or compile-artifact persistence.
+- Persisting compile outputs into the workspace is a product behavior change from "runnable in-memory artifact only" to "workspace-visible artifact when a folder is open"; the implementation should make that transition explicit and well tested.

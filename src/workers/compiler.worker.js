@@ -17,11 +17,14 @@
  *    { type: 'compiler-error',   message: string }
  *    { type: 'compile-start'    }
  *    { type: 'compile-result',   success: bool, diagnostics: string,
- *                                outputPath: string|null, diagnosticsByPath: object }
+ *                                outputPath: string|null, outputBytes: Uint8Array|null,
+ *                                diagnosticsByPath: object }
  *    { type: 'run-start'        }
  *    { type: 'stdout',           data: string }
  *    { type: 'stderr',           data: string }
- *    { type: 'run-result',       exitCode: number }
+ *    { type: 'run-result',       exitCode: number,
+ *                                vfsChanges: Array<{path,bytes}>,
+ *                                vfsDeletes: string[] }
  *    { type: 'status-reply',     state: string }
  *
  * Compilation pipeline (multi-translation-unit project build):
@@ -87,6 +90,13 @@ let runVfs = new Map();
 let runVfsDirty = new Set();
 
 /**
+ * Set of paths that the WASM program deleted during the current run.
+ * These are sent back to the main thread as `vfsDeletes` in `run-result`.
+ * @type {Set<string>}
+ */
+let runVfsDeletes = new Set();
+
+/**
  * Open file-descriptor table.  Keys 0–2 are stdin/stdout/stderr (handled
  * directly in the WASI shim); key 3 is the pre-opened root directory.
  * Keys 4+ are file descriptors opened via path_open.
@@ -132,6 +142,7 @@ function normVfsPath(p) {
 function initRunVfs(vfsFiles) {
   runVfs       = new Map();
   runVfsDirty  = new Set();
+  runVfsDeletes = new Set();
   runFds       = new Map();
   runNextFd    = 4;
   runFds.set(VFS_PREOPEN_FD, { type: 'preopen' });
@@ -167,6 +178,10 @@ function getDirtyVfsFiles() {
     }
   }
   return result;
+}
+
+function getDeletedVfsFiles() {
+  return [...runVfsDeletes].filter((path) => !runVfs.has(path));
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -544,7 +559,13 @@ async function compile(request) {
   }
 
   const outputPath = normalizeCompilePath(outputName || plan.linkStep.outputPath);
-  return { success: true, diagnostics: allOutput.trim(), outputPath, diagnosticsByPath: diagnosticsByPath() };
+  return {
+    success: true,
+    diagnostics: allOutput.trim(),
+    outputPath,
+    outputBytes: compiledBinary,
+    diagnosticsByPath: diagnosticsByPath(),
+  };
 }
 
 /** Group parsed diagnostics by normalised source path for the UI. */
@@ -867,6 +888,7 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
         initialData = trunc ? new Uint8Array(0) : new Uint8Array(runVfs.get(path));
       } else if (creat) {
         initialData = new Uint8Array(0);
+        runVfsDeletes.delete(path);
       } else {
         return 44; // __WASI_ERRNO_NOENT
       }
@@ -874,6 +896,20 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
       const newFd = runNextFd++;
       runFds.set(newFd, { type: 'file', path, data: initialData, cursor: 0, dirty: false });
       view().setUint32(openedFdPtr, newFd, true);
+      return 0;
+    },
+
+    // path_unlink_file(fd, path_ptr, path_len) → errno
+    path_unlink_file(dirFd, pathPtr, pathLen) {
+      if (dirFd !== VFS_PREOPEN_FD && !runFds.has(dirFd)) return 8; // EBADF
+
+      const rawPath = new TextDecoder().decode(u8().subarray(pathPtr, pathPtr + pathLen));
+      const path = normVfsPath(rawPath);
+      if (!runVfs.has(path)) return 44; // __WASI_ERRNO_NOENT
+
+      runVfs.delete(path);
+      runVfsDirty.delete(path);
+      runVfsDeletes.add(path);
       return 0;
     },
 
@@ -923,7 +959,7 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
 async function run(sharedBuffer, vfsFiles = []) {
   if (!compiledBinary) {
     send({ type: 'stderr', data: 'No compiled binary. Please compile first.\n' });
-    send({ type: 'run-result', exitCode: 1, vfsChanges: [] });
+    send({ type: 'run-result', exitCode: 1, vfsChanges: [], vfsDeletes: [] });
     return;
   }
 
@@ -962,8 +998,9 @@ async function run(sharedBuffer, vfsFiles = []) {
   // even if the program exited without explicitly calling fclose / fstream dtor.
   flushRunFds();
   const vfsChanges = getDirtyVfsFiles();
+  const vfsDeletes = getDeletedVfsFiles();
 
-  send({ type: 'run-result', exitCode, vfsChanges });
+  send({ type: 'run-result', exitCode, vfsChanges, vfsDeletes });
 }
 
 // ── ensure ready helper ───────────────────────────────────────────────────────

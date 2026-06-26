@@ -42,13 +42,20 @@ export function parseDiagnostics(text) {
   return results;
 }
 
-/** True when a diagnostic path refers to the given active file. */
+/**
+ * True when a diagnostic path refers to the given active file.
+ *
+ * Matching is by exact normalised workspace-relative path. Basename-only
+ * matching is intentionally NOT used: as workspaces grow (and especially after
+ * nested file creation), duplicate basenames in different directories
+ * (`src/main.cpp` vs `tests/main.cpp`) are common, and a basename fallback would
+ * attach editor markers to the wrong file.
+ */
 export function diagnosticMatchesPath(diagPath, activePath) {
   const a = normalize(diagPath);
   const b = normalize(activePath);
   if (!b) return false;
-  if (a === b) return true;
-  return a.split('/').pop() === b.split('/').pop();
+  return a === b;
 }
 
 /**
