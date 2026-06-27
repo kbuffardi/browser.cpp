@@ -13,6 +13,7 @@
 'use strict';
 
 import './styles.css';
+import '@xterm/xterm/css/xterm.css';
 
 import * as editorAPI   from './editor.js';
 import * as terminalAPI from './terminal.js';
@@ -38,10 +39,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // 2. Compiler web worker
   //    The worker starts loading the Clang WASM binary immediately.
-  const worker = new Worker(
-    new URL('../workers/compiler.worker.js', import.meta.url),
-    { type: 'classic' }
-  );
+  let worker = createCompilerWorker();
+  let toolbarController = null;
 
   // 3. Terminal
   //    Pass callbacks so the terminal's `g++` command dispatches to the worker.
@@ -61,7 +60,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     },
     onRun: async (sab) => {
       const vfsFiles = await fsAPI.readAllWorkspaceFiles();
-      worker.postMessage({ type: 'run', sharedBuffer: sab, vfsFiles });
+      const binaryBytes = toolbarController?.getLastRunBinaryBytes?.() || null;
+      worker.postMessage({ type: 'run', sharedBuffer: sab, vfsFiles, binaryBytes });
+    },
+    onStopRun: () => {
+      worker.terminate();
+      worker = createCompilerWorker();
+      toolbarController?.setWorker(worker);
+    },
+    onRunStateChange: (isRunning) => {
+      setStopButtonRunning(isRunning);
     },
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
@@ -80,7 +88,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     startNewProject: resetToNewProject,
   });
   const persistenceGate = createPersistenceGate(persistSession);
-  initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
+  toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
 
   // 5. Track unsaved changes
   editorAPI.onDidChangeContent(() => markDirty(true));
@@ -107,6 +115,18 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   editorAPI.focus();
 });
+
+function createCompilerWorker() {
+  return new Worker(
+    new URL('../workers/compiler.worker.js', import.meta.url),
+    { type: 'classic' }
+  );
+}
+
+function setStopButtonRunning(isRunning) {
+  const button = document.getElementById('btn-stop-run');
+  if (button) button.disabled = !isRunning;
+}
 
 function initPanelResizers() {
   initTerminalResizer();

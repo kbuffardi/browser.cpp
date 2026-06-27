@@ -17,10 +17,9 @@
 
 'use strict';
 
-import { Terminal } from '@xterm/xterm';
-import { FitAddon }      from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import '@xterm/xterm/css/xterm.css';
+import * as xtermPkg from '@xterm/xterm';
+import * as fitAddonPkg from '@xterm/addon-fit';
+import * as webLinksAddonPkg from '@xterm/addon-web-links';
 
 import {
   parseGxxArgs,
@@ -29,6 +28,14 @@ import {
   isRejectedSource,
   normalizeOverlayPath,
 } from './build-request.mjs';
+
+function moduleExports(pkg) {
+  return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
+}
+
+const { Terminal } = moduleExports(xtermPkg);
+const { FitAddon } = moduleExports(fitAddonPkg);
+const { WebLinksAddon } = moduleExports(webLinksAddonPkg);
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -178,6 +185,8 @@ async function _doFlush() {
 // Set from outside: callbacks to compile and run
 let _onCompile = null;
 let _onRun     = null;
+let _onStopRun = null;
+let _onRunStateChange = null;
 let _getSource = null;  // () => string  – returns current editor source
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -189,13 +198,17 @@ let _getSource = null;  // () => string  – returns current editor source
  * @param {{
  *   onCompile: (request:{sourcePaths:(string[]|null), flags:string[], std:string, outputName:(string|null), cwd:string}) => void,
  *   onRun:     (sharedBuffer:SharedArrayBuffer) => void,
+ *   onStopRun?: () => void,
+ *   onRunStateChange?: (running:boolean) => void,
  *   getSource: () => string,
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
  * }} callbacks
  */
-export function createTerminal(container, { onCompile, onRun, getSource, readWorkspaceFile }) {
+export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile }) {
   _onCompile = onCompile;
   _onRun     = onRun;
+  _onStopRun = onStopRun || null;
+  _onRunStateChange = onRunStateChange || null;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile || null;
 
@@ -290,10 +303,38 @@ export function startRun() {
 
   const sab = new SharedArrayBuffer(SAB_HEADER_BYTES + SAB_DATA_BYTES);
   _initSAB(sab);
-  running     = true;
+  setRunState(true);
   inputBuffer = ''; // clear any partial command line
   term.write(CRLF);
   _onRun?.(sab);
+}
+
+/**
+ * Stop the currently running program. This is intentionally separate from EOF:
+ * CPU-bound WASM cannot observe stdin EOF, so the main thread terminates the
+ * worker via _onStopRun after terminal state has been reset.
+ *
+ * @param {{ echoCtrlC?: boolean }} [options]
+ * @returns {boolean} true when a running program was stopped
+ */
+export function stopRun({ echoCtrlC = false } = {}) {
+  if (!running) return false;
+
+  if (echoCtrlC) {
+    term?.write('^C' + CRLF);
+  } else {
+    term?.write(CRLF);
+  }
+  inputBuffer = '';
+  _clearSAB();
+  setRunState(false);
+  busy = false;
+  runDone?.();
+  runDone = null;
+  term?.write(`${C.yellow}Process interrupted.${C.reset}${CRLF}`);
+  writePrompt();
+  _onStopRun?.();
+  return true;
 }
 
 // ── Output helpers called by toolbar.js / app.js ─────────────────────────────
@@ -338,8 +379,8 @@ export function onRunResult({ exitCode }) {
   if (exitCode !== 0) {
     term?.write(`${CRLF}${C.yellow}Process exited with code ${exitCode}.${C.reset}${CRLF}`);
   }
-  running  = false;
-  busy     = false;
+  setRunState(false);
+  busy = false;
   _clearSAB();
   runDone?.();
   runDone = null;
@@ -507,7 +548,7 @@ function handleKey({ key, domEvent }) {
  * Handle a keystroke while a WASM program is executing.
  * Characters are echoed to the terminal and buffered in inputBuffer;
  * pressing Enter submits the line to the program's stdin.
- * Ctrl+D on an empty line signals EOF; Ctrl+C sends EOF and clears the line.
+ * Ctrl+D on an empty line signals EOF; Ctrl+C interrupts the program.
  */
 function handleStdinKey(key, domEvent) {
   const code = domEvent.key;
@@ -536,11 +577,9 @@ function handleStdinKey(key, domEvent) {
     return;
   }
 
-  // Ctrl+C – interrupt: clear the current line and send EOF
+  // Ctrl+C – interrupt the running program
   if (domEvent.ctrlKey && code === 'c') {
-    term.write('^C' + CRLF);
-    inputBuffer = '';
-    _sendStdinEOF();
+    stopRun({ echoCtrlC: true });
     return;
   }
 
@@ -832,6 +871,53 @@ function cmdHelp() {
 
 function writePrompt() {
   term?.write(`${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:${promptPath()}$ ${C.reset}`);
+}
+
+function setRunState(nextRunning) {
+  if (running === nextRunning) return;
+  running = nextRunning;
+  _onRunStateChange?.(running);
+}
+
+export function __setTerminalTestHarness({
+  term: terminalInstance,
+  lastBuiltArtifactPath: artifactPath = null,
+  onCompile = null,
+  onRun = null,
+  onStopRun = null,
+  onRunStateChange = null,
+  getSource = () => '',
+  readWorkspaceFile = null,
+} = {}) {
+  term = terminalInstance || null;
+  fitAddon = null;
+  _onCompile = onCompile;
+  _onRun = onRun;
+  _onStopRun = onStopRun;
+  _onRunStateChange = onRunStateChange;
+  _getSource = getSource;
+  _readWorkspaceFile = readWorkspaceFile;
+  lastBuiltArtifactPath = artifactPath;
+  inputBuffer = '';
+  history.length = 0;
+  historyIdx = -1;
+  busy = false;
+  running = false;
+  runDone = null;
+  _clearSAB();
+}
+
+export function __handleTerminalKeyForTesting(key, domEvent) {
+  handleKey({ key, domEvent });
+}
+
+export function __getTerminalStateForTesting() {
+  return {
+    running,
+    busy,
+    inputBuffer,
+    pendingChunks: _pendingChunks.length,
+  };
 }
 
 function clearInputLine() {

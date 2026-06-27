@@ -8,7 +8,8 @@
  *  Inbound messages (from main thread):
  *    { type: 'compile', sourcePaths: string[], files: Array<{path,content}>,
  *                       std: string, flags: string[], primarySourcePath, outputName }
- *    { type: 'run',     sharedBuffer: SharedArrayBuffer, vfsFiles }
+ *    { type: 'run',     sharedBuffer: SharedArrayBuffer, vfsFiles,
+ *                       binaryBytes?: Uint8Array }
  *    { type: 'status'  }
  *
  *  Outbound messages (to main thread):
@@ -956,7 +957,13 @@ function createWASIImports({ sharedBuffer, onStdout, onStderr }) {
  *   to expose to the program via fstream.  Written/created files are collected
  *   and returned in the `run-result` message as `vfsChanges`.
  */
-async function run(sharedBuffer, vfsFiles = []) {
+async function run(sharedBuffer, vfsFiles = [], binaryBytes = null) {
+  if (binaryBytes) {
+    compiledBinary = binaryBytes instanceof Uint8Array
+      ? new Uint8Array(binaryBytes)
+      : new Uint8Array(binaryBytes);
+  }
+
   if (!compiledBinary) {
     send({ type: 'stderr', data: 'No compiled binary. Please compile first.\n' });
     send({ type: 'run-result', exitCode: 1, vfsChanges: [], vfsDeletes: [] });
@@ -1038,7 +1045,7 @@ self.onmessage = async ({ data }) => {
 
     case 'run':
       send({ type: 'run-start' });
-      await run(data.sharedBuffer, data.vfsFiles || []);
+      await run(data.sharedBuffer, data.vfsFiles || [], data.binaryBytes || null);
       break;
 
     case 'status':

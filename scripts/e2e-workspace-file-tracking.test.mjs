@@ -490,7 +490,7 @@ function createFakeDocument() {
   };
   const ids = [
     'btn-new', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
-    'btn-compile-run', 'btn-clear-terminal', 'btn-toggle-terminal',
+    'btn-compile-run', 'btn-stop-run', 'btn-clear-terminal', 'btn-toggle-terminal',
     'tab-bar', 'file-tree', 'status-file', 'status-compiler', 'cpp-standard',
   ];
   for (const id of ids) {
@@ -512,12 +512,13 @@ function makeFakes() {
     setLanguage() {},
     markDiagnostics() {},
   };
-  const terminalCalls = { refresh: [], setWorkspace: [], compileResults: [], runResults: [] };
+  const terminalCalls = { refresh: [], setWorkspace: [], compileResults: [], runResults: [], starts: 0, stops: 0 };
   const terminalAPI = {
     clearTerminal() {},
     fitTerminal() {},
     printInfo() {},
-    startRun() {},
+    startRun() { terminalCalls.starts += 1; },
+    stopRun() { terminalCalls.stops += 1; },
     setWorkspace(w) { terminalCalls.setWorkspace.push(w); },
     refreshWorkspace(w) { terminalCalls.refresh.push(w); },
     onCompileResult(d) { terminalCalls.compileResults.push(d); },
@@ -587,9 +588,10 @@ async function setupToolbar(fsOverrides = {}) {
     },
   };
 
-  const worker = { postMessage() {}, onmessage: null };
+  const workerCalls = [];
+  const worker = { postMessage(msg) { workerCalls.push(msg); }, onmessage: null };
   toolbar.initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => {});
-  return { toolbar, document, worker, editorAPI, editorCalls, terminalAPI, terminalCalls, fsAPI, fsCalls };
+  return { toolbar, document, worker, workerCalls, editorAPI, editorCalls, terminalAPI, terminalCalls, fsAPI, fsCalls };
 }
 
 function inlineInput(document) {
@@ -780,6 +782,115 @@ test('e2e: shortcut hints and keyboard shortcuts follow non-Mac conventions', as
   await tick();
   assert.equal(wrongModifier.prevented(), false);
   assert.equal(ctx.fsCalls.openFolder, 1, 'cmd+o should not trigger on non-mac');
+});
+
+// ── Run stop wiring + worker replacement ─────────────────────────────────────
+
+test('e2e: STOP button delegates to the terminal stop action', async () => {
+  const ctx = await setupToolbar();
+
+  ctx.document.getElementById('btn-stop-run').click();
+
+  assert.equal(ctx.terminalCalls.stops, 1);
+});
+
+test('e2e: successful compile caches binary bytes for replacement-worker runs', async () => {
+  const ctx = await setupToolbar();
+  const bytes = new Uint8Array([7, 8, 9]);
+
+  ctx.worker.onmessage({
+    data: {
+      type: 'compile-result',
+      success: true,
+      diagnostics: '',
+      outputPath: 'app',
+      outputBytes: bytes,
+    },
+  });
+  await tick();
+
+  assert.deepEqual([...ctx.toolbar.getLastRunBinaryBytes()], [7, 8, 9]);
+  bytes[0] = 99;
+  assert.deepEqual([...ctx.toolbar.getLastRunBinaryBytes()], [7, 8, 9], 'cached bytes are isolated from later mutation');
+});
+
+test('e2e: setWorker disconnects the old worker and binds messages to the replacement', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [] }, [], null);
+  const oldWorker = ctx.worker;
+  const replacementWorker = { postMessage() {}, onmessage: null };
+
+  ctx.toolbar.setWorker(replacementWorker);
+
+  assert.equal(oldWorker.onmessage, null, 'old worker handler removed');
+  assert.equal(typeof replacementWorker.onmessage, 'function', 'replacement worker handler bound');
+
+  replacementWorker.onmessage({
+    data: {
+      type: 'compile-result',
+      success: true,
+      diagnostics: '',
+      outputPath: 'new.out',
+      outputBytes: new Uint8Array([1]),
+    },
+  });
+  await tick();
+
+  assert.deepEqual([...ctx.toolbar.getLastRunBinaryBytes()], [1]);
+});
+
+test('e2e: compile-and-run pending state is cleared when the worker is replaced', async () => {
+  const ctx = await setupToolbar();
+  ctx.document.getElementById('btn-compile-run').click();
+  await tick();
+  assert.equal(ctx.workerCalls[0].type, 'compile');
+
+  const replacementWorker = { postMessage() {}, onmessage: null };
+  ctx.toolbar.setWorker(replacementWorker);
+  replacementWorker.onmessage({
+    data: {
+      type: 'compile-result',
+      success: true,
+      diagnostics: '',
+      outputPath: 'a.out',
+      outputBytes: new Uint8Array([1]),
+    },
+  });
+  await tick();
+
+  assert.equal(ctx.terminalCalls.starts, 0, 'replacement compile-result must not trigger stale compile-and-run');
+});
+
+test('e2e: after worker replacement, stale run-result from the old worker cannot sync workspace files', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [] }, [], null);
+  const oldWorker = ctx.worker;
+  const replacementWorker = { postMessage() {}, onmessage: null };
+
+  ctx.toolbar.setWorker(replacementWorker);
+  oldWorker.onmessage?.({
+    data: {
+      type: 'run-result',
+      exitCode: 0,
+      vfsChanges: [{ path: 'stale.txt', bytes: new TextEncoder().encode('stale') }],
+    },
+  });
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.write.map((c) => c.path), []);
+});
+
+test('e2e: compile actions after worker replacement post to the replacement worker', async () => {
+  const ctx = await setupToolbar();
+  const replacementCalls = [];
+  const replacementWorker = { postMessage(msg) { replacementCalls.push(msg); }, onmessage: null };
+
+  ctx.toolbar.setWorker(replacementWorker);
+  ctx.document.getElementById('btn-compile').click();
+  await tick();
+
+  assert.equal(ctx.workerCalls.length, 0, 'old worker did not receive compile');
+  assert.equal(replacementCalls[0].type, 'compile');
 });
 
 // ── Compile artifact + runtime sync driven through the worker message handler ──

@@ -25,6 +25,8 @@ let _terminalAPI = null;
 let _fsAPI       = null;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
+let _runAfterSuccessfulCompile = false;
+let _lastRunBinaryBytes = null;
 const _expandedWorkspaceDirectories = new Set();
 const WORKSPACE_SYNC_INTERVAL_MS = 2_000;
 let _workspaceSyncTimer = null;
@@ -63,7 +65,7 @@ function schedulePersist() {
  * @param {Function} [persistSession] – optional callback to persist session state
  */
 export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSession) {
-  _worker      = worker;
+  _worker      = null;
   _editorAPI   = editorAPI;
   _terminalAPI = terminalAPI;
   _fsAPI       = fsAPI;
@@ -72,8 +74,22 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
   bindButtons();
   bindKeyboardShortcuts();
   bindWorkspaceSyncEvents();
+  setWorker(worker);
+}
+
+export function setWorker(worker) {
+  if (_worker && _worker !== worker) {
+    _worker.onmessage = null;
+  }
+  _worker = worker;
+  _runAfterSuccessfulCompile = false;
   handleWorkerMessages();
   updateStatusBar('compiler', 'loading', 'Compiler loading…');
+  setButtonsEnabled(false);
+}
+
+export function getLastRunBinaryBytes() {
+  return _lastRunBinaryBytes ? new Uint8Array(_lastRunBinaryBytes) : null;
 }
 
 // ── Button bindings ───────────────────────────────────────────────────────────
@@ -86,6 +102,7 @@ function bindButtons() {
   on('btn-compile',      () => actionCompile());
   on('btn-run',          () => actionRun());
   on('btn-compile-run',  () => actionCompileRun());
+  on('btn-stop-run',     () => _terminalAPI.stopRun?.());
   on('btn-clear-terminal', () => _terminalAPI.clearTerminal());
   on('btn-toggle-terminal',() => toggleTerminalPanel());
   updateShortcutTitles();
@@ -131,10 +148,14 @@ function bindKeyboardShortcuts() {
 // ── Worker message handler ────────────────────────────────────────────────────
 
 function handleWorkerMessages() {
-  _worker.onmessage = ({ data }) =>
+  if (!_worker) return;
+  const boundWorker = _worker;
+  boundWorker.onmessage = ({ data }) => {
+    if (boundWorker !== _worker) return;
     handleWorkerMessage(data).catch((err) =>
       console.error('[browser.cpp] Worker message handler error:', err)
     );
+  };
 }
 
 async function handleWorkerMessage(data) {
@@ -144,15 +165,18 @@ async function handleWorkerMessage(data) {
         'compiler', 'loading',
         `Loading compiler… ${data.progress}%`
       );
+      setButtonsEnabled(false);
       break;
 
     case 'compiler-ready':
       updateStatusBar('compiler', 'ready', 'Compiler ready');
+      setButtonsEnabled(true);
       _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
       break;
 
     case 'compiler-error':
       updateStatusBar('compiler', 'error', 'Compiler unavailable');
+      setButtonsEnabled(false);
       _terminalAPI.printInfo(
         `⚠ Compiler not available:\n${data.message}\n\n` +
         'Run:  npm run fetch-clang  then reload the extension.'
@@ -166,6 +190,8 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'compile-result': {
+      const shouldRunAfterCompile = _runAfterSuccessfulCompile;
+      _runAfterSuccessfulCompile = false;
       setButtonsEnabled(true);
       updateStatusBar('compiler', 'ready', 'Compiler ready');
 
@@ -177,6 +203,10 @@ async function handleWorkerMessage(data) {
         if (scoped.length) _editorAPI.markDiagnostics(scoped);
       }
 
+      if (data.success) {
+        _lastRunBinaryBytes = data.outputBytes ? new Uint8Array(data.outputBytes) : null;
+      }
+
       _terminalAPI.onCompileResult(data);
 
       // When a folder is open, materialise the built artifact (a.out or a custom
@@ -184,6 +214,9 @@ async function handleWorkerMessage(data) {
       // Failed builds carry no bytes, so no phantom artifact is ever created.
       if (data.success && data.outputBytes && _workspace) {
         await persistWorkspaceFile(data.outputPath || 'a.out', data.outputBytes);
+      }
+      if (shouldRunAfterCompile && data.success) {
+        _terminalAPI.startRun();
       }
       break;
     }
@@ -541,6 +574,8 @@ async function actionSaveAs() {
 }
 
 async function actionCompile() {
+  if (!_worker) return;
+  _runAfterSuccessfulCompile = false;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
 }
@@ -550,22 +585,9 @@ function actionRun() {
 }
 
 async function actionCompileRun() {
+  if (!_worker) return;
+  _runAfterSuccessfulCompile = true;
   const payload = await assembleCompilePayload({});
-
-  // Chain: compile → on success, immediately run the worker-built artifact
-  const originalOnMessage = _worker.onmessage;
-  const oneShot = ({ data }) => {
-    if (data.type === 'compile-result') {
-      _worker.onmessage = originalOnMessage;
-      originalOnMessage({ data }); // let normal handler render diagnostics
-      if (data.success) {
-        _terminalAPI.startRun();
-      }
-    } else {
-      originalOnMessage({ data });
-    }
-  };
-  _worker.onmessage = oneShot;
   _worker.postMessage({ type: 'compile', ...payload });
 }
 
