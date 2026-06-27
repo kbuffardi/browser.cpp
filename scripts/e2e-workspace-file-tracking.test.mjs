@@ -474,11 +474,19 @@ class FakeElement {
 }
 
 function createFakeDocument() {
+  const listeners = new Map();
   const doc = {
     byId: new Map(),
     createElement(tag) { return new FakeElement(tag, doc); },
     getElementById(id) { return doc.byId.get(id) ?? null; },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(listener);
+    },
+    dispatch(type, event = {}) {
+      const base = { preventDefault() {}, stopPropagation() {}, target: doc };
+      for (const fn of listeners.get(type) ?? []) fn({ ...base, ...event });
+    },
   };
   const ids = [
     'btn-new', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
@@ -521,12 +529,25 @@ function makeFakes() {
 async function setupToolbar(fsOverrides = {}) {
   const document = createFakeDocument();
   global.document = document;
+  const navigator = fsOverrides.navigator ?? {
+    platform: 'Win32',
+    userAgentData: { platform: 'Windows' },
+  };
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: navigator,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    global.navigator = navigator;
+  }
   if (fsOverrides.window) global.window = fsOverrides.window;
   else delete global.window;
   const toolbar = await import(`../src/ui/toolbar.js?tb=${Math.random()}`);
   const { editorAPI, editorCalls, terminalAPI, terminalCalls } = makeFakes();
 
-  const fsCalls = { create: [], write: [], delete: [], refresh: [], openFolder: 0 };
+  const fsCalls = { create: [], write: [], delete: [], refresh: [], openFolder: 0, save: [], saveAs: [] };
   const fsAPI = {
     newFile() {},
     getDirectoryHandle: () => ({}),
@@ -549,6 +570,16 @@ async function setupToolbar(fsOverrides = {}) {
       fsCalls.delete.push(path);
       return fsOverrides.deleteWorkspaceFileResult ?? { name: 'p', entries: [] };
     },
+    saveFile: async (content, suggestedName) => {
+      fsCalls.save.push({ content, suggestedName });
+      if (fsOverrides.saveFile) return fsOverrides.saveFile(content, suggestedName);
+      return fsOverrides.saveFileResult ?? suggestedName;
+    },
+    saveFileAs: async (content, suggestedName) => {
+      fsCalls.saveAs.push({ content, suggestedName });
+      if (fsOverrides.saveFileAs) return fsOverrides.saveFileAs(content, suggestedName);
+      return fsOverrides.saveFileAsResult ?? suggestedName;
+    },
     refreshWorkspace: async (options) => {
       fsCalls.refresh.push(options);
       if (fsOverrides.refreshWorkspace) return fsOverrides.refreshWorkspace(options);
@@ -564,6 +595,20 @@ async function setupToolbar(fsOverrides = {}) {
 function inlineInput(document) {
   const row = document.getElementById('file-tree-new-row');
   return row ? row.children.find((c) => c.tagName === 'INPUT') : null;
+}
+
+function shortcutEvent(key, { metaKey = false, ctrlKey = false, shiftKey = false } = {}) {
+  let prevented = false;
+  return {
+    event: {
+      key,
+      metaKey,
+      ctrlKey,
+      shiftKey,
+      preventDefault() { prevented = true; },
+    },
+    prevented: () => prevented,
+  };
 }
 
 test('e2e: New file with no workspace opens the folder picker; cancel leaves state unchanged', async () => {
@@ -665,6 +710,76 @@ test('e2e: an invalid inline name is rejected and keeps the row open', async () 
 
   assert.ok(inlineInput(ctx.document), 'row stays open for retry');
   assert.equal(ctx.toolbar.getOpenTabPaths().includes('dup.cpp'), false, 'no tab opened');
+});
+
+test('e2e: shortcut hints and keyboard shortcuts follow Mac conventions', async () => {
+  const ctx = await setupToolbar({
+    navigator: { platform: 'MacIntel', userAgentData: { platform: 'macOS' } },
+    readWorkspaceFile: async () => 'int main() { return 0; }\n',
+  });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+
+  assert.equal(ctx.document.getElementById('btn-open').title, 'Open folder (Cmd+O)');
+  assert.equal(ctx.document.getElementById('btn-save').title, 'Save file (Cmd+S)');
+
+  const save = shortcutEvent('s', { metaKey: true });
+  ctx.document.dispatch('keydown', save.event);
+  await tick();
+  assert.equal(save.prevented(), true);
+  assert.deepEqual(ctx.fsCalls.write.map((c) => c.path), ['main.cpp']);
+  assert.equal(ctx.fsCalls.save.length, 0);
+  assert.equal(ctx.fsCalls.saveAs.length, 0);
+
+  const open = shortcutEvent('o', { metaKey: true });
+  ctx.document.dispatch('keydown', open.event);
+  await tick();
+  assert.equal(open.prevented(), true);
+  assert.equal(ctx.fsCalls.openFolder, 1);
+
+  const wrongModifier = shortcutEvent('s', { ctrlKey: true });
+  ctx.document.dispatch('keydown', wrongModifier.event);
+  await tick();
+  assert.equal(wrongModifier.prevented(), false);
+  assert.equal(ctx.fsCalls.write.length, 1, 'ctrl+s should not trigger on mac');
+});
+
+test('e2e: shortcut hints and keyboard shortcuts follow non-Mac conventions', async () => {
+  const ctx = await setupToolbar({
+    navigator: { platform: 'Win32', userAgentData: { platform: 'Windows' } },
+    readWorkspaceFile: async () => 'int main() { return 0; }\n',
+  });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+
+  assert.equal(ctx.document.getElementById('btn-open').title, 'Open folder (Ctrl+O)');
+  assert.equal(ctx.document.getElementById('btn-save').title, 'Save file (Ctrl+S)');
+
+  const save = shortcutEvent('s', { ctrlKey: true });
+  ctx.document.dispatch('keydown', save.event);
+  await tick();
+  assert.equal(save.prevented(), true);
+  assert.deepEqual(ctx.fsCalls.write.map((c) => c.path), ['main.cpp']);
+  assert.equal(ctx.fsCalls.save.length, 0);
+  assert.equal(ctx.fsCalls.saveAs.length, 0);
+
+  const open = shortcutEvent('o', { ctrlKey: true });
+  ctx.document.dispatch('keydown', open.event);
+  await tick();
+  assert.equal(open.prevented(), true);
+  assert.equal(ctx.fsCalls.openFolder, 1);
+
+  const wrongModifier = shortcutEvent('o', { metaKey: true });
+  ctx.document.dispatch('keydown', wrongModifier.event);
+  await tick();
+  assert.equal(wrongModifier.prevented(), false);
+  assert.equal(ctx.fsCalls.openFolder, 1, 'cmd+o should not trigger on non-mac');
 });
 
 // ── Compile artifact + runtime sync driven through the worker message handler ──
