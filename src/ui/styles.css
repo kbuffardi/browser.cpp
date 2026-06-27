@@ -379,6 +379,39 @@ select:focus {
   user-select: none;
 }
 
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-stop-btn {
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  background: rgba(243, 139, 168, 0.12);
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.terminal-stop-btn:hover:not(:disabled) {
+  background: rgba(243, 139, 168, 0.22);
+  border-color: var(--red);
+  color: var(--text);
+}
+
+.terminal-stop-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+  filter: grayscale(0.25);
+}
+
 .panel-controls {
   display: flex;
   gap: 4px;
