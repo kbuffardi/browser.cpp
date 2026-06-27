@@ -88,6 +88,7 @@ function bindButtons() {
   on('btn-compile-run',  () => actionCompileRun());
   on('btn-clear-terminal', () => _terminalAPI.clearTerminal());
   on('btn-toggle-terminal',() => toggleTerminalPanel());
+  updateShortcutTitles();
 }
 
 function on(id, handler) {
@@ -98,6 +99,10 @@ function on(id, handler) {
 
 function bindKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
+    const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+    const isMac = isMacPlatform();
+    const primaryModifier = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+
     if (e.key === 'F5') {
       e.preventDefault();
       actionCompileRun();
@@ -107,10 +112,10 @@ function bindKeyboardShortcuts() {
     } else if (e.ctrlKey && e.shiftKey && e.key === 'R') {
       e.preventDefault();
       actionRun();
-    } else if (e.ctrlKey && !e.shiftKey && e.key === 's') {
+    } else if (primaryModifier && !e.shiftKey && key === 's') {
       e.preventDefault();
       actionSave();
-    } else if (e.ctrlKey && e.key === 'o') {
+    } else if (primaryModifier && key === 'o') {
       e.preventDefault();
       actionOpen();
     } else if (e.ctrlKey && e.key === 'n') {
@@ -500,6 +505,19 @@ export function resetToNewProject() {
 
 async function actionSave() {
   try {
+    if (_workspace && _activeTabPath && _fsAPI?.writeWorkspaceFile) {
+      if (_openTabs.has(_activeTabPath)) {
+        _openTabs.get(_activeTabPath).content = _editorAPI.getValue();
+      }
+      const snapshot = await _fsAPI.writeWorkspaceFile(_activeTabPath, _editorAPI.getValue());
+      if (!snapshot) {
+        throw new Error('Could not save workspace file.');
+      }
+      markDirty(false);
+      _persistSession?.();
+      return;
+    }
+
     const name = await _fsAPI.saveFile(_editorAPI.getValue(), _fileName);
     if (name) {
       setFileName(name);
@@ -1029,6 +1047,28 @@ function parentWorkspacePath(path) {
 function workspaceBaseName(path) {
   const idx = path.lastIndexOf('/');
   return idx === -1 ? path : path.slice(idx + 1);
+}
+
+function updateShortcutTitles() {
+  setButtonTitle('btn-open', `Open folder (${platformShortcutLabel('O')})`);
+  setButtonTitle('btn-save', `Save file (${platformShortcutLabel('S')})`);
+}
+
+function setButtonTitle(id, title) {
+  const button = document.getElementById(id);
+  if (button) button.title = title;
+}
+
+function platformShortcutLabel(key) {
+  return `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+${key}`;
+}
+
+function isMacPlatform() {
+  const platform =
+    globalThis.navigator?.userAgentData?.platform ??
+    globalThis.navigator?.platform ??
+    '';
+  return /mac/i.test(platform);
 }
 
 async function openFolderWorkspace() {
