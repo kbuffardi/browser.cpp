@@ -61,7 +61,13 @@
         <!-- Resizable terminal panel -->
         <div id="terminal-panel">
           <div id="terminal-panel-header">
-            <span>TERMINAL</span>
+            <div class="terminal-title">
+              <span>TERMINAL</span>
+              <button id="btn-stop-run" class="terminal-stop-btn" title="Stop running program (Ctrl+C)" disabled>
+                <span class="codicon codicon-debug-stop" aria-hidden="true"></span>
+                <span>STOP!</span>
+              </button>
+            </div>
             <div class="panel-controls">
               <button id="btn-clear-terminal" title="Clear terminal (Ctrl+K)">⌫</button>
               <button id="btn-toggle-terminal" title="Toggle terminal">▾</button>
