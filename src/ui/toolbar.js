@@ -46,6 +46,21 @@ let _loadingFile = false;
 let _persistSession = null;
 let _persistTimer = null;
 
+function describeRuntimeWritebackIssue(reason) {
+  switch (reason) {
+    case 'permission-denied':
+      return 'Runtime-created files were not written to disk because browser.cpp no longer has write permission for the opened folder.';
+    case 'no-directory-handle':
+      return 'Runtime-created files are only available in memory because no writable folder workspace is open. Use Open Folder to persist generated files to disk.';
+    case 'directory-create-failed':
+    case 'file-create-failed':
+    case 'disk-write-failed':
+      return 'Runtime-created files could not be written to disk. Re-open the folder with write access and run again.';
+    default:
+      return 'Runtime-created files could not be written to disk.';
+  }
+}
+
 /** Schedule a debounced session persist (e.g. after active-tab switches). */
 function schedulePersist() {
   if (!_persistSession) return;
@@ -242,14 +257,22 @@ async function handleWorkerMessage(data) {
       // refresh the Explorer/terminal so runtime fstream output is visible.
       let snapshot = null;
       const changedPaths = [];
+      const persistenceWarnings = new Set();
+      if (data.vfsChanges?.length && (!_workspace || !_fsAPI?.writeWorkspaceFile)) {
+        persistenceWarnings.add(describeRuntimeWritebackIssue('no-directory-handle'));
+      }
       if (data.vfsChanges?.length && _workspace && _fsAPI?.writeWorkspaceFile) {
         for (const change of data.vfsChanges) {
           try {
             const result = await _fsAPI.writeWorkspaceFile(change.path, change.bytes);
             if (result) snapshot = result;
+            if (result?.persisted === false) {
+              persistenceWarnings.add(describeRuntimeWritebackIssue(result.persistenceReason));
+            }
             changedPaths.push(normalizeOverlayPath(change.path));
           } catch (err) {
             console.warn('[browser.cpp] Failed to write file to workspace:', change.path, err);
+            persistenceWarnings.add(describeRuntimeWritebackIssue('disk-write-failed'));
           }
         }
         if (snapshot) {
@@ -267,6 +290,9 @@ async function handleWorkerMessage(data) {
           }
         }
         if (snapshot) applyWorkspaceSnapshot(snapshot);
+      }
+      for (const warning of persistenceWarnings) {
+        _terminalAPI.printInfo?.(warning);
       }
       await syncWorkspaceFromDisk('run-result');
       break;
