@@ -1,0 +1,25 @@
+## AI Agent Reasoning
+
+### Context
+The runtime could write files through C++ fstream APIs without reliably creating
+or persisting them into the opened workspace, and browser smoke coverage could
+not validate the actual unpacked extension page in branded Google Chrome.
+
+### Decisions Made
+- Extracted the WASI runtime into a dedicated module and added created-file
+  persistence semantics instead of patching compiler.worker.js in place.
+- Returned workspace write persistence metadata so the UI can distinguish real
+  disk writes from memory-only fallback and tell the user why generated files do
+  not appear on disk.
+- Added COOP/COEP to the extension manifest because SharedArrayBuffer support is
+  required for the terminal run path and the prior warning was real.
+- Updated browser smoke resolution to prefer Chrome for Testing because branded
+  Google Chrome ignores --load-extension for sideloaded extensions.
+
+### Trade-offs
+- Kept richer smoke timeout diagnostics because they are high-signal for future
+  browser failures, but removed temporary step-by-step debug chatter after the
+  extension-page path was proven.
+- Hosted fallback smoke remains available for Chrome-family environments that do
+  not load unpacked extensions, but the preferred path now exercises the real
+  extension page when Chrome for Testing or similar binaries are present.
