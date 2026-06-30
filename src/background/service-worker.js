@@ -6,22 +6,26 @@
  * - On install, pre-warms the extension page so the first open is faster.
  */
 
-chrome.action.onClicked.addListener(async () => {
-  const url = chrome.runtime.getURL('index.html');
+import { getExtensionAPI } from '../extension-api.mjs';
+
+const extensionAPI = getExtensionAPI();
+
+extensionAPI.action.onClicked.addListener(async () => {
+  const url = extensionAPI.runtime.getURL('index.html');
 
   // Reuse an existing browser.cpp tab if one is already open
-  const tabs = await chrome.tabs.query({ url });
+  const tabs = await extensionAPI.tabs.query({ url });
   if (tabs.length > 0) {
-    chrome.tabs.update(tabs[0].id, { active: true });
-    chrome.windows.update(tabs[0].windowId, { focused: true });
+    extensionAPI.tabs.update(tabs[0].id, { active: true });
+    extensionAPI.windows.update(tabs[0].windowId, { focused: true });
   } else {
-    chrome.tabs.create({ url });
+    extensionAPI.tabs.create({ url });
   }
 });
 
-chrome.runtime.onInstalled.addListener(({ reason }) => {
+extensionAPI.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') {
     // Open the IDE automatically on first install
-    chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+    extensionAPI.tabs.create({ url: extensionAPI.runtime.getURL('index.html') });
   }
 });

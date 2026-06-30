@@ -43,9 +43,10 @@ npm run build          # production build → dist/
 npm run dev            # development build with watch mode
 ```
 
-### 4 – Load in Chrome
+### 4 – Load in Chrome / Edge / Brave / Chromium
 
-1. Open **chrome://extensions**
+1. Open **chrome://extensions**, **edge://extensions**, **brave://extensions**,
+   or **chromium://extensions**
 2. Enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked** and select the `dist/` folder
 4. Click the browser.cpp icon in the toolbar (or press the extension button)
@@ -196,6 +197,129 @@ the active file. **Compile & Run** runs the actual built artifact (honouring a
 
 ---
 
+## Browser compatibility and releases
+
+Full feature parity is supported for desktop Chrome, Edge, Brave, and Chromium
+when the browser is based on Chromium 105 or newer. Latest stable is recommended
+for release testing.
+
+Full parity requires:
+
+- Manifest V3 extension APIs (`chrome.runtime`, `chrome.tabs`, `chrome.storage`)
+- File System Access APIs (`showOpenFilePicker`, `showDirectoryPicker`,
+  `showSaveFilePicker`)
+- Web Workers and WebAssembly
+- `SharedArrayBuffer` and `Atomics.waitAsync` for interactive stdin
+- Managed browser policies that allow local file read/write prompts
+
+### Release-blocking checks
+
+Run the fast checks before browser-specific smoke tests:
+
+```bash
+npm run lint
+npm run build
+npm run test:e2e
+npm run test:preflight-clang
+```
+
+`test:preflight-clang` requires these files to exist under `dist/clang/`:
+`clang.js`, `clang.wasm`, `lld.js`, `lld.wasm`, and `sysroot.tar`. Run
+`npm run fetch-clang` before browser smoke tests or release packaging.
+
+Run smoke tests for each Chromium-family target:
+
+```bash
+npm run test:browser:chrome
+npm run test:browser:edge
+npm run test:browser:brave
+npm run test:browser:chromium
+```
+
+The smoke runner auto-discovers common browser install paths. Override discovery
+with `CHROME_PATH`, `EDGE_PATH`, `BRAVE_PATH`, `CHROMIUM_PATH`, or a generic
+`BROWSER_PATH`.
+
+If auto-discovery misses a browser, set the path explicitly before running a
+single target:
+
+```bash
+CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:browser:chrome
+EDGE_PATH="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" npm run test:browser:edge
+BRAVE_PATH="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" npm run test:browser:brave
+CHROMIUM_PATH="/Applications/Chromium.app/Contents/MacOS/Chromium" npm run test:browser:chromium
+```
+
+Common binary locations:
+
+- macOS:
+  - Chrome: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+  - Edge: `/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge`
+  - Brave: `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`
+  - Chromium: `/Applications/Chromium.app/Contents/MacOS/Chromium`
+- Linux:
+  - Chrome: `/usr/bin/google-chrome` or `/usr/bin/google-chrome-stable`
+  - Edge: `/usr/bin/microsoft-edge` or `/usr/bin/microsoft-edge-stable`
+  - Brave: `/usr/bin/brave-browser` or `/usr/bin/brave`
+  - Chromium: `/usr/bin/chromium` or `/usr/bin/chromium-browser`
+- Windows:
+  - Chrome: `%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe`
+  - Edge: `%LOCALAPPDATA%\\Microsoft\\Edge\\Application\\msedge.exe`
+  - Brave: `%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`
+  - Chromium: `%LOCALAPPDATA%\\Chromium\\Application\\chrome.exe`
+
+For CI, set the same variables on the job before invoking the smoke script, for
+example:
+
+```bash
+export CHROME_PATH=/path/to/google-chrome
+export EDGE_PATH=/path/to/msedge
+export BRAVE_PATH=/path/to/brave-browser
+export CHROMIUM_PATH=/path/to/chromium
+npm run test:browser
+```
+
+Automated smoke tests validate extension load, required browser APIs, compiler
+asset loading, Monaco rendering, default C++ compile-and-run, and console-error
+absence. Native `showDirectoryPicker()` path selection is not exposed through a
+stable Chromium DevTools automation API, so each release also needs this manual
+check in every target browser:
+
+1. Open a local folder.
+2. Create a new source file.
+3. Save and Save As.
+4. Compile a multi-file project.
+5. Run a program that reads stdin.
+6. Write an output file with `std::ofstream`.
+7. Close and reopen the browser, then restore the previous workspace.
+
+### Store packages
+
+Create store-ready ZIPs from the built `dist/` contents:
+
+```bash
+npm run package:release
+```
+
+This writes:
+
+- `release/browser-cpp-chromium-v<version>.zip` for Chrome Web Store, Brave, and
+  Chromium-compatible distribution
+- `release/browser-cpp-edge-v<version>.zip` for Microsoft Edge Add-ons
+
+Use the same build for every Chromium-family browser unless store validation
+requires a browser-specific manifest or asset change.
+
+Store submission notes should state:
+
+- Minimum browser version: Chromium 105+, latest stable recommended
+- Local file prompts are required for folder read/write
+- Compiler assets are packaged with the extension
+- Programs execute inside the extension's WASI/WebAssembly sandbox
+- No remote code execution is used
+
+---
+
 ## Building Clang WASM from source
 
 For a **custom LLVM version** or offline builds, compile Clang with Emscripten.
@@ -243,8 +367,10 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
 - **Execution time**: Long-running programs may trigger the browser's "unresponsive
   script" dialog.  The compiler runs in a dedicated Web Worker to avoid blocking
   the UI.
-- **Firefox**: Manifest V3 support in Firefox is partial; the extension targets
-  Chromium-based browsers.
+- **Browser scope**: Full parity targets desktop Chrome, Edge, Brave, and
+  Chromium. Firefox and Safari are outside the current release target.
+- **Managed browsers**: Enterprise policies that block File System Access prompts
+  prevent full local workspace read/write support.
 
 ---
 
