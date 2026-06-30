@@ -13,12 +13,15 @@ const timeoutMs = Number(process.env.BROWSER_SMOKE_TIMEOUT_MS || 180_000);
 const BROWSER_CONFIG = {
   chrome: {
     env: 'CHROME_PATH',
-    names: ['google-chrome', 'google-chrome-stable', 'chrome'],
+    names: ['chrome-for-testing', 'google-chrome', 'google-chrome-stable', 'chrome'],
     macPaths: [
+      '/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+      path.join(os.homedir(), 'Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       path.join(os.homedir(), 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
     ],
     winPaths: [
+      'Google/Chrome for Testing/Application/chrome.exe',
       'Google/Chrome/Application/chrome.exe',
     ],
   },
@@ -59,6 +62,10 @@ const BROWSER_CONFIG = {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function chromeBlockedLoadExtension(stderrText = '') {
+  return String(stderrText).includes('--load-extension is not allowed in Google Chrome, ignoring.');
 }
 
 function isExecutable(filePath) {
@@ -114,6 +121,16 @@ function findBrowserExecutable(name) {
   throw new Error(
     `Could not find ${name} executable. Set ${config.env} or BROWSER_PATH to the browser binary.`
   );
+}
+
+function browserFamilyLabel(browserPath) {
+  const value = String(browserPath || '').toLowerCase();
+  if (value.includes('chrome for testing')) return 'chrome-for-testing';
+  if (value.includes('chromium')) return 'chromium';
+  if (value.includes('microsoft edge') || value.includes('msedge')) return 'edge';
+  if (value.includes('brave')) return 'brave';
+  if (value.includes('google chrome')) return 'google-chrome';
+  return 'unknown';
 }
 
 class CDPPipe {
@@ -352,9 +369,63 @@ async function describeTargets(cdp) {
   }
 }
 
-function createChromeStorageStubSource() {
+function createChromeStorageStubSource({ fakeWorker = true, workspaceFiles = {} } = {}) {
+  const workspaceJson = JSON.stringify(workspaceFiles);
   return `(() => {
     const storageData = new Map();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const workspaceBytes = new Map();
+    const workspaceDirs = new Set(['']);
+
+    function normalizePath(value) {
+      return String(value || '')
+        .split('/')
+        .filter((part) => part && part !== '.')
+        .reduce((parts, part) => {
+          if (part === '..') parts.pop();
+          else parts.push(part);
+          return parts;
+        }, [])
+        .join('/');
+    }
+
+    function parentPath(path) {
+      const normalized = normalizePath(path);
+      const idx = normalized.lastIndexOf('/');
+      return idx === -1 ? '' : normalized.slice(0, idx);
+    }
+
+    function ensureDir(path) {
+      let current = '';
+      for (const part of normalizePath(path).split('/')) {
+        if (!part) continue;
+        current = current ? current + '/' + part : part;
+        workspaceDirs.add(current);
+      }
+    }
+
+    function setFileBytes(path, bytes) {
+      const normalized = normalizePath(path);
+      ensureDir(parentPath(normalized));
+      workspaceBytes.set(normalized, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    }
+
+    function bytesFromChunk(chunk) {
+      if (chunk instanceof Uint8Array) return chunk;
+      if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+      if (ArrayBuffer.isView(chunk)) return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      if (typeof chunk === 'string') return encoder.encode(chunk);
+      if (chunk instanceof Blob) {
+        throw new Error('Blob writes are not supported in the browser smoke harness');
+      }
+      return encoder.encode(String(chunk ?? ''));
+    }
+
+    for (const [path, content] of Object.entries(${workspaceJson})) {
+      setFileBytes(path, encoder.encode(String(content)));
+    }
+
     const storageArea = {
       async get(key) {
         if (typeof key === 'string') return { [key]: storageData.get(key) };
@@ -392,83 +463,190 @@ function createChromeStorageStubSource() {
     globalThis.chrome.windows = globalThis.chrome.windows || {};
     globalThis.chrome.action = globalThis.chrome.action || {};
 
-    const OriginalWorker = globalThis.Worker;
-    class FakeCompilerWorker {
-      constructor() {
-        this.onmessage = null;
-        this.onerror = null;
-        this._terminated = false;
-        this._emit({ type: 'compiler-loading', progress: 0 }, 0);
-        this._emit({ type: 'compiler-loading', progress: 10 }, 10);
-        this._emit({ type: 'compiler-loading', progress: 30 }, 20);
-        this._emit({ type: 'compiler-loading', progress: 40 }, 30);
-        this._emit({ type: 'compiler-loading', progress: 100 }, 40);
-        this._emit({ type: 'compiler-ready' }, 50);
-      }
-
-      _emit(data, delayMs = 0) {
-        if (this._terminated) return;
-        setTimeout(() => {
-          if (this._terminated) return;
-          this.onmessage?.({ data });
-        }, delayMs);
-      }
-
-      postMessage(message) {
-        if (this._terminated) return;
-        if (message?.type === 'compile') {
-          this._emit({ type: 'compile-start' });
-          this._emit({
-            type: 'compile-result',
-            success: true,
-            diagnostics: '',
-            outputPath: 'a.out',
-            outputBytes: new Uint8Array([1, 2, 3]),
-            primarySourcePath: message.primarySourcePath || null,
-            diagnosticsByPath: {},
-          }, 50);
-          return;
-        }
-        if (message?.type === 'run') {
-          this._emit({ type: 'run-start' });
-          this._emit({ type: 'stdout', data: 'Hello, World!\\n' }, 50);
-          this._emit({ type: 'run-result', exitCode: 0, vfsChanges: [], vfsDeletes: [] }, 60);
-          return;
-        }
-        if (message?.type === 'status') {
-          this._emit({ type: 'status-reply', state: 'ready' });
-        }
-      }
-
-      terminate() {
-        this._terminated = true;
-      }
-
-      addEventListener(type, listener) {
-        if (type === 'message') this.onmessage = listener;
-      }
-
-      removeEventListener(type, listener) {
-        if (type === 'message' && this.onmessage === listener) this.onmessage = null;
-      }
+    function createFileHandle(path) {
+      const normalized = normalizePath(path);
+      const name = normalized.split('/').pop() || 'file';
+      return {
+        kind: 'file',
+        name,
+        async getFile() {
+          const bytes = workspaceBytes.get(normalized) || new Uint8Array(0);
+          return new File([bytes], name, { lastModified: Date.now() });
+        },
+        async createWritable() {
+          let staged = workspaceBytes.get(normalized) || new Uint8Array(0);
+          return {
+            async write(chunk) {
+              staged = bytesFromChunk(chunk).slice();
+            },
+            async close() {
+              setFileBytes(normalized, staged);
+            },
+          };
+        },
+      };
     }
 
-    const StubWorker = function Worker(url, options) {
-      const urlText = String(url);
-      if (urlText.includes('compiler.worker.js')) {
-        return new FakeCompilerWorker(url, options);
-      }
-      return new OriginalWorker(url, options);
+    function createDirectoryHandle(path = '') {
+      const normalized = normalizePath(path);
+      const name = normalized.split('/').pop() || 'workspace';
+      return {
+        kind: 'directory',
+        name,
+        async getDirectoryHandle(childName, options = {}) {
+          const childPath = normalizePath(normalized ? normalized + '/' + childName : childName);
+          if (!workspaceDirs.has(childPath)) {
+            if (!options.create) {
+              const err = new Error('Directory not found');
+              err.name = 'NotFoundError';
+              throw err;
+            }
+            ensureDir(childPath);
+          }
+          return createDirectoryHandle(childPath);
+        },
+        async getFileHandle(childName, options = {}) {
+          const childPath = normalizePath(normalized ? normalized + '/' + childName : childName);
+          if (!workspaceBytes.has(childPath)) {
+            if (!options.create) {
+              const err = new Error('File not found');
+              err.name = 'NotFoundError';
+              throw err;
+            }
+            setFileBytes(childPath, new Uint8Array(0));
+          }
+          return createFileHandle(childPath);
+        },
+        async removeEntry(childName) {
+          const childPath = normalizePath(normalized ? normalized + '/' + childName : childName);
+          workspaceBytes.delete(childPath);
+          workspaceDirs.delete(childPath);
+        },
+        async *entries() {
+          const seen = new Set();
+          const prefix = normalized ? normalized + '/' : '';
+          const emit = (childName, handle) => {
+            if (seen.has(childName)) return null;
+            seen.add(childName);
+            return [childName, handle];
+          };
+
+          for (const dir of workspaceDirs) {
+            if (!dir || dir === normalized || !dir.startsWith(prefix)) continue;
+            const remainder = dir.slice(prefix.length);
+            if (!remainder || remainder.includes('/')) continue;
+            const item = emit(remainder, createDirectoryHandle(prefix + remainder));
+            if (item) yield item;
+          }
+
+          for (const filePath of workspaceBytes.keys()) {
+            if (!filePath.startsWith(prefix)) continue;
+            const remainder = filePath.slice(prefix.length);
+            if (!remainder || remainder.includes('/')) continue;
+            const item = emit(remainder, createFileHandle(prefix + remainder));
+            if (item) yield item;
+          }
+        },
+      };
+    }
+
+    globalThis.showDirectoryPicker = async () => createDirectoryHandle('');
+    globalThis.showOpenFilePicker = async () => [createFileHandle('main.cpp')];
+    globalThis.showSaveFilePicker = async () => createFileHandle('saved.cpp');
+    globalThis.__browserCppTestFs = {
+      exists(path) {
+        return workspaceBytes.has(normalizePath(path));
+      },
+      readText(path) {
+        const bytes = workspaceBytes.get(normalizePath(path));
+        return bytes ? decoder.decode(bytes) : null;
+      },
+      dump() {
+        return Object.fromEntries(
+          [...workspaceBytes.entries()].map(([path, bytes]) => [path, decoder.decode(bytes)])
+        );
+      },
     };
 
-    try {
-      Object.defineProperty(globalThis, 'Worker', {
-        configurable: true,
-        writable: true,
-        value: StubWorker,
-      });
-    } catch (_) {
-      globalThis.Worker = StubWorker;
+    if (${fakeWorker ? 'true' : 'false'}) {
+      const OriginalWorker = globalThis.Worker;
+      class FakeCompilerWorker {
+        constructor() {
+          this.onmessage = null;
+          this.onerror = null;
+          this._terminated = false;
+          this._emit({ type: 'compiler-loading', progress: 0 }, 0);
+          this._emit({ type: 'compiler-loading', progress: 10 }, 10);
+          this._emit({ type: 'compiler-loading', progress: 30 }, 20);
+          this._emit({ type: 'compiler-loading', progress: 40 }, 30);
+          this._emit({ type: 'compiler-loading', progress: 100 }, 40);
+          this._emit({ type: 'compiler-ready' }, 50);
+        }
+
+        _emit(data, delayMs = 0) {
+          if (this._terminated) return;
+          setTimeout(() => {
+            if (this._terminated) return;
+            this.onmessage?.({ data });
+          }, delayMs);
+        }
+
+        postMessage(message) {
+          if (this._terminated) return;
+          if (message?.type === 'compile') {
+            this._emit({ type: 'compile-start' });
+            this._emit({
+              type: 'compile-result',
+              success: true,
+              diagnostics: '',
+              outputPath: 'a.out',
+              outputBytes: new Uint8Array([1, 2, 3]),
+              primarySourcePath: message.primarySourcePath || null,
+              diagnosticsByPath: {},
+            }, 50);
+            return;
+          }
+          if (message?.type === 'run') {
+            this._emit({ type: 'run-start' });
+            this._emit({ type: 'stdout', data: 'Hello, World!\\n' }, 50);
+            this._emit({ type: 'run-result', exitCode: 0, vfsChanges: [], vfsDeletes: [] }, 60);
+            return;
+          }
+          if (message?.type === 'status') {
+            this._emit({ type: 'status-reply', state: 'ready' });
+          }
+        }
+
+        terminate() {
+          this._terminated = true;
+        }
+
+        addEventListener(type, listener) {
+          if (type === 'message') this.onmessage = listener;
+        }
+
+        removeEventListener(type, listener) {
+          if (type === 'message' && this.onmessage === listener) this.onmessage = null;
+        }
+      }
+
+      const StubWorker = function Worker(url, options) {
+        const urlText = String(url);
+        if (urlText.includes('compiler.worker.js')) {
+          return new FakeCompilerWorker(url, options);
+        }
+        return new OriginalWorker(url, options);
+      };
+
+      try {
+        Object.defineProperty(globalThis, 'Worker', {
+          configurable: true,
+          writable: true,
+          value: StubWorker,
+        });
+      } catch (_) {
+        globalThis.Worker = StubWorker;
+      }
     }
   })();`;
 }
@@ -518,7 +696,7 @@ function startStaticServer(rootDir) {
   });
 }
 
-async function runHostedSmoke(cdp) {
+async function runHostedSmoke(cdp, { realRun = false } = {}) {
   const { server, baseUrl } = await startStaticServer(distDir);
   const pageTarget = await cdp.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await cdp.send('Target.attachToTarget', {
@@ -528,8 +706,26 @@ async function runHostedSmoke(cdp) {
 
   await cdp.send('Page.enable', {}, sessionId);
   await cdp.send('Runtime.enable', {}, sessionId);
+  const runtimeProgram = `#include <fstream>
+#include <iostream>
+
+int main() {
+  std::ofstream out("generated/output.txt");
+  if (!out) {
+    std::cerr << "failed to open output\\n";
+    return 2;
+  }
+  out << "hello from fstream\\n";
+  out.close();
+  std::cout << "wrote generated/output.txt\\n";
+  return 0;
+}
+`;
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-    source: createChromeStorageStubSource(),
+    source: createChromeStorageStubSource({
+      fakeWorker: !realRun,
+      workspaceFiles: realRun ? { 'main.cpp': runtimeProgram } : {},
+    }),
   }, sessionId);
 
   const consoleErrors = [];
@@ -570,16 +766,63 @@ async function runHostedSmoke(cdp) {
   const hasEditor = await evaluate(cdp, sessionId, `!!document.querySelector('.monaco-editor')`);
   assert(hasEditor, 'Monaco editor did not render');
 
-  await evaluate(cdp, sessionId, `(() => {
-    const status = document.getElementById('status-compiler');
-    if (status) status.textContent = 'Compiler ready';
-    const terminal = document.getElementById('terminal-container');
-    if (terminal) terminal.textContent = 'Compilation successful.\\nHello, World!';
-    return true;
-  })()`);
+  if (!realRun) {
+    await evaluate(cdp, sessionId, `(() => {
+      const status = document.getElementById('status-compiler');
+      if (status) status.textContent = 'Compiler ready';
+      const terminal = document.getElementById('terminal-container');
+      if (terminal) terminal.textContent = 'Compilation successful.\\nHello, World!';
+      return true;
+    })()`);
+    server.close();
+    return { sessionId, capabilities };
+  }
+
+  let ready;
+  try {
+    ready = await waitFor(async () => {
+      const text = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
+      return text.includes('Compiler ready') ? text : null;
+    }, 'hosted compiler readiness', 120_000);
+  } catch (err) {
+    const terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    const bodyText = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+    throw new Error(
+      `${err.message}\nHosted console:\n${consoleErrors.join('\n') || '<none>'}\nHosted terminal:\n${terminalText}\nHosted body:\n${bodyText.slice(0, 4000)}`
+    );
+  }
+  assert(ready.includes('Compiler ready'), `Hosted compiler did not become ready. Last status: ${ready}`);
+
+  await evaluate(cdp, sessionId, `document.getElementById('btn-open').click()`);
+  await waitFor(async () => {
+    const body = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+    return body.includes('main.cpp') ? body : null;
+  }, 'hosted workspace open', 30_000);
+
+  await evaluate(cdp, sessionId, `document.getElementById('btn-compile-run').click()`);
+
+  let terminalText;
+  try {
+    terminalText = await waitFor(async () => {
+      const text = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+      return text.includes('Compilation successful.') && text.includes('wrote generated/output.txt') ? text : null;
+    }, 'hosted compile-and-run output', 180_000);
+  } catch (err) {
+    const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
+    const terminal = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    const bodyText = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+    throw new Error(
+      `${err.message}\nHosted status: ${status}\nHosted terminal:\n${terminal}\nHosted body:\n${bodyText.slice(0, 4000)}\nHosted console:\n${consoleErrors.join('\n') || '<none>'}`
+    );
+  }
+
+  const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('generated/output.txt')`);
+  assert(createdFileText === 'hello from fstream\n', `Expected generated/output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
+  assert(!terminalText.includes('Page is not cross-origin isolated'), 'Cross-origin isolation warning is still present in terminal output');
+  assert(consoleErrors.length === 0, `Browser console warnings/errors were reported:\n${consoleErrors.join('\n')}`);
 
   server.close();
-  return { sessionId, capabilities };
+  return { sessionId, capabilities, createdFileText, terminalText };
 }
 
 async function discoverExtensionId(cdp, userDataDir, extensionDir) {
@@ -676,9 +919,19 @@ async function runSmoke(cdp, sessionId) {
     `Missing required browser capabilities on ${capabilities.href}: ${missing.join(', ')}`
   );
 
-  const ready = await waitFor(async () => {
-    return evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
-  }, 'compiler readiness', 120_000);
+  let ready;
+  try {
+    ready = await waitFor(async () => {
+      const text = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
+      return text.includes('Compiler ready') ? text : null;
+    }, 'compiler readiness', 120_000);
+  } catch (err) {
+    const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
+    const terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    throw new Error(
+      `${err.message}\nExtension status: ${status}\nExtension terminal:\n${terminalText}\nConsole errors:\n${consoleErrors.join('\n') || '<none>'}`
+    );
+  }
   assert(ready.includes('Compiler ready'), `Compiler did not become ready. Last status: ${ready}`);
 
   const hasEditor = await evaluate(cdp, sessionId, `!!document.querySelector('.monaco-editor')`);
@@ -686,10 +939,19 @@ async function runSmoke(cdp, sessionId) {
 
   await evaluate(cdp, sessionId, `document.getElementById('btn-compile-run').click()`);
 
-  await waitFor(async () => {
-    const text = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
-    return text.includes('Compilation successful.') && text.includes('Hello, World!');
-  }, 'default C++ compile-and-run output', 120_000);
+  try {
+    await waitFor(async () => {
+      const text = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+      return text.includes('Compilation successful.') && text.includes('Hello, World!') ? text : null;
+    }, 'default C++ compile-and-run output', 120_000);
+  } catch (err) {
+    const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
+    const terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    const bodyText = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+    throw new Error(
+      `${err.message}\nExtension status: ${status}\nExtension terminal:\n${terminalText}\nExtension body:\n${bodyText.slice(0, 4000)}\nConsole errors:\n${consoleErrors.join('\n') || '<none>'}`
+    );
+  }
 
   assert(consoleErrors.length === 0, `Browser console errors were reported:\n${consoleErrors.join('\n')}`);
 
@@ -700,6 +962,7 @@ async function main() {
   assert(fs.existsSync(path.join(distDir, 'manifest.json')), 'dist/manifest.json is missing. Run `npm run build` first.');
 
   const browserPath = findBrowserExecutable(target);
+  const browserFamily = browserFamilyLabel(browserPath);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `browser-cpp-${target}-`));
   const userDataDir = path.join(tempRoot, 'profile');
   const extensionDir = path.join(tempRoot, 'extension');
@@ -726,8 +989,10 @@ async function main() {
   const proc = spawn(browserPath, args, {
     stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
   });
+  let browserStderr = '';
 
   proc.stderr.on('data', (chunk) => {
+    browserStderr += chunk.toString();
     if (process.env.BROWSER_SMOKE_DEBUG === '1') process.stderr.write(chunk);
   });
 
@@ -740,10 +1005,16 @@ async function main() {
       extensionId = await discoverExtensionId(cdp, userDataDir, extensionDir);
     } catch (err) {
       if (target === 'chrome') {
-        const hosted = await runHostedSmoke(cdp);
+        const hosted = await runHostedSmoke(cdp, { realRun: true });
         console.log(`${target} smoke test passed in hosted fallback mode.`);
         console.log(`Browser: ${version.product}`);
+        console.log(`Executable: ${browserPath}`);
         console.log(`User agent: ${hosted.capabilities.userAgent}`);
+        console.log(`Created file: ${JSON.stringify(hosted.createdFileText)}`);
+        if (browserFamily === 'google-chrome' && chromeBlockedLoadExtension(browserStderr)) {
+          console.log('Unpacked extension load skipped: this Google Chrome build ignores --load-extension for sideloaded extensions.');
+          console.log('Use Chromium, Chrome for Testing, Edge, or Brave to validate the actual extension page under CDP.');
+        }
         console.log(`Extension ID: <hosted-fallback>`);
         return;
       } else {
@@ -761,14 +1032,21 @@ async function main() {
 
       console.log(`${target} smoke test passed.`);
       console.log(`Browser: ${version.product}`);
+      console.log(`Executable: ${browserPath}`);
       console.log(`User agent: ${capabilities.userAgent}`);
       console.log(`Extension ID: ${extensionId}`);
     } catch (err) {
       if (target !== 'chrome') throw err;
-      const hosted = await runHostedSmoke(cdp);
+      const hosted = await runHostedSmoke(cdp, { realRun: true });
       console.log(`${target} smoke test passed in hosted fallback mode.`);
       console.log(`Browser: ${version.product}`);
+      console.log(`Executable: ${browserPath}`);
       console.log(`User agent: ${hosted.capabilities.userAgent}`);
+      console.log(`Created file: ${JSON.stringify(hosted.createdFileText)}`);
+      if (browserFamily === 'google-chrome' && chromeBlockedLoadExtension(browserStderr)) {
+        console.log('Unpacked extension load skipped: this Google Chrome build ignores --load-extension for sideloaded extensions.');
+        console.log('Use Chromium, Chrome for Testing, Edge, or Brave to validate the actual extension page under CDP.');
+      }
       console.log(`Extension ID: <hosted-fallback>`);
       return;
     }

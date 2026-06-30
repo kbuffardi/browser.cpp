@@ -512,11 +512,11 @@ function makeFakes() {
     setLanguage() {},
     markDiagnostics() {},
   };
-  const terminalCalls = { refresh: [], setWorkspace: [], compileResults: [], runResults: [], starts: 0, stops: 0 };
+  const terminalCalls = { refresh: [], setWorkspace: [], compileResults: [], runResults: [], info: [], starts: 0, stops: 0 };
   const terminalAPI = {
     clearTerminal() {},
     fitTerminal() {},
-    printInfo() {},
+    printInfo(message) { terminalCalls.info.push(message); },
     startRun() { terminalCalls.starts += 1; },
     stopRun() { terminalCalls.stops += 1; },
     setWorkspace(w) { terminalCalls.setWorkspace.push(w); },
@@ -565,6 +565,7 @@ async function setupToolbar(fsOverrides = {}) {
     },
     writeWorkspaceFile: async (path, bytes) => {
       fsCalls.write.push({ path, bytes });
+      if (fsOverrides.writeWorkspaceFile) return fsOverrides.writeWorkspaceFile(path, bytes);
       return { name: 'p', entries: [{ path, kind: 'file' }] };
     },
     deleteWorkspaceFile: async (path) => {
@@ -941,6 +942,90 @@ test('e2e: runtime vfsChanges are written back and refresh the workspace', async
 
   assert.deepEqual(ctx.fsCalls.write.map((c) => c.path), ['out/log.txt']);
   assert.ok(ctx.terminalCalls.refresh.length >= 1);
+});
+
+test('e2e: runtime-created files appear in the refreshed workspace snapshot', async () => {
+  const createdPath = 'generated/output.txt';
+  const refreshedSnapshot = {
+    name: 'p',
+    entries: [
+      { path: 'generated', kind: 'directory' },
+      { path: createdPath, kind: 'file' },
+    ],
+  };
+  const ctx = await setupToolbar({
+    writeWorkspaceFile: async () => refreshedSnapshot,
+    refreshWorkspaceResult: {
+      snapshot: refreshedSnapshot,
+      added: [
+        { path: 'generated', kind: 'directory' },
+        { path: createdPath, kind: 'file' },
+      ],
+      removed: [],
+      changed: [],
+    },
+  });
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [] }, [], null);
+
+  ctx.worker.onmessage({
+    data: {
+      type: 'run-result',
+      exitCode: 0,
+      vfsChanges: [{ path: createdPath, bytes: new TextEncoder().encode('hi\n') }],
+    },
+  });
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.write.map((c) => c.path), [createdPath]);
+  const latestWorkspace = ctx.terminalCalls.refresh.at(-1);
+  assert.ok(latestWorkspace.entries.some((entry) => entry.path === 'generated' && entry.kind === 'directory'));
+  assert.ok(latestWorkspace.entries.some((entry) => entry.path === createdPath && entry.kind === 'file'));
+});
+
+test('e2e: runtime file writes warn when no writable folder workspace is open', async () => {
+  const ctx = await setupToolbar();
+  ctx.toolbar.resetToNewProject();
+
+  ctx.worker.onmessage({
+    data: {
+      type: 'run-result',
+      exitCode: 0,
+      vfsChanges: [{ path: 'generated/output.txt', bytes: new TextEncoder().encode('hi\n') }],
+    },
+  });
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.write, []);
+  assert.ok(
+    ctx.terminalCalls.info.some((message) => message.includes('Use Open Folder to persist generated files to disk')),
+    'terminal should explain that runtime-created files need a writable folder workspace'
+  );
+});
+
+test('e2e: runtime file writes warn when workspace persistence falls back to memory only', async () => {
+  const ctx = await setupToolbar({
+    writeWorkspaceFile: async (path) => ({
+      name: 'p',
+      entries: [{ path, kind: 'file' }],
+      persisted: false,
+      persistenceReason: 'permission-denied',
+    }),
+  });
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [] }, [], null);
+
+  ctx.worker.onmessage({
+    data: {
+      type: 'run-result',
+      exitCode: 0,
+      vfsChanges: [{ path: 'generated/output.txt', bytes: new TextEncoder().encode('hi\n') }],
+    },
+  });
+  await tick();
+
+  assert.ok(
+    ctx.terminalCalls.info.some((message) => message.includes('no longer has write permission')),
+    'terminal should explain when folder write permission is missing'
+  );
 });
 
 test('e2e: runtime vfsDeletes are deleted from the workspace and refreshed', async () => {
