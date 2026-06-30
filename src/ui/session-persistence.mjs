@@ -1,5 +1,7 @@
 'use strict';
 
+import { getExtensionAPI, getExtensionRuntimeError } from '../extension-api.mjs';
+
 const STORAGE_KEY = 'browser_cpp_session';
 const IDB_NAME = 'browser-cpp-handles';
 const IDB_VERSION = 1;
@@ -7,15 +9,14 @@ const IDB_STORE = 'handles';
 const IDB_KEY = 'workspace-dir';
 
 function getStorageArea() {
-  return typeof chrome !== 'undefined' && chrome.storage?.local
-    ? chrome.storage.local
+  const api = getExtensionAPI();
+  return api?.storage?.local
+    ? api.storage.local
     : null;
 }
 
 function getRuntimeError() {
-  return typeof chrome !== 'undefined' && chrome.runtime?.lastError
-    ? chrome.runtime.lastError
-    : null;
+  return getExtensionRuntimeError();
 }
 
 function getPromiseOrNull(value) {

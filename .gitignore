@@ -4,6 +4,7 @@ dist/
 !dist/clang/
 dist/clang/*.wasm
 dist/clang/*.js
+release/
 *.log
 npm-debug.log*
 .DS_Store
