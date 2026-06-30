@@ -21,6 +21,12 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
+  "cross_origin_opener_policy": {
+    "value": "same-origin"
+  },
+  "cross_origin_embedder_policy": {
+    "value": "require-corp"
+  },
   "permissions": [
     "storage",
     "unlimitedStorage"

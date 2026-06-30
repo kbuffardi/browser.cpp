@@ -297,11 +297,13 @@ async function updateFileFingerprint(key, fileHandle) {
 /**
  * Write `data` to `key` in the opened folder, creating any missing parent
  * directories, and update the in-memory index. Returns the file handle when the
- * on-disk write succeeded, otherwise null (index is still updated in-memory).
+ * on-disk write succeeded plus persistence metadata. When persistence fails we
+ * still update the in-memory workspace index so the UI can surface generated
+ * files and explain why they were not written to disk.
  *
  * @param {string} key – normalised workspace-relative path
  * @param {Uint8Array} data
- * @returns {Promise<FileSystemFileHandle|null>}
+ * @returns {Promise<{ fileHandle: FileSystemFileHandle|null, persisted: boolean, persistenceReason: string|null }>}
  */
 async function writeAndIndex(key, data) {
   // Prefer the stored handle if we already have one.
@@ -313,7 +315,7 @@ async function writeAndIndex(key, data) {
       await writable.close();
       indexWorkspaceFile(key, item.handle);
       await updateFileFingerprint(key, item.handle);
-      return item.handle;
+      return { fileHandle: item.handle, persisted: true, persistenceReason: null };
     } catch (err) {
       console.warn('[browser.cpp] Could not write via stored handle, retrying via directory:', key, err);
     }
@@ -324,7 +326,7 @@ async function writeAndIndex(key, data) {
     // Fallback (webkitdirectory) workspaces cannot write to disk, but the
     // Explorer index should still reflect the new file.
     indexWorkspaceFile(key, null);
-    return null;
+    return { fileHandle: null, persisted: false, persistenceReason: 'no-directory-handle' };
   }
 
   const parts = key.split('/');
@@ -335,16 +337,26 @@ async function writeAndIndex(key, data) {
     if (!part) continue;
     try {
       dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
-    } catch (_) {
-      return null; // Cannot create directory (e.g. permission denied)
+    } catch (err) {
+      indexWorkspaceFile(key, null);
+      return {
+        fileHandle: null,
+        persisted: false,
+        persistenceReason: err?.name === 'NotAllowedError' ? 'permission-denied' : 'directory-create-failed',
+      };
     }
   }
 
   let fileHandle;
   try {
     fileHandle = await dirHandle.getFileHandle(filename, { create: true });
-  } catch (_) {
-    return null;
+  } catch (err) {
+    indexWorkspaceFile(key, null);
+    return {
+      fileHandle: null,
+      persisted: false,
+      persistenceReason: err?.name === 'NotAllowedError' ? 'permission-denied' : 'file-create-failed',
+    };
   }
 
   try {
@@ -353,10 +365,15 @@ async function writeAndIndex(key, data) {
     await writable.close();
     indexWorkspaceFile(key, fileHandle);
     await updateFileFingerprint(key, fileHandle);
-    return fileHandle;
-  } catch (_) {
+    return { fileHandle, persisted: true, persistenceReason: null };
+  } catch (err) {
     // Write permission denied – changes remain in-memory only.
-    return null;
+    indexWorkspaceFile(key, null);
+    return {
+      fileHandle: null,
+      persisted: false,
+      persistenceReason: err?.name === 'NotAllowedError' ? 'permission-denied' : 'disk-write-failed',
+    };
   }
 }
 
@@ -380,8 +397,12 @@ export async function writeWorkspaceFile(path, content) {
     ? content
     : new TextEncoder().encode(content);
 
-  await writeAndIndex(key, data);
-  return getWorkspaceSnapshot();
+  const writeResult = await writeAndIndex(key, data);
+  return {
+    ...getWorkspaceSnapshot(),
+    persisted: writeResult.persisted,
+    persistenceReason: writeResult.persistenceReason,
+  };
 }
 
 /**
