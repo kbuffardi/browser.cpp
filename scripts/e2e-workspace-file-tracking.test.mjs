@@ -261,6 +261,8 @@ test('e2e: writeWorkspaceFile materialises a compile artifact and returns the sn
 
   const snapshot = await fs.writeWorkspaceFile('a.out', new Uint8Array([0, 1, 2]));
   assert.ok(snapshot.entries.some((e) => e.path === 'a.out' && e.kind === 'file'));
+  assert.equal(snapshot.persisted, true);
+  assert.equal(snapshot.persistenceReason, null);
   assert.ok(root.children.get('a.out') instanceof FakeFileHandle);
 
   // Repeated builds overwrite cleanly without duplicating Explorer entries.
@@ -284,6 +286,27 @@ test('e2e: writeWorkspaceFile syncs nested runtime fstream output into the index
 test('e2e: writeWorkspaceFile is a no-op with no workspace open (no phantom files)', async () => {
   const fs = await importFreshFilesystem();
   assert.equal(await fs.writeWorkspaceFile('a.out', new Uint8Array([1])), null);
+});
+
+test('e2e: writeWorkspaceFile reports memory-only fallback when disk persistence is denied', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.getFileHandle = async (name, { create = false } = {}) => {
+    if (!create) { const err = new Error('NotFound'); err.name = 'NotFoundError'; throw err; }
+    const deniedFile = new FakeFileHandle(name);
+    deniedFile.createWritable = async () => {
+      const err = new Error('Denied');
+      err.name = 'NotAllowedError';
+      throw err;
+    };
+    return deniedFile;
+  };
+  await fs.openFolderFromHandle(root);
+
+  const snapshot = await fs.writeWorkspaceFile('generated.txt', 'runtime output\n');
+  assert.ok(snapshot.entries.some((e) => e.path === 'generated.txt' && e.kind === 'file'));
+  assert.equal(snapshot.persisted, false);
+  assert.equal(snapshot.persistenceReason, 'permission-denied');
 });
 
 test('e2e: refreshWorkspace notices files created directly in the opened folder', async () => {
