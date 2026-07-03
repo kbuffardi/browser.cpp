@@ -172,6 +172,7 @@ async function handleWorkerMessage(data) {
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       setButtonsEnabled(true);
       _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
+      _terminalAPI.showInitialPrompt?.();
       break;
 
     case 'compiler-error':
@@ -181,6 +182,7 @@ async function handleWorkerMessage(data) {
         `⚠ Compiler not available:\n${data.message}\n\n` +
         'Run:  npm run fetch-clang  then reload the extension.'
       );
+      _terminalAPI.showInitialPrompt?.();
       break;
 
     case 'compile-start':
