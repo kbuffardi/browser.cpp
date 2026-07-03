@@ -5,7 +5,10 @@ import {
   __getTerminalStateForTesting,
   __handleTerminalKeyForTesting,
   __setTerminalTestHarness,
+  clearTerminal,
   onRunResult,
+  printInfo,
+  showInitialPrompt,
   startRun,
   stopRun,
 } from '../src/ui/terminal.js';
@@ -39,6 +42,42 @@ function ctrlCEvent() {
     preventDefault() {},
   };
 }
+
+test('e2e: compiler ready status prints before the first terminal prompt', () => {
+  const ctx = setupTerminalHarness();
+  const status = 'Clang WASM compiler loaded. Ready to compile C++20.';
+
+  printInfo(status);
+  showInitialPrompt();
+
+  const output = ctx.writes.join('');
+  assert.ok(output.includes(`${status}\x1b[0m\r\n`));
+  assert.ok(output.includes('browser.cpp'));
+  assert.ok(output.indexOf(status) < output.indexOf('browser.cpp'));
+  assert.ok(!output.includes(`browser.cpp:~$ ${status}`));
+});
+
+test('e2e: initial terminal prompt is only written once', () => {
+  const ctx = setupTerminalHarness();
+
+  showInitialPrompt();
+  showInitialPrompt();
+
+  const output = ctx.writes.join('');
+  assert.equal(output.match(/browser\.cpp/g)?.length, 1);
+});
+
+test('e2e: clearing during startup does not reveal the initial prompt early', () => {
+  const ctx = setupTerminalHarness();
+
+  clearTerminal();
+  printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
+  showInitialPrompt();
+
+  const output = ctx.writes.join('');
+  assert.equal(output.match(/browser\.cpp/g)?.length, 1);
+  assert.ok(output.indexOf('Clang WASM compiler loaded') < output.indexOf('browser.cpp'));
+});
 
 test('e2e: Ctrl+C while running stops the program once and restores the prompt', () => {
   const ctx = setupTerminalHarness();

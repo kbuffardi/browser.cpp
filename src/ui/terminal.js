@@ -95,6 +95,7 @@ let workspaceFiles = new Set();
 let workspaceCwd = '/';
 let workspaceGit = { isRepo: false, branch: null, remotes: [] };
 let _readWorkspaceFile = null;
+let initialPromptShown = false;
 
 // ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
 
@@ -211,6 +212,8 @@ export function createTerminal(container, { onCompile, onRun, onStopRun, onRunSt
   _onRunStateChange = onRunStateChange || null;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile || null;
+  initialPromptShown = false;
+  busy = true;
 
   term = new Terminal({
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
@@ -255,7 +258,6 @@ export function createTerminal(container, { onCompile, onRun, onStopRun, onRunSt
     `${C.cyan}${C.bold}browser.cpp${C.reset} – C++20 WASM terminal${CRLF}` +
     `${C.dim}Type ${C.reset}${C.bold}help${C.reset}${C.dim} for available commands.${C.reset}${CRLF}${CRLF}`
   );
-  writePrompt();
 
   term.onKey(handleKey);
 
@@ -270,6 +272,15 @@ export function fitTerminal() {
 /** Clear the terminal screen. */
 export function clearTerminal() {
   term?.clear();
+  if (!initialPromptShown) return;
+  writePrompt();
+}
+
+/** Write the first shell prompt after compiler startup has reached a terminal state. */
+export function showInitialPrompt() {
+  if (initialPromptShown) return;
+  initialPromptShown = true;
+  busy = false;
   writePrompt();
 }
 
@@ -904,6 +915,7 @@ export function __setTerminalTestHarness({
   busy = false;
   running = false;
   runDone = null;
+  initialPromptShown = false;
   _clearSAB();
 }
 
