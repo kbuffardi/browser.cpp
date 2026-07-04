@@ -91,3 +91,48 @@ test('e2e: wasi shim creates and persists a new file opened for output', () => {
   assert.equal(changes[0].path, 'created.txt');
   assert.equal(new TextDecoder().decode(changes[0].bytes), 'new data');
 });
+
+test('e2e: wasi shim creates a missing file opened with write rights', () => {
+  const { runtime } = makeRuntime();
+  const memory = runtime.getMemoryForTesting();
+  runtime.initRunVfs([]);
+
+  const pathPtr = 16;
+  const openedFdPtr = 64;
+  const iovsPtr = 80;
+  const dataPtr = 128;
+  const pathLen = writeString(memory, pathPtr, 'output.txt');
+
+  const RIGHTS_FD_WRITE = 1n << 6n;
+  const openResult = runtime.wasi.path_open(3, 0, pathPtr, pathLen, 0, RIGHTS_FD_WRITE, 0n, 0, openedFdPtr);
+  assert.equal(openResult, 0);
+
+  const fd = new DataView(memory.buffer).getUint32(openedFdPtr, true);
+  const outputLen = writeString(memory, dataPtr, '42\n');
+  const dv = new DataView(memory.buffer);
+  dv.setUint32(iovsPtr, dataPtr, true);
+  dv.setUint32(iovsPtr + 4, outputLen, true);
+
+  assert.equal(runtime.wasi.fd_write(fd, iovsPtr, 1, openedFdPtr), 0);
+  assert.equal(runtime.wasi.fd_close(fd), 0);
+
+  const changes = runtime.getDirtyVfsFiles();
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].path, 'output.txt');
+  assert.equal(new TextDecoder().decode(changes[0].bytes), '42\n');
+});
+
+test('e2e: wasi shim does not create a missing read-only file', () => {
+  const { runtime } = makeRuntime();
+  const memory = runtime.getMemoryForTesting();
+  runtime.initRunVfs([]);
+
+  const pathPtr = 16;
+  const openedFdPtr = 64;
+  const pathLen = writeString(memory, pathPtr, 'missing.txt');
+
+  const RIGHTS_FD_READ = 1n << 1n;
+  const openResult = runtime.wasi.path_open(3, 0, pathPtr, pathLen, 0, RIGHTS_FD_READ, 0n, 0, openedFdPtr);
+  assert.equal(openResult, 44);
+  assert.deepEqual(runtime.getDirtyVfsFiles(), []);
+});
