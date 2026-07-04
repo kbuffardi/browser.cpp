@@ -623,6 +623,13 @@ function inlineInput(document) {
   return row ? row.children.find((c) => c.tagName === 'INPUT') : null;
 }
 
+function renderedTreePaths(document) {
+  return document.getElementById('file-tree')
+    ?.querySelectorAll('li')
+    .map((item) => item.dataset.path)
+    .filter(Boolean) ?? [];
+}
+
 function shortcutEvent(key, { metaKey = false, ctrlKey = false, shiftKey = false } = {}) {
   let prevented = false;
   return {
@@ -1003,6 +1010,7 @@ test('e2e: runtime-created files appear in the refreshed workspace snapshot', as
   const latestWorkspace = ctx.terminalCalls.refresh.at(-1);
   assert.ok(latestWorkspace.entries.some((entry) => entry.path === 'generated' && entry.kind === 'directory'));
   assert.ok(latestWorkspace.entries.some((entry) => entry.path === createdPath && entry.kind === 'file'));
+  assert.deepEqual(renderedTreePaths(ctx.document), ['generated', createdPath]);
 });
 
 test('e2e: runtime file writes warn when no writable folder workspace is open', async () => {
