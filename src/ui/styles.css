@@ -387,6 +387,8 @@ select:focus {
 }
 
 .terminal-stop-btn {
+  display: inline-flex;
+  align-items: center;
   gap: 3px;
   padding: 1px 6px;
   border: 1px solid var(--red);
@@ -398,6 +400,13 @@ select:focus {
   letter-spacing: 0;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.terminal-stop-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  display: block;
 }
 
 .terminal-stop-btn:hover:not(:disabled) {
