@@ -1,11 +1,13 @@
-name: CI
+name: Release artifacts
 
 on:
-  pull_request:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 jobs:
-  build-and-lint:
+  build-release-artifacts:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,6 +25,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Clean release workspace
+        run: npm run release:clean
+
+      - name: Fetch Clang artifacts
+        run: npm run fetch-clang
+
       - name: Run linter
         run: npm run lint
 
@@ -32,5 +40,14 @@ jobs:
       - name: Verify release version sync
         run: npm run release:check-version
 
-      - name: Run end-to-end session tests
+      - name: Run end-to-end tests
         run: npm run test:e2e
+
+      - name: Package release artifacts
+        run: npm run package:release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-cpp-release-${{ github.ref_name }}
+          path: release/*
