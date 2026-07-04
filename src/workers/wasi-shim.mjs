@@ -333,7 +333,7 @@ export function createWasiRuntime({ sharedBuffer, onStdout, onStderr }) {
     },
 
     path_open(dirFd, _dirflags, pathPtr, pathLen, oflags,
-      _fsRightsBase, _fsRightsInheriting, fdflags, openedFdPtr) {
+      fsRightsBase, _fsRightsInheriting, fdflags, openedFdPtr) {
       if (dirFd !== VFS_PREOPEN_FD && !runFds.has(dirFd)) return WASI_ERRNO_BADF;
 
       const rawPath = new TextDecoder().decode(u8().subarray(pathPtr, pathPtr + pathLen));
@@ -342,17 +342,19 @@ export function createWasiRuntime({ sharedBuffer, onStdout, onStderr }) {
       const OFLAGS_CREAT = 0x0001;
       const OFLAGS_EXCL = 0x0004;
       const OFLAGS_TRUNC = 0x0008;
+      const RIGHTS_FD_WRITE = 1n << 6n;
 
       const creat = !!(oflags & OFLAGS_CREAT);
       const excl = !!(oflags & OFLAGS_EXCL);
       const trunc = !!(oflags & OFLAGS_TRUNC);
+      const wantsWrite = (BigInt(fsRightsBase) & RIGHTS_FD_WRITE) !== 0n;
 
       if (excl && runVfs.has(path)) return WASI_ERRNO_EXIST;
 
       let initialData;
       if (runVfs.has(path)) {
         initialData = trunc ? new Uint8Array(0) : new Uint8Array(runVfs.get(path));
-      } else if (creat) {
+      } else if (creat || wantsWrite) {
         initialData = new Uint8Array(0);
         runVfsDeletes.delete(path);
       } else {
@@ -361,7 +363,7 @@ export function createWasiRuntime({ sharedBuffer, onStdout, onStderr }) {
 
       const newFd = runNextFd++;
       const file = createWritableFile(path, initialData, Number(fdflags));
-      file.created = creat && !runVfs.has(path);
+      file.created = (creat || wantsWrite) && !runVfs.has(path);
       runFds.set(newFd, file);
       view().setUint32(openedFdPtr, newFd, true);
       return WASI_ERRNO_SUCCESS;

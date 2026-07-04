@@ -710,14 +710,15 @@ async function runHostedSmoke(cdp, { realRun = false } = {}) {
 #include <iostream>
 
 int main() {
-  std::ofstream out("generated/output.txt");
+  std::fstream out;
+  out.open("output.txt");
   if (!out) {
     std::cerr << "failed to open output\\n";
     return 2;
   }
   out << "hello from fstream\\n";
   out.close();
-  std::cout << "wrote generated/output.txt\\n";
+  std::cout << "wrote output.txt\\n";
   return 0;
 }
 `;
@@ -804,7 +805,7 @@ int main() {
   let terminalText = '';
   try {
     await waitFor(async () => {
-      return evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.exists('generated/output.txt')`);
+      return evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.exists('output.txt')`);
     }, 'hosted runtime-created file', 180_000);
     terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
   } catch (err) {
@@ -816,17 +817,17 @@ int main() {
     );
   }
 
-  const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('generated/output.txt')`);
-  assert(createdFileText === 'hello from fstream\n', `Expected generated/output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
+  const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('output.txt')`);
+  assert(createdFileText === 'hello from fstream\n', `Expected output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
 
   const explorerPath = await waitFor(async () => {
     return evaluate(
       cdp,
       sessionId,
-      `document.querySelector('#file-tree [data-path="generated/output.txt"]')?.dataset.path || null`
+      `document.querySelector('#file-tree [data-path="output.txt"]')?.dataset.path || null`
     );
   }, 'hosted Explorer generated output entry', 30_000);
-  assert(explorerPath === 'generated/output.txt', `Expected Explorer to show generated/output.txt, got: ${JSON.stringify(explorerPath)}`);
+  assert(explorerPath === 'output.txt', `Expected Explorer to show output.txt, got: ${JSON.stringify(explorerPath)}`);
 
   assert(!terminalText.includes('Page is not cross-origin isolated'), 'Cross-origin isolation warning is still present in terminal output');
   assert(consoleErrors.length === 0, `Browser console warnings/errors were reported:\n${consoleErrors.join('\n')}`);
