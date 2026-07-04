@@ -801,12 +801,12 @@ int main() {
 
   await evaluate(cdp, sessionId, `document.getElementById('btn-compile-run').click()`);
 
-  let terminalText;
+  let terminalText = '';
   try {
-    terminalText = await waitFor(async () => {
-      const text = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
-      return text.includes('Compilation successful.') && text.includes('wrote generated/output.txt') ? text : null;
-    }, 'hosted compile-and-run output', 180_000);
+    await waitFor(async () => {
+      return evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.exists('generated/output.txt')`);
+    }, 'hosted runtime-created file', 180_000);
+    terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
   } catch (err) {
     const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
     const terminal = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
@@ -818,6 +818,16 @@ int main() {
 
   const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('generated/output.txt')`);
   assert(createdFileText === 'hello from fstream\n', `Expected generated/output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
+
+  const explorerPath = await waitFor(async () => {
+    return evaluate(
+      cdp,
+      sessionId,
+      `document.querySelector('#file-tree [data-path="generated/output.txt"]')?.dataset.path || null`
+    );
+  }, 'hosted Explorer generated output entry', 30_000);
+  assert(explorerPath === 'generated/output.txt', `Expected Explorer to show generated/output.txt, got: ${JSON.stringify(explorerPath)}`);
+
   assert(!terminalText.includes('Page is not cross-origin isolated'), 'Cross-origin isolation warning is still present in terminal output');
   assert(consoleErrors.length === 0, `Browser console warnings/errors were reported:\n${consoleErrors.join('\n')}`);
 
