@@ -217,10 +217,13 @@ Full parity requires:
 Run the fast checks before browser-specific smoke tests:
 
 ```bash
+npm run release:clean
+npm run fetch-clang
 npm run lint
 npm run build
 npm run test:e2e
 npm run test:preflight-clang
+npm run release:check-version
 ```
 
 `test:preflight-clang` requires these files to exist under `dist/clang/`:
@@ -293,9 +296,9 @@ check in every target browser:
 6. Write an output file with `std::ofstream`.
 7. Close and reopen the browser, then restore the previous workspace.
 
-### Store packages
+### Release packages
 
-Create store-ready ZIPs from the built `dist/` contents:
+Create browser-labeled release ZIPs from the built `dist/` contents:
 
 ```bash
 npm run package:release
@@ -303,12 +306,15 @@ npm run package:release
 
 This writes:
 
-- `release/browser-cpp-chromium-v<version>.zip` for Chrome Web Store, Brave, and
-  Chromium-compatible distribution
+- `release/browser-cpp-chrome-v<version>.zip` for the Chrome Web Store listing
 - `release/browser-cpp-edge-v<version>.zip` for Microsoft Edge Add-ons
+- `release/browser-cpp-brave-v<version>.zip` for Brave validation/distribution
+- `release/browser-cpp-chromium-v<version>.zip` for Chromium/GitHub distribution
+- `release/SHA256SUMS-v<version>.txt`
+- `release/release-manifest-v<version>.json`
 
-Use the same build for every Chromium-family browser unless store validation
-requires a browser-specific manifest or asset change.
+All four ZIPs currently package the same MV3 payload; the browser-specific names
+exist to keep operator workflows and upload steps explicit.
 
 Store submission notes should state:
 
@@ -317,6 +323,90 @@ Store submission notes should state:
 - Compiler assets are packaged with the extension
 - Programs execute inside the extension's WASI/WebAssembly sandbox
 - No remote code execution is used
+
+### Release workflow
+
+Use `.github/workflows/release.yml` to build a tagged or manually triggered
+release candidate in GitHub Actions. The workflow:
+
+1. Cleans `dist/` and `release/`
+2. Fetches the Clang toolchain
+3. Runs lint, build, version-sync, and E2E checks
+4. Produces the browser-labeled ZIPs plus checksums and release metadata
+5. Uploads `release/*` as workflow artifacts for manual distribution
+
+The workflow does **not** publish directly to browser stores. Store publication
+and Chromium distribution remain human-owned steps.
+
+### Human-owned deployment instructions
+
+These steps happen after the automated release workflow or local release commands
+have produced a validated `release/` directory.
+
+#### Chrome Web Store
+
+1. Verify you still have access to the existing Chrome Web Store item for
+   browser.cpp.
+2. Upload `release/browser-cpp-chrome-v<version>.zip`.
+3. Update listing copy, screenshots, privacy details, and reviewer notes if the
+   release changes user-visible behavior, permissions, or file-access guidance.
+4. Confirm the listing still describes the extension as a local-only WASI/WebAssembly
+   compiler with user-approved file access prompts.
+5. Submit the draft, monitor review, and address any reviewer questions.
+6. After publication, install/update from the public listing and verify the
+   release in Chrome.
+
+#### Microsoft Edge Add-ons
+
+1. Verify the Microsoft Partner Center account is active, or create it before
+   the first Edge release.
+2. Create the Edge Add-ons listing if one does not exist yet.
+3. Upload `release/browser-cpp-edge-v<version>.zip`.
+4. Complete the store listing fields, availability/market settings, privacy
+   links, and any certification notes requested by Partner Center.
+5. Submit for certification and respond to reviewer feedback.
+6. After publication, install/update from the Edge Add-ons listing and verify
+   the release in Edge.
+
+#### Brave
+
+1. Run `npm run test:browser:brave`.
+2. Load the validated release in Brave and complete the manual QA checklist
+   below.
+3. Install the published Chrome Web Store listing in Brave and verify the
+   end-user install/update flow.
+4. If Brave-specific notes are needed for users or reviewers, add them to the
+   project documentation before announcing the release.
+
+Brave does not use a separate store submission flow here; it rides on Chrome Web
+Store compatibility plus Brave-specific validation.
+
+#### Chromium
+
+1. Create a Git tag for the release version if you have not already.
+2. Create a GitHub Release for that tag.
+3. Attach `release/browser-cpp-chromium-v<version>.zip`,
+   `release/SHA256SUMS-v<version>.txt`, and
+   `release/release-manifest-v<version>.json`.
+4. Publish manual installation instructions for Chromium users, including that
+   the extension is loaded outside a browser store.
+5. Verify the packaged artifact can be loaded in Chromium and passes the manual
+   QA checklist below.
+
+There is no official Chromium extension store in this workflow; Chromium is a
+manual/GitHub-distributed channel.
+
+### Manual release QA checklist
+
+Perform these checks in Chrome, Edge, Brave, and Chromium before publishing:
+
+1. Open a local folder.
+2. Create a new source file.
+3. Save and Save As.
+4. Compile a multi-file project.
+5. Run a program that reads stdin.
+6. Write an output file with `std::ofstream`.
+7. Close and reopen the browser, then restore the previous workspace.
 
 ---
 

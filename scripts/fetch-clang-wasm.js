@@ -190,7 +190,7 @@ function patchJsFile(dest, globalName) {
   }
 }
 
-(async () => {
+async function main() {
   console.log(`Downloading Clang WASM binaries to dist/clang/ …\n`);
   for (const entry of FILES) {
     const { name, isWasm, globalName } = entry;
@@ -218,11 +218,22 @@ function patchJsFile(dest, globalName) {
     }
   }
   console.log('\nDone. You can now run `npm run build` to bundle the extension.');
-})().catch((err) => {
-  console.error('\nError:', err.message);
-  console.error(
-    '\nIf the URL is no longer valid, build your own Clang WASM binary.\n' +
-    'See README § "Building Clang WASM from source".'
-  );
-  process.exit(1);
-});
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('\nError:', err.message);
+    console.error(
+      '\nIf the URL is no longer valid, build your own Clang WASM binary.\n' +
+      'See README § "Building Clang WASM from source".'
+    );
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  BASE_URL,
+  FILES,
+  OUT_DIR,
+  main,
+};
