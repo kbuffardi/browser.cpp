@@ -1,6 +1,6 @@
 {
   "name": "browser.cpp",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "In-browser C++20 IDE with WASM Clang toolchain",
   "private": true,
   "scripts": {
@@ -16,6 +16,7 @@
     "test:browser": "npm run test:browser:chrome && npm run test:browser:edge && npm run test:browser:brave && npm run test:browser:chromium",
     "release:clean": "node scripts/clean-release-workspace.js",
     "release:check-version": "node scripts/check-release-version-sync.js",
+    "release:detect-version-change": "node scripts/detect-manifest-version-change.js",
     "package:release": "npm run test:preflight-clang && npm run release:check-version && node scripts/package-extension-release.js",
     "dev": "webpack --mode development --watch",
     "fetch-clang": "node scripts/fetch-clang-wasm.js"

@@ -239,6 +239,12 @@ npm run test:browser:brave
 npm run test:browser:chromium
 ```
 
+For release candidates triggered by a `manifest.json` version bump, GitHub Actions
+uploads browser-labeled release artifacts for same-repo pull requests only. The
+release workflow uses `manifest.json` as the version source of truth and expects
+`package.json` to stay in sync with that value. See `docs/release-playbook.md`
+for the full release flow and the remaining human-owned publish steps.
+
 The smoke runner auto-discovers common browser install paths. Override discovery
 with `CHROME_PATH`, `EDGE_PATH`, `BRAVE_PATH`, `CHROMIUM_PATH`, or a generic
 `BROWSER_PATH`.

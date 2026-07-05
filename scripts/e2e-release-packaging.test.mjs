@@ -13,6 +13,9 @@ const {
   TARGETS,
   createReleaseArtifacts,
 } = require('./package-extension-release.js');
+const {
+  detectManifestVersionChange,
+} = require('./detect-manifest-version-change.js');
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -40,6 +43,13 @@ function makeRepoFixture() {
   fs.mkdirSync(path.join(repoRoot, 'dist', 'icons'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'dist', 'icons', 'icon16.png'), 'icon', 'utf8');
   return repoRoot;
+}
+
+function initGitRepo(repoRoot) {
+  const { execFileSync } = require('node:child_process');
+  execFileSync('git', ['init'], { cwd: repoRoot });
+  execFileSync('git', ['config', 'user.email', 'codex@example.com'], { cwd: repoRoot });
+  execFileSync('git', ['config', 'user.name', 'Codex'], { cwd: repoRoot });
 }
 
 test('e2e: release version sync fails on source manifest mismatch', () => {
@@ -108,4 +118,39 @@ test('e2e: release packaging refuses mismatched built manifest versions', () => 
     () => createReleaseArtifacts({ repoRoot }),
     /dist\/manifest\.json version \(2\.0\.0\) does not match package\.json version \(1\.2\.3\)/
   );
+});
+
+test('e2e: manifest version change detection reports same-repo version bumps', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-cpp-version-diff-'));
+  initGitRepo(repoRoot);
+  writeJson(path.join(repoRoot, 'manifest.json'), {
+    manifest_version: 3,
+    name: 'browser.cpp',
+    version: '0.1.0',
+  });
+  writeJson(path.join(repoRoot, 'package.json'), {
+    name: 'browser.cpp',
+    version: '0.1.0',
+  });
+  const { execFileSync } = require('node:child_process');
+  execFileSync('git', ['add', 'manifest.json', 'package.json'], { cwd: repoRoot });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: repoRoot });
+
+  writeJson(path.join(repoRoot, 'manifest.json'), {
+    manifest_version: 3,
+    name: 'browser.cpp',
+    version: '0.2.1',
+  });
+  execFileSync('git', ['add', 'manifest.json'], { cwd: repoRoot });
+  execFileSync('git', ['commit', '-m', 'bump manifest'], { cwd: repoRoot });
+
+  const baseRef = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim();
+  const result = detectManifestVersionChange({ repoRoot, baseRef, headRef: 'HEAD' });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.baseVersion, '0.1.0');
+  assert.equal(result.headVersion, '0.2.1');
 });
