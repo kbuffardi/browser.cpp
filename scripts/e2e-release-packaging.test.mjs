@@ -7,8 +7,15 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
+const { readProjectVersion } = require('./project-version.js');
+const { synchronizeVersionFromManifest } = require('./sync-version-from-manifest.js');
 const { validateReleaseVersionSync } = require('./check-release-version-sync.js');
 const { cleanReleaseWorkspace } = require('./clean-release-workspace.js');
+const {
+  getPublishableReleaseTargets,
+  getReleaseTarget,
+  getReleaseTargets,
+} = require('./release-targets.js');
 const {
   TARGETS,
   createReleaseArtifacts,
@@ -27,6 +34,17 @@ function makeRepoFixture() {
   writeJson(path.join(repoRoot, 'package.json'), {
     name: 'browser.cpp',
     version: '1.2.3',
+  });
+  writeJson(path.join(repoRoot, 'package-lock.json'), {
+    name: 'browser.cpp',
+    version: '1.2.3',
+    lockfileVersion: 3,
+    packages: {
+      '': {
+        name: 'browser.cpp',
+        version: '1.2.3',
+      },
+    },
   });
   writeJson(path.join(repoRoot, 'manifest.json'), {
     manifest_version: 3,
@@ -62,8 +80,64 @@ test('e2e: release version sync fails on source manifest mismatch', () => {
 
   assert.throws(
     () => validateReleaseVersionSync({ repoRoot }),
-    /package\.json version \(1\.2\.3\) does not match manifest\.json version \(9\.9\.9\)/
+    /manifest\.json version \(9\.9\.9\) does not match package\.json version \(1\.2\.3\)/
   );
+});
+
+test('e2e: release version sync fails on package-lock mismatch', () => {
+  const repoRoot = makeRepoFixture();
+  writeJson(path.join(repoRoot, 'package-lock.json'), {
+    name: 'browser.cpp',
+    version: '3.0.0',
+    lockfileVersion: 3,
+    packages: {
+      '': {
+        name: 'browser.cpp',
+        version: '3.0.0',
+      },
+    },
+  });
+
+  assert.throws(
+    () => validateReleaseVersionSync({ repoRoot }),
+    /manifest\.json version \(1\.2\.3\) does not match package-lock\.json version \(3\.0\.0\)/
+  );
+});
+
+test('e2e: sync-version-from-manifest updates package and lock versions', () => {
+  const repoRoot = makeRepoFixture();
+  writeJson(path.join(repoRoot, 'manifest.json'), {
+    manifest_version: 3,
+    name: 'browser.cpp',
+    version: '4.5.6',
+  });
+
+  const result = synchronizeVersionFromManifest({ repoRoot });
+  assert.equal(result.version, '4.5.6');
+  assert.ok(result.changes.length >= 2);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package-lock.json'), 'utf8'));
+
+  assert.equal(pkg.version, '4.5.6');
+  assert.equal(lock.version, '4.5.6');
+  assert.equal(lock.packages[''].version, '4.5.6');
+  assert.equal(readProjectVersion({ repoRoot }), '4.5.6');
+});
+
+test('e2e: sync-version-from-manifest check mode reports drift without writing', () => {
+  const repoRoot = makeRepoFixture();
+  writeJson(path.join(repoRoot, 'manifest.json'), {
+    manifest_version: 3,
+    name: 'browser.cpp',
+    version: '7.8.9',
+  });
+
+  const result = synchronizeVersionFromManifest({ repoRoot, check: true });
+  assert.ok(result.changes.length >= 2);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '1.2.3');
 });
 
 test('e2e: clean release workspace removes stale dist and release outputs', () => {
@@ -82,23 +156,37 @@ test('e2e: release packaging creates all browser artifacts and metadata', () => 
   const repoRoot = makeRepoFixture();
   const result = createReleaseArtifacts({ repoRoot });
 
-  assert.equal(result.artifacts.length, TARGETS.length);
+  const publishableTargets = getPublishableReleaseTargets();
+  assert.equal(result.artifacts.length, publishableTargets.length);
 
   const manifest = JSON.parse(fs.readFileSync(result.releaseManifestPath, 'utf8'));
   assert.equal(manifest.version, '1.2.3');
   assert.deepEqual(
     manifest.artifacts.map((artifact) => artifact.target),
-    TARGETS.map((target) => target.key)
+    publishableTargets.map((target) => target.key)
+  );
+  assert.deepEqual(
+    manifest.targets.map((target) => target.target),
+    getReleaseTargets().map((target) => target.key)
   );
 
   const checksumLines = fs
     .readFileSync(result.checksumPath, 'utf8')
     .trim()
     .split('\n');
-  assert.equal(checksumLines.length, TARGETS.length);
+  assert.equal(checksumLines.length, publishableTargets.length);
 
   const hashes = new Set(result.artifacts.map((artifact) => artifact.sha256));
   assert.equal(hashes.size, 1);
+
+  const firefoxTarget = manifest.targets.find((target) => target.target === 'firefox');
+  assert.equal(firefoxTarget.publishable, false);
+  assert.equal(firefoxTarget.packageStrategy, 'blocked');
+  assert.equal(firefoxTarget.fileName, null);
+
+  const edgeArtifact = manifest.artifacts.find((artifact) => artifact.target === 'edge');
+  assert.equal(edgeArtifact.packageStrategy, 'shared-with:chrome');
+  assert.equal(edgeArtifact.payloadGroup, 'chromium-mv3');
 
   for (const artifact of result.artifacts) {
     assert.equal(fs.existsSync(artifact.filePath), true);
@@ -116,7 +204,24 @@ test('e2e: release packaging refuses mismatched built manifest versions', () => 
 
   assert.throws(
     () => createReleaseArtifacts({ repoRoot }),
-    /dist\/manifest\.json version \(2\.0\.0\) does not match package\.json version \(1\.2\.3\)/
+    /dist\/manifest\.json version \(2\.0\.0\) does not match manifest\.json version \(1\.2\.3\)/
+  );
+});
+
+test('e2e: release-target metadata includes blocked firefox and shared chromium payloads', () => {
+  assert.deepEqual(
+    TARGETS.map((target) => target.key),
+    ['chrome', 'edge', 'firefox', 'brave', 'chromium']
+  );
+
+  const firefox = getReleaseTarget('firefox');
+  assert.equal(firefox.packageStrategy, 'blocked');
+  assert.equal(firefox.publishable, false);
+
+  const publishableTargets = getPublishableReleaseTargets();
+  assert.deepEqual(
+    publishableTargets.map((target) => target.key),
+    ['chrome', 'edge', 'brave', 'chromium']
   );
 });
 

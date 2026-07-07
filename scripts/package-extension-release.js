@@ -7,30 +7,14 @@ const zlib = require('zlib');
 
 const { validateReleaseVersionSync } = require('./check-release-version-sync');
 const { BASE_URL, FILES } = require('./fetch-clang-wasm');
+const {
+  getArtifactFileName,
+  getPublishableReleaseTargets,
+  getReleaseTargets,
+} = require('./release-targets');
 
 const NORMALIZED_ZIP_DATE = new Date('2024-01-01T00:00:00Z');
-const TARGETS = [
-  {
-    key: 'chrome',
-    channel: 'Chrome Web Store',
-    notes: 'Primary public store listing. Brave installs should be verified against this release.',
-  },
-  {
-    key: 'edge',
-    channel: 'Microsoft Edge Add-ons',
-    notes: 'Dedicated Edge Add-ons submission artifact.',
-  },
-  {
-    key: 'brave',
-    channel: 'Chrome Web Store compatibility',
-    notes: 'Browser-labeled artifact for Brave smoke/manual validation against the Chrome Web Store payload.',
-  },
-  {
-    key: 'chromium',
-    channel: 'GitHub/manual distribution',
-    notes: 'Browser-labeled artifact for Chromium manual loading and GitHub Release distribution.',
-  },
-];
+const TARGETS = getReleaseTargets();
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
@@ -191,17 +175,21 @@ function createReleaseArtifacts(options = {}) {
   const files = collectFiles(distDir);
   const zipBuffer = buildZipBuffer(files, options.normalizedDate || NORMALIZED_ZIP_DATE);
   const sharedSha256 = sha256(zipBuffer);
+  const publishableTargets = getPublishableReleaseTargets();
 
   fs.mkdirSync(releaseDir, { recursive: true });
 
-  const artifacts = TARGETS.map((target) => {
-    const fileName = `browser-cpp-${target.key}-v${versionResult.version}.zip`;
+  const artifacts = publishableTargets.map((target) => {
+    const fileName = getArtifactFileName(target, versionResult.version);
     const filePath = path.join(releaseDir, fileName);
     fs.writeFileSync(filePath, zipBuffer);
     return {
       target: target.key,
+      label: target.label,
       channel: target.channel,
       notes: target.notes,
+      packageStrategy: target.packageStrategy,
+      payloadGroup: target.payloadGroup,
       fileName,
       filePath,
       bytes: zipBuffer.length,
@@ -226,16 +214,33 @@ function createReleaseArtifacts(options = {}) {
     commitSha: options.commitSha || getCommitSha(repoRoot),
     nodeVersion: process.version,
     sourceManifestVersion: versionResult.sourceManifestVersion,
+    packageVersion: versionResult.packageVersion,
+    packageLockVersion: versionResult.packageLockVersion,
+    packageLockRootVersion: versionResult.packageLockRootVersion,
     distManifestVersion: versionResult.distManifestVersion,
     normalizedZipDate: (options.normalizedDate || NORMALIZED_ZIP_DATE).toISOString(),
     toolchain: {
       baseUrl: BASE_URL,
       files: FILES.map((file) => file.name),
     },
+    targets: TARGETS.map((target) => ({
+      target: target.key,
+      label: target.label,
+      channel: target.channel,
+      packageStrategy: target.packageStrategy,
+      payloadGroup: target.payloadGroup,
+      publishable: target.publishable,
+      blockReason: target.blockReason || null,
+      notes: target.notes,
+      fileName: target.publishable ? getArtifactFileName(target, versionResult.version) : null,
+    })),
     artifacts: artifacts.map((artifact) => ({
       target: artifact.target,
+      label: artifact.label,
       channel: artifact.channel,
       notes: artifact.notes,
+      packageStrategy: artifact.packageStrategy,
+      payloadGroup: artifact.payloadGroup,
       fileName: artifact.fileName,
       bytes: artifact.bytes,
       sha256: artifact.sha256,

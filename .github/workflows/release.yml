@@ -2,15 +2,73 @@ name: Release artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Force a rebuild and re-upload even if the release already exists
+        required: false
+        default: false
+        type: boolean
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
 jobs:
-  build-release-artifacts:
+  prepare-release:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release_exists: ${{ steps.release.outputs.exists }}
+      should_release: ${{ steps.decision.outputs.should_release }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Read manifest version
+        id: version
+        run: |
+          VERSION="$(node -p "require('./manifest.json').version")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decide whether to publish
+        id: decision
+        env:
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
+          RELEASE_EXISTS: ${{ steps.release.outputs.exists }}
+        run: |
+          if [ "$FORCE_RELEASE" = "true" ] || [ "$RELEASE_EXISTS" != "true" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-release-artifacts:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
@@ -24,6 +82,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify manifest-driven version sync
+        run: npm run version:check
 
       - name: Clean release workspace
         run: npm run release:clean
@@ -46,8 +107,29 @@ jobs:
       - name: Package release artifacts
         run: npm run package:release
 
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-cpp-release-${{ github.ref_name }}
-          path: release/*
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/* --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$RELEASE_TAG" release/* \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+          fi
+
+  skip-existing-release:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_release != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Skip duplicate release
+        run: |
+          echo "GitHub Release ${{ needs.prepare-release.outputs.tag }} already exists."
+          echo "Use workflow_dispatch with force=true to rebuild and re-upload release assets."

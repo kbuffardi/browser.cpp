@@ -223,6 +223,7 @@ npm run lint
 npm run build
 npm run test:e2e
 npm run test:preflight-clang
+npm run version:check
 npm run release:check-version
 ```
 
@@ -319,8 +320,14 @@ This writes:
 - `release/SHA256SUMS-v<version>.txt`
 - `release/release-manifest-v<version>.json`
 
-All four ZIPs currently package the same MV3 payload; the browser-specific names
-exist to keep operator workflows and upload steps explicit.
+The release manifest tracks the browser package matrix:
+
+- Chrome is the canonical Chromium-family payload
+- Edge, Brave, and Chromium currently reuse that payload under browser-labeled filenames
+- Firefox is tracked as blocked until browser-specific manifest and API compatibility work exists
+
+All four emitted ZIPs currently package the same MV3 payload; the browser-specific
+names exist to keep operator workflows and upload steps explicit.
 
 Store submission notes should state:
 
@@ -332,22 +339,27 @@ Store submission notes should state:
 
 ### Release workflow
 
-Use `.github/workflows/release.yml` to build a tagged or manually triggered
-release candidate in GitHub Actions. The workflow:
+Use `.github/workflows/release.yml` to publish one GitHub Release per
+`manifest.json` version. On pushes to `main`, the workflow:
 
-1. Cleans `dist/` and `release/`
-2. Fetches the Clang toolchain
-3. Runs lint, build, version-sync, and E2E checks
-4. Produces the browser-labeled ZIPs plus checksums and release metadata
-5. Uploads `release/*` as workflow artifacts for manual distribution
+1. Reads `manifest.json.version`
+2. Skips work if GitHub Release `v<version>` already exists
+3. Verifies manifest-driven version sync
+4. Cleans `dist/` and `release/`
+5. Fetches the Clang toolchain
+6. Runs lint, build, release validation, and E2E checks
+7. Produces the browser-labeled ZIPs plus checksums and release metadata
+8. Creates or updates GitHub Release `v<version>` and uploads `release/*`
 
-The workflow does **not** publish directly to browser stores. Store publication
-and Chromium distribution remain human-owned steps.
+Use `workflow_dispatch` with `force=true` to rebuild and re-upload assets for an
+existing release. The workflow does **not** publish directly to browser stores.
+Store publication and Chromium distribution remain human-owned steps.
 
 ### Human-owned deployment instructions
 
 These steps happen after the automated release workflow or local release commands
-have produced a validated `release/` directory.
+have produced a validated `release/` directory and, for GitHub-distributed
+assets, published GitHub Release `v<version>`.
 
 #### Chrome Web Store
 
@@ -389,14 +401,13 @@ Store compatibility plus Brave-specific validation.
 
 #### Chromium
 
-1. Create a Git tag for the release version if you have not already.
-2. Create a GitHub Release for that tag.
-3. Attach `release/browser-cpp-chromium-v<version>.zip`,
-   `release/SHA256SUMS-v<version>.txt`, and
-   `release/release-manifest-v<version>.json`.
-4. Publish manual installation instructions for Chromium users, including that
+1. Verify that GitHub Release `v<version>` includes:
+   - `release/browser-cpp-chromium-v<version>.zip`
+   - `release/SHA256SUMS-v<version>.txt`
+   - `release/release-manifest-v<version>.json`
+2. Publish manual installation instructions for Chromium users, including that
    the extension is loaded outside a browser store.
-5. Verify the packaged artifact can be loaded in Chromium and passes the manual
+3. Verify the packaged artifact can be loaded in Chromium and passes the manual
    QA checklist below.
 
 There is no official Chromium extension store in this workflow; Chromium is a
