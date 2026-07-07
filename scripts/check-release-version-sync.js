@@ -3,9 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}
+const {
+  readJson,
+  readProjectVersion,
+} = require('./project-version');
 
 function normalizeTagCandidates(version) {
   return new Set([version, `v${version}`]);
@@ -14,17 +15,34 @@ function normalizeTagCandidates(version) {
 function validateReleaseVersionSync(options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const packagePath = path.join(repoRoot, 'package.json');
+  const packageLockPath = path.join(repoRoot, 'package-lock.json');
   const sourceManifestPath = path.join(repoRoot, 'manifest.json');
   const distManifestPath = path.join(repoRoot, 'dist', 'manifest.json');
 
   const pkg = readJson(packagePath);
+  const packageLock = readJson(packageLockPath);
   const sourceManifest = readJson(sourceManifestPath);
-  const version = pkg.version;
+  const version = readProjectVersion({ repoRoot });
   const errors = [];
 
-  if (sourceManifest.version !== version) {
+  if (pkg.version !== version) {
     errors.push(
-      `package.json version (${version}) does not match manifest.json version (${sourceManifest.version}).`
+      `manifest.json version (${version}) does not match package.json version (${pkg.version}).`
+    );
+  }
+
+  if (packageLock.version !== version) {
+    errors.push(
+      `manifest.json version (${version}) does not match package-lock.json version (${packageLock.version}).`
+    );
+  }
+
+  const rootPackageVersion = packageLock.packages && packageLock.packages['']
+    ? packageLock.packages[''].version
+    : undefined;
+  if (rootPackageVersion !== version) {
+    errors.push(
+      `manifest.json version (${version}) does not match package-lock.json packages[""].version (${rootPackageVersion ?? 'missing'}).`
     );
   }
 
@@ -33,7 +51,7 @@ function validateReleaseVersionSync(options = {}) {
     distManifest = readJson(distManifestPath);
     if (distManifest.version !== version) {
       errors.push(
-        `dist/manifest.json version (${distManifest.version}) does not match package.json version (${version}).`
+        `dist/manifest.json version (${distManifest.version}) does not match manifest.json version (${version}).`
       );
     }
   }
@@ -55,10 +73,14 @@ function validateReleaseVersionSync(options = {}) {
   return {
     version,
     packagePath,
+    packageLockPath,
     sourceManifestPath,
     distManifestPath: fs.existsSync(distManifestPath) ? distManifestPath : null,
     releaseTag,
     sourceManifestVersion: sourceManifest.version,
+    packageVersion: pkg.version,
+    packageLockVersion: packageLock.version,
+    packageLockRootVersion: rootPackageVersion ?? null,
     distManifestVersion: distManifest ? distManifest.version : null,
   };
 }
@@ -67,7 +89,7 @@ function main() {
   const result = validateReleaseVersionSync();
   const checkedDist = result.distManifestPath ? ' and dist/manifest.json' : '';
   console.log(
-    `Release version sync passed for ${result.version} (package.json, manifest.json${checkedDist}).`
+    `Release version sync passed for ${result.version} (manifest.json, package.json, package-lock.json${checkedDist}).`
   );
   if (result.releaseTag) {
     console.log(`Release tag ${result.releaseTag} matches version ${result.version}.`);

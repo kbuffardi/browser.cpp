@@ -14,6 +14,8 @@
     "test:browser:brave": "npm run test:preflight-clang && node scripts/smoke-browser.mjs brave",
     "test:browser:chromium": "npm run test:preflight-clang && node scripts/smoke-browser.mjs chromium",
     "test:browser": "npm run test:browser:chrome && npm run test:browser:edge && npm run test:browser:brave && npm run test:browser:chromium",
+    "version:sync": "node scripts/sync-version-from-manifest.js",
+    "version:check": "node scripts/sync-version-from-manifest.js --check",
     "release:clean": "node scripts/clean-release-workspace.js",
     "release:check-version": "node scripts/check-release-version-sync.js",
     "package:release": "npm run test:preflight-clang && npm run release:check-version && node scripts/package-extension-release.js",
