@@ -1,0 +1,12 @@
+{
+  "channel": "listed",
+  "ownerAction": "manual-submission",
+  "summary": "Public AMO listing remains a manual owner-managed release step.",
+  "artifacts": [
+    "release/browser-cpp-firefox-v<version>.zip"
+  ],
+  "notes": [
+    "Review Firefox limitations around file and workspace persistence before submission.",
+    "Update store copy and screenshots when Firefox-visible behavior changes."
+  ]
+}

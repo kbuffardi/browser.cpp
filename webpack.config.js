@@ -43,7 +43,6 @@ const uiConfig = {
     new MiniCssExtractPlugin({ filename: 'styles.css' }),
     new CopyWebpackPlugin({
       patterns: [
-        { from: 'manifest.json', to: 'manifest.json' },
         { from: 'icons', to: 'icons', noErrorOnMissing: true },
       ],
     }),
@@ -67,6 +66,14 @@ const bgConfig = {
   resolve: { fallback: { path: false, fs: false } },
 };
 
+const firefoxBgConfig = {
+  name: 'firefox-background',
+  entry: './src/background/firefox-background.js',
+  output: { path: dist, filename: 'firefox-background.js', clean: false },
+  target: 'web',
+  resolve: { fallback: { path: false, fs: false } },
+};
+
 // ── Compiler web worker ───────────────────────────────────────────────────────
 const compilerConfig = {
   name: 'compiler-worker',
@@ -76,4 +83,4 @@ const compilerConfig = {
   resolve: { fallback: { path: false, fs: false, crypto: false } },
 };
 
-module.exports = [uiConfig, bgConfig, compilerConfig];
+module.exports = [uiConfig, bgConfig, firefoxBgConfig, compilerConfig];

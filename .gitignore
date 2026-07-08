@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-firefox/
 # Keep the clang/ placeholder but not the actual binary
 !dist/clang/
 dist/clang/*.wasm

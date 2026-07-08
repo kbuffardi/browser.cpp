@@ -18,6 +18,7 @@ function validateReleaseVersionSync(options = {}) {
   const packageLockPath = path.join(repoRoot, 'package-lock.json');
   const sourceManifestPath = path.join(repoRoot, 'manifest.json');
   const distManifestPath = path.join(repoRoot, 'dist', 'manifest.json');
+  const firefoxDistManifestPath = path.join(repoRoot, 'dist-firefox', 'manifest.json');
 
   const pkg = readJson(packagePath);
   const packageLock = readJson(packageLockPath);
@@ -56,6 +57,16 @@ function validateReleaseVersionSync(options = {}) {
     }
   }
 
+  let firefoxDistManifest = null;
+  if (fs.existsSync(firefoxDistManifestPath)) {
+    firefoxDistManifest = readJson(firefoxDistManifestPath);
+    if (firefoxDistManifest.version !== version) {
+      errors.push(
+        `dist-firefox/manifest.json version (${firefoxDistManifest.version}) does not match manifest.json version (${version}).`
+      );
+    }
+  }
+
   const releaseTag =
     options.releaseTag ||
     process.env.RELEASE_TAG ||
@@ -82,14 +93,18 @@ function validateReleaseVersionSync(options = {}) {
     packageLockVersion: packageLock.version,
     packageLockRootVersion: rootPackageVersion ?? null,
     distManifestVersion: distManifest ? distManifest.version : null,
+    firefoxDistManifestVersion: firefoxDistManifest ? firefoxDistManifest.version : null,
   };
 }
 
 function main() {
   const result = validateReleaseVersionSync();
-  const checkedDist = result.distManifestPath ? ' and dist/manifest.json' : '';
+  const checkedDist = [
+    result.distManifestPath ? 'dist/manifest.json' : null,
+    result.firefoxDistManifestVersion ? 'dist-firefox/manifest.json' : null,
+  ].filter(Boolean);
   console.log(
-    `Release version sync passed for ${result.version} (manifest.json, package.json, package-lock.json${checkedDist}).`
+    `Release version sync passed for ${result.version} (manifest.json, package.json, package-lock.json${checkedDist.length ? `, ${checkedDist.join(', ')}` : ''}).`
   );
   if (result.releaseTag) {
     console.log(`Release tag ${result.releaseTag} matches version ${result.version}.`);

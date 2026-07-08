@@ -1,0 +1,19 @@
+{
+  "background": {
+    "scripts": [
+      "firefox-background.js"
+    ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser.cpp@kbuffardi.github.io",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ],
+        "has_previous_consent": false
+      }
+    }
+  }
+}

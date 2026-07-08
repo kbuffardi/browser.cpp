@@ -56,10 +56,22 @@ function makeRepoFixture() {
     name: 'browser.cpp',
     version: '1.2.3',
   });
+  writeJson(path.join(repoRoot, 'dist-firefox', 'manifest.json'), {
+    manifest_version: 3,
+    name: 'browser.cpp',
+    version: '1.2.3',
+    background: {
+      scripts: ['firefox-background.js'],
+    },
+  });
   fs.writeFileSync(path.join(repoRoot, 'dist', 'bundle.js'), 'console.log("bundle");\n', 'utf8');
+  fs.writeFileSync(path.join(repoRoot, 'dist-firefox', 'bundle.js'), 'console.log("bundle");\n', 'utf8');
   fs.writeFileSync(path.join(repoRoot, 'dist', 'styles.css'), 'body{color:#fff;}\n', 'utf8');
+  fs.writeFileSync(path.join(repoRoot, 'dist-firefox', 'styles.css'), 'body{color:#fff;}\n', 'utf8');
   fs.mkdirSync(path.join(repoRoot, 'dist', 'icons'), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, 'dist-firefox', 'icons'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'dist', 'icons', 'icon16.png'), 'icon', 'utf8');
+  fs.writeFileSync(path.join(repoRoot, 'dist-firefox', 'icons', 'icon16.png'), 'icon', 'utf8');
   return repoRoot;
 }
 
@@ -143,12 +155,14 @@ test('e2e: sync-version-from-manifest check mode reports drift without writing',
 test('e2e: clean release workspace removes stale dist and release outputs', () => {
   const repoRoot = makeRepoFixture();
   fs.writeFileSync(path.join(repoRoot, 'dist', 'stale.txt'), 'stale\n', 'utf8');
+  fs.writeFileSync(path.join(repoRoot, 'dist-firefox', 'stale.txt'), 'stale\n', 'utf8');
   fs.mkdirSync(path.join(repoRoot, 'release'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'release', 'old.zip'), 'old\n', 'utf8');
 
   cleanReleaseWorkspace({ repoRoot });
 
   assert.equal(fs.existsSync(path.join(repoRoot, 'dist')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'dist-firefox')), false);
   assert.equal(fs.existsSync(path.join(repoRoot, 'release')), false);
 });
 
@@ -176,21 +190,27 @@ test('e2e: release packaging creates all browser artifacts and metadata', () => 
     .split('\n');
   assert.equal(checksumLines.length, publishableTargets.length);
 
-  const hashes = new Set(result.artifacts.map((artifact) => artifact.sha256));
-  assert.equal(hashes.size, 1);
-
   const firefoxTarget = manifest.targets.find((target) => target.target === 'firefox');
-  assert.equal(firefoxTarget.publishable, false);
-  assert.equal(firefoxTarget.packageStrategy, 'blocked');
-  assert.equal(firefoxTarget.fileName, null);
+  assert.equal(firefoxTarget.publishable, true);
+  assert.equal(firefoxTarget.packageStrategy, 'distinct');
+  assert.equal(firefoxTarget.fileName, 'browser-cpp-firefox-v1.2.3.zip');
+  assert.equal(firefoxTarget.signing.listed, 'manual-owner-submission');
+  assert.equal(firefoxTarget.signing.unlisted, 'required-release-artifact');
 
   const edgeArtifact = manifest.artifacts.find((artifact) => artifact.target === 'edge');
   assert.equal(edgeArtifact.packageStrategy, 'shared-with:chrome');
   assert.equal(edgeArtifact.payloadGroup, 'chromium-mv3');
 
+  const firefoxArtifact = manifest.artifacts.find((artifact) => artifact.target === 'firefox');
+  assert.equal(firefoxArtifact.packageStrategy, 'distinct');
+  assert.equal(firefoxArtifact.payloadGroup, 'firefox-webext');
+  assert.equal(firefoxArtifact.sharedPayload, false);
+  assert.equal(firefoxArtifact.format, 'zip');
+  assert.equal(firefoxArtifact.sourceDir, 'dist-firefox');
+
   for (const artifact of result.artifacts) {
     assert.equal(fs.existsSync(artifact.filePath), true);
-    assert.match(artifact.fileName, /^browser-cpp-(chrome|edge|brave|chromium)-v1\.2\.3\.zip$/);
+    assert.match(artifact.fileName, /^browser-cpp-(chrome|edge|firefox|brave|chromium)-v1\.2\.3\.zip$/);
   }
 });
 
@@ -208,20 +228,21 @@ test('e2e: release packaging refuses mismatched built manifest versions', () => 
   );
 });
 
-test('e2e: release-target metadata includes blocked firefox and shared chromium payloads', () => {
+test('e2e: release-target metadata includes Firefox and shared Chromium payloads', () => {
   assert.deepEqual(
     TARGETS.map((target) => target.key),
     ['chrome', 'edge', 'firefox', 'brave', 'chromium']
   );
 
   const firefox = getReleaseTarget('firefox');
-  assert.equal(firefox.packageStrategy, 'blocked');
-  assert.equal(firefox.publishable, false);
+  assert.equal(firefox.packageStrategy, 'distinct');
+  assert.equal(firefox.publishable, true);
+  assert.equal(firefox.payloadGroup, 'firefox-webext');
 
   const publishableTargets = getPublishableReleaseTargets();
   assert.deepEqual(
     publishableTargets.map((target) => target.key),
-    ['chrome', 'edge', 'brave', 'chromium']
+    ['chrome', 'edge', 'firefox', 'brave', 'chromium']
   );
 });
 
