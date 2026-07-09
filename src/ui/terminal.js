@@ -858,47 +858,6 @@ async function cmdMkdir(args) {
   writePrompt();
 }
 
-function cmdGit(args) {
-  if (!workspaceName) {
-    term.write(`${C.red}git: open a folder first (Ctrl+O)${C.reset}${CRLF}`);
-    return;
-  }
-  if (!workspaceGit?.isRepo) {
-    term.write(`${C.red}fatal: not a git repository${C.reset}${CRLF}`);
-    return;
-  }
-
-  const sub = args[0] || 'status';
-  if (sub === 'status') {
-    const branch = workspaceGit.branch || 'unknown';
-    term.write(`On branch ${branch}${CRLF}`);
-    term.write(`${C.yellow}Working-tree state is unavailable in this browser terminal.${C.reset}${CRLF}`);
-    return;
-  }
-
-  if (sub === 'branch') {
-    term.write(`* ${workspaceGit.branch || 'unknown'}${CRLF}`);
-    return;
-  }
-
-  if (sub === 'remote' && args[1] === '-v') {
-    if (!workspaceGit.remotes?.length) {
-      term.write(`(no remotes configured)${CRLF}`);
-      return;
-    }
-    for (const remote of workspaceGit.remotes) {
-      term.write(`origin\t${remote} (fetch)${CRLF}`);
-      term.write(`origin\t${remote} (push)${CRLF}`);
-    }
-    return;
-  }
-
-  term.write(
-    `${C.yellow}Supported git commands: status, branch, remote -v.${C.reset}${CRLF}` +
-    `${C.dim}Full git porcelain/plumbing commands are not yet available in this browser terminal.${C.reset}${CRLF}`
-  );
-}
-
 function cmdHelp() {
   term.write(
     `${C.bold}Available commands:${C.reset}${CRLF}` +
