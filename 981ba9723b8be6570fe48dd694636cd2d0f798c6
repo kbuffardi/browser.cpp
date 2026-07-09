@@ -1,0 +1,24 @@
+## AI Agent Reasoning
+
+### Context
+Implement issue #39 so the in-browser terminal can create
+workspace directories without drifting from the shared workspace
+index used by the Explorer and filesystem layer.
+
+### Decisions Made
+- Matched Linux mkdir semantics: plain mkdir accepts paths but only
+  mkdir -p creates missing parents.
+- Reused shared workspace helpers in src/ui/workspace-fs.mjs so
+  mkdir validation and index mutation stay aligned with other
+  workspace changes.
+- Made non-writable workspaces fail explicitly for mkdir instead of
+  creating session-only directories, per the issue refinement.
+
+### Trade-offs
+- Exported the existing toolbar snapshot adoption helper instead of
+  duplicating Explorer refresh logic in app.js, keeping the UI sync
+  path centralized at the cost of one broader toolbar export.
+
+### References
+- Session: fb2665d9-d947-4e59-bb60-ad22a10ef130
+- Issue: #39
