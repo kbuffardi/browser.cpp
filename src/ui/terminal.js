@@ -57,7 +57,7 @@ const CRLF   = '\r\n';
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
-const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'cat ', 'pwd', 'git ', 'help'];
+const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'cat ', 'pwd', 'help'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,6 @@ let workspaceEntries = [];
 let workspaceDirs = new Set(['/']);
 let workspaceFiles = new Set();
 let workspaceCwd = '/';
-let workspaceGit = { isRepo: false, branch: null, remotes: [] };
 let _readWorkspaceFile = null;
 let _onMkdir = null;
 let initialPromptShown = false;
@@ -408,7 +407,7 @@ export function printInfo(msg) {
   term?.write(`${C.blue}${msg.replace(/\n/g, CRLF)}${C.reset}${CRLF}`);
 }
 
-/** Update terminal workspace context for ls/cd/pwd/git commands. */
+/** Update terminal workspace context for ls/cd/pwd/cat commands. */
 export function setWorkspace(workspace) {
   if (!workspace) {
     workspaceName = null;
@@ -416,7 +415,6 @@ export function setWorkspace(workspace) {
     workspaceDirs = new Set(['/']);
     workspaceFiles = new Set();
     workspaceCwd = '/';
-    workspaceGit = { isRepo: false, branch: null, remotes: [] };
     return;
   }
 
@@ -443,7 +441,6 @@ function indexWorkspace(workspace) {
   workspaceEntries = Array.isArray(workspace.entries) ? workspace.entries : [];
   workspaceDirs = new Set(['/']);
   workspaceFiles = new Set();
-  workspaceGit = workspace.git || { isRepo: false, branch: null, remotes: [] };
 
   for (const entry of workspaceEntries) {
     const fullPath = `/${normalizePath(entry.path)}`;
@@ -643,13 +640,9 @@ async function executeCommand(cmdLine) {
       term.write(`${pwdPath()}${CRLF}`);
       writePrompt();
       break;
-    case 'git':
-      cmdGit(args);
-      writePrompt();
-      break;
     case 'ssh':
       term.write(
-        `${C.yellow}SSH uses your device keys in your native terminal. Open this folder locally and run git there for SSH auth to GitHub.${C.reset}${CRLF}`
+        `${C.yellow}SSH uses your device keys in your native terminal. Open this folder locally and use a real terminal for SSH-authenticated workflows.${C.reset}${CRLF}`
       );
       writePrompt();
       break;
@@ -919,7 +912,6 @@ function cmdHelp() {
     `  ${C.green}mkdir [-p] <dir>${C.reset}                            Create workspace directories${CRLF}` +
     `  ${C.green}cat <file>${C.reset}                                 Print file contents${CRLF}` +
     `  ${C.green}pwd${C.reset}                                        Print current working directory${CRLF}` +
-    `  ${C.green}git <cmd>${C.reset}                                  Basic git info for opened repo${CRLF}` +
     `  ${C.green}help${C.reset}                                       Show this message${CRLF}` +
     CRLF
   );
