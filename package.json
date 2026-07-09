@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "build": "npm run build:webpack && npm run build:targets",
     "build:firefox": "npm run build",
-    "test:e2e": "node --experimental-detect-module --test scripts/e2e-session-persistence.test.mjs scripts/e2e-session-restore-choice.test.mjs scripts/e2e-multifile-build.test.mjs scripts/e2e-workspace-file-tracking.test.mjs scripts/e2e-terminal-stop.test.mjs scripts/e2e-terminal-stop-icon.test.mjs scripts/e2e-browser-compatibility.test.mjs scripts/e2e-firefox-compatibility.test.mjs scripts/e2e-wasi-shim.test.mjs scripts/e2e-release-packaging.test.mjs",
+    "test:e2e": "node --experimental-detect-module --test scripts/e2e-session-persistence.test.mjs scripts/e2e-session-restore-choice.test.mjs scripts/e2e-multifile-build.test.mjs scripts/e2e-workspace-file-tracking.test.mjs scripts/e2e-terminal-mkdir.test.mjs scripts/e2e-terminal-stop.test.mjs scripts/e2e-terminal-stop-icon.test.mjs scripts/e2e-browser-compatibility.test.mjs scripts/e2e-firefox-compatibility.test.mjs scripts/e2e-wasi-shim.test.mjs scripts/e2e-release-packaging.test.mjs",
     "test:preflight-clang": "node scripts/preflight-clang-artifacts.js",
     "test:browser:chrome": "npm run test:preflight-clang && node scripts/smoke-browser.mjs chrome",
     "test:browser:edge": "npm run test:preflight-clang && node scripts/smoke-browser.mjs edge",

@@ -12,7 +12,9 @@
 
 import {
   validateNewFilePath,
+  validateNewDirectoryPath,
   applyWorkspaceMutation,
+  applyWorkspaceDirectoryMutation,
   diffWorkspaceEntries,
   entryExists,
 } from './workspace-fs.mjs';
@@ -283,6 +285,12 @@ function indexWorkspaceFile(key, fileHandle) {
   }
 }
 
+function indexWorkspaceDirectory(key) {
+  const { entries } = applyWorkspaceDirectoryMutation(workspaceEntries, key);
+  workspaceEntries.length = 0;
+  workspaceEntries.push(...entries);
+}
+
 async function updateFileFingerprint(key, fileHandle) {
   if (!fileHandle) return;
   try {
@@ -505,6 +513,77 @@ export async function createWorkspaceFile(inputPath, content = '') {
 
   await writeAndIndex(key, data);
   return { ok: true, path: key, snapshot: getWorkspaceSnapshot() };
+}
+
+/**
+ * Create a directory in the currently opened workspace folder.
+ *
+ * Supports nested paths and Linux-like `mkdir -p` semantics: without
+ * `parents`, missing ancestors cause a failure; with `parents`, missing
+ * ancestors are created. Final-target file collisions always fail. When the
+ * final directory already exists, only `parents: true` treats it as success.
+ *
+ * @param {string} inputPath
+ * @param {{ parents?: boolean }} [options]
+ * @returns {Promise<
+ *   {ok:true, path:string, snapshot:object, created:boolean} |
+ *   {ok:false, error:string, path?:string}
+ * >}
+ */
+export async function createWorkspaceDirectory(inputPath, { parents = false } = {}) {
+  if (!workspaceName) return { ok: false, error: 'no-workspace' };
+  if (!currentDirectoryHandle) return { ok: false, error: 'not-writable' };
+
+  const validated = validateNewDirectoryPath(inputPath);
+  if (!validated.ok) return validated;
+  const key = validated.path;
+
+  const existing = workspaceEntries.find((entry) => entry.path === key) || null;
+  if (existing) {
+    if (existing.kind === 'directory' && parents) {
+      return { ok: true, path: key, snapshot: getWorkspaceSnapshot(), created: false };
+    }
+    return { ok: false, error: 'exists', path: key };
+  }
+
+  const segments = key.split('/').filter(Boolean);
+  let dirHandle = currentDirectoryHandle;
+  let prefix = '';
+
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    prefix = prefix ? `${prefix}/${segment}` : segment;
+    const isFinal = index === segments.length - 1;
+    const existingEntry = workspaceEntries.find((entry) => entry.path === prefix) || null;
+
+    if (existingEntry?.kind === 'file') {
+      return { ok: false, error: 'exists', path: prefix };
+    }
+
+    try {
+      dirHandle = await dirHandle.getDirectoryHandle(segment, {
+        create: isFinal || parents,
+      });
+    } catch (err) {
+      if (err?.name === 'NotAllowedError') {
+        return { ok: false, error: 'permission-denied', path: prefix };
+      }
+      if (!isFinal && !parents && err?.name === 'NotFoundError') {
+        return { ok: false, error: 'missing-parent', path: prefix };
+      }
+      if (err?.name === 'TypeMismatchError') {
+        return { ok: false, error: 'exists', path: prefix };
+      }
+      return {
+        ok: false,
+        error: isFinal ? 'directory-create-failed' : 'missing-parent',
+        path: prefix,
+      };
+    }
+  }
+
+  indexWorkspaceDirectory(key);
+  return { ok: true, path: key, snapshot: getWorkspaceSnapshot(), created: true };
 }
 
 // ── Feature detection ─────────────────────────────────────────────────────────

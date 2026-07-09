@@ -6,8 +6,8 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 |---------|--------|
 | Editor | Monaco Editor (the engine behind VS Code) |
 | Compiler | WASM-native Clang (runs entirely in the browser, offline) |
-| Terminal | xterm.js with a bash-like shell (`g++`, `./a.out`, `ls`, `cat`, …) |
-| File access | File System Access API on Chromium, fallback file/folder flows on Firefox |
+| Terminal | xterm.js with a bash-like shell (`g++`, `./a.out`, `ls`, `mkdir`, `cat`, …) |
+| File access | File System Access API on Chromium, fallback open/save/folder flows on Firefox |
 | File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
 
@@ -180,9 +180,15 @@ be persisted.
 | `echo <text>` | Print text |
 | `ls [-R] [dir]` | List files/folders from the opened workspace folder |
 | `cd [dir]` | Change the current workspace directory |
+| `mkdir [-p] <dir>` | Create workspace directories (`-p` creates missing parents) |
 | `cat <file>` | Print file contents |
 | `pwd` | Print working directory |
 | `help` | Show command list |
+
+Folders opened in browser.cpp may still be git repositories, but the simulated
+terminal does **not** support `git` commands. Treat `.git` files and folders as
+ordinary workspace content, and use a real local terminal for version control
+operations.
 
 ### Project builds
 
