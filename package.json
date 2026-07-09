@@ -16,7 +16,7 @@
     "test:browser:edge": "npm run test:preflight-clang && node scripts/smoke-browser.mjs edge",
     "test:browser:brave": "npm run test:preflight-clang && node scripts/smoke-browser.mjs brave",
     "test:browser:chromium": "npm run test:preflight-clang && node scripts/smoke-browser.mjs chromium",
-    "test:browser:firefox": "npm run test:preflight-clang && node scripts/smoke-firefox.mjs",
+    "test:browser:firefox": "node scripts/smoke-firefox.mjs",
     "test:browser": "npm run test:browser:chrome && npm run test:browser:edge && npm run test:browser:brave && npm run test:browser:chromium && npm run test:browser:firefox",
     "version:sync": "node scripts/sync-version-from-manifest.js",
     "version:check": "node scripts/sync-version-from-manifest.js --check",
