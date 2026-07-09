@@ -179,6 +179,11 @@ be persisted.
 | `pwd` | Print working directory |
 | `help` | Show command list |
 
+Folders opened in browser.cpp may still be git repositories, but the simulated
+terminal does **not** support `git` commands. Treat `.git` files and folders as
+ordinary workspace content, and use a real local terminal for version control
+operations.
+
 ### Project builds
 
 The toolbar **Compile** / **Compile & Run** buttons build the *whole opened
