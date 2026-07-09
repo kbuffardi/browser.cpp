@@ -52,6 +52,65 @@ export function validateNewFilePath(input) {
   return { ok: true, path };
 }
 
+const DIRECTORY_SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Validate and normalise a workspace-relative directory path entered for mkdir.
+ * Accepts nested relative paths (`src/include`) and normalises redundant
+ * separators or `.` segments. Rejects absolute paths, empty input, traversal,
+ * unsupported characters, and segments longer than 64 characters.
+ *
+ * Unsupported characters are returned once each in first-seen order so the
+ * caller can render the exact terminal-facing error message.
+ *
+ * @param {string} input
+ * @returns {{
+ *   ok:true,
+ *   path:string
+ * } | {
+ *   ok:false,
+ *   error:'empty'|'absolute'|'traversal'|'invalid-name'|'name-too-long',
+ *   unsupportedChars?:string[],
+ *   truncated?:string
+ * }}
+ */
+export function validateNewDirectoryPath(input) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return { ok: false, error: 'empty' };
+  if (raw.startsWith('/')) return { ok: false, error: 'absolute' };
+
+  const segments = [];
+  for (const seg of raw.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') return { ok: false, error: 'traversal' };
+    segments.push(seg);
+  }
+
+  if (segments.length === 0) return { ok: false, error: 'empty' };
+
+  const unsupportedChars = [];
+  for (const segment of segments) {
+    for (const ch of segment) {
+      if (DIRECTORY_SEGMENT_RE.test(ch)) continue;
+      if (!unsupportedChars.includes(ch)) unsupportedChars.push(ch);
+    }
+  }
+  if (unsupportedChars.length) {
+    return { ok: false, error: 'invalid-name', unsupportedChars };
+  }
+
+  const tooLong = segments.find((segment) => segment.length > 64);
+  if (tooLong) {
+    return {
+      ok: false,
+      error: 'name-too-long',
+      truncated: tooLong.slice(0, 64),
+    };
+  }
+
+  return { ok: true, path: segments.join('/') };
+}
+
 /**
  * Ordered ancestor directory paths for a workspace-relative path.
  * `src/lib/util.hpp` -> ['src', 'src/lib'].
@@ -62,6 +121,24 @@ export function validateNewFilePath(input) {
 export function directoriesForPath(path) {
   const segments = String(path || '').split('/').filter(Boolean);
   segments.pop(); // drop the basename
+  const dirs = [];
+  let acc = '';
+  for (const seg of segments) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    dirs.push(acc);
+  }
+  return dirs;
+}
+
+/**
+ * Ordered ancestor directory paths plus the directory itself for a
+ * workspace-relative directory path. `src/include` -> ['src', 'src/include'].
+ *
+ * @param {string} path
+ * @returns {string[]}
+ */
+export function directoryChainForPath(path) {
+  const segments = String(path || '').split('/').filter(Boolean);
   const dirs = [];
   let acc = '';
   for (const seg of segments) {
@@ -94,7 +171,7 @@ export function entryExists(entries, path) {
  * @param {string} path  – validated workspace-relative file path
  * @returns {{entries:Array, added:Array<{path:string, kind:string}>}}
  */
-export function applyWorkspaceMutation(entries, path) {
+function applyWorkspaceEntryMutation(entries, path, finalKind) {
   const byPath = new Map(entries.map((e) => [e.path, e]));
   const added = [];
 
@@ -107,12 +184,28 @@ export function applyWorkspaceMutation(entries, path) {
   }
 
   if (!byPath.has(path)) {
-    const entry = { path, kind: 'file' };
+    const entry = { path, kind: finalKind };
     byPath.set(path, entry);
     added.push(entry);
   }
 
   return { entries: sortEntries([...byPath.values()]), added };
+}
+
+export function applyWorkspaceMutation(entries, path) {
+  return applyWorkspaceEntryMutation(entries, path, 'file');
+}
+
+/**
+ * Apply a directory creation to a workspace entry list: add the directory entry
+ * plus any missing ancestor directory entries, de-duplicated and sorted.
+ *
+ * @param {Array<{path:string, kind:'file'|'directory'}>} entries
+ * @param {string} path  – validated workspace-relative directory path
+ * @returns {{entries:Array, added:Array<{path:string, kind:string}>}}
+ */
+export function applyWorkspaceDirectoryMutation(entries, path) {
+  return applyWorkspaceEntryMutation(entries, path, 'directory');
 }
 
 /**

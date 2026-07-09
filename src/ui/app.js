@@ -27,6 +27,7 @@ import {
   restoreWorkspace,
   resetToNewProject,
   assembleCompilePayload,
+  applyWorkspaceSnapshot,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 import {
@@ -74,6 +75,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     },
     onRunStateChange: (isRunning) => {
       setStopButtonRunning(isRunning);
+    },
+    onMkdir: async ({ path, parents }) => {
+      const result = await fsAPI.createWorkspaceDirectory(path, { parents });
+      if (result?.ok) {
+        applyWorkspaceSnapshot(result.snapshot, [result.path]);
+        await persistenceGate.persist();
+      }
+      return result;
     },
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),

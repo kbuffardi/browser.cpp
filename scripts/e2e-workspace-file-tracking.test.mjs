@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   validateNewFilePath,
+  validateNewDirectoryPath,
   directoriesForPath,
+  directoryChainForPath,
   applyWorkspaceMutation,
+  applyWorkspaceDirectoryMutation,
   diffWorkspaceEntries,
   entryExists,
 } from '../src/ui/workspace-fs.mjs';
@@ -42,6 +45,34 @@ test('e2e: validateNewFilePath rejects empty, absolute, and traversal inputs', (
   assert.deepEqual(validateNewFilePath('src/'), { ok: false, error: 'no-filename' });
 });
 
+test('e2e: validateNewDirectoryPath accepts and normalises nested relative paths', () => {
+  assert.deepEqual(validateNewDirectoryPath('src/include'), { ok: true, path: 'src/include' });
+  assert.deepEqual(validateNewDirectoryPath('./src//include/'), { ok: true, path: 'src/include' });
+});
+
+test('e2e: validateNewDirectoryPath rejects empty, absolute, and traversal inputs', () => {
+  assert.deepEqual(validateNewDirectoryPath(''), { ok: false, error: 'empty' });
+  assert.deepEqual(validateNewDirectoryPath('/abs'), { ok: false, error: 'absolute' });
+  assert.deepEqual(validateNewDirectoryPath('../escape'), { ok: false, error: 'traversal' });
+});
+
+test('e2e: validateNewDirectoryPath reports distinct unsupported characters in first-seen order', () => {
+  assert.deepEqual(validateNewDirectoryPath("bad name!? bad"), {
+    ok: false,
+    error: 'invalid-name',
+    unsupportedChars: [' ', '!', '?'],
+  });
+});
+
+test('e2e: validateNewDirectoryPath enforces the 64-character segment limit', () => {
+  const longName = 'a'.repeat(65);
+  assert.deepEqual(validateNewDirectoryPath(longName), {
+    ok: false,
+    error: 'name-too-long',
+    truncated: 'a'.repeat(64),
+  });
+});
+
 // ── Incremental workspace index updates ───────────────────────────────────────
 
 test('e2e: applyWorkspaceMutation adds a root file without parent dirs', () => {
@@ -59,6 +90,20 @@ test('e2e: applyWorkspaceMutation creates missing ancestor directories', () => {
     { path: 'src', kind: 'directory' },
     { path: 'src/lib', kind: 'directory' },
     { path: 'src/lib/util.hpp', kind: 'file' },
+  ]);
+});
+
+test('e2e: applyWorkspaceDirectoryMutation adds a directory plus missing ancestors', () => {
+  assert.deepEqual(directoryChainForPath('src/include'), ['src', 'src/include']);
+
+  const { entries, added } = applyWorkspaceDirectoryMutation([], 'src/include');
+  assert.deepEqual(entries, [
+    { path: 'src', kind: 'directory' },
+    { path: 'src/include', kind: 'directory' },
+  ]);
+  assert.deepEqual(added, [
+    { path: 'src', kind: 'directory' },
+    { path: 'src/include', kind: 'directory' },
   ]);
 });
 
@@ -176,6 +221,11 @@ class FakeDirHandle {
   async *entries() { for (const pair of this.children) yield pair; }
   async getDirectoryHandle(name, { create = false } = {}) {
     let child = this.children.get(name);
+    if (child && child.kind !== 'directory') {
+      const e = new Error('TypeMismatch');
+      e.name = 'TypeMismatchError';
+      throw e;
+    }
     if (!child) {
       if (!create) { const e = new Error('NotFound'); e.name = 'NotFoundError'; throw e; }
       child = new FakeDirHandle(name);
@@ -185,6 +235,11 @@ class FakeDirHandle {
   }
   async getFileHandle(name, { create = false } = {}) {
     let child = this.children.get(name);
+    if (child && child.kind !== 'file') {
+      const e = new Error('TypeMismatch');
+      e.name = 'TypeMismatchError';
+      throw e;
+    }
     if (!child) {
       if (!create) { const e = new Error('NotFound'); e.name = 'NotFoundError'; throw e; }
       child = new FakeFileHandle(name);
@@ -252,6 +307,100 @@ test('e2e: createWorkspaceFile rejects duplicate and invalid paths without mutat
 test('e2e: createWorkspaceFile refuses when no workspace is open', async () => {
   const fs = await importFreshFilesystem();
   assert.deepEqual(await fs.createWorkspaceFile('main.cpp', ''), { ok: false, error: 'no-workspace' });
+});
+
+test('e2e: createWorkspaceDirectory creates a root directory and refreshes the snapshot', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  await fs.openFolderFromHandle(root);
+
+  const result = await fs.createWorkspaceDirectory('include');
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'include');
+  assert.equal(result.created, true);
+  assert.ok(result.snapshot.entries.some((e) => e.path === 'include' && e.kind === 'directory'));
+  assert.ok(root.children.get('include') instanceof FakeDirHandle);
+});
+
+test('e2e: createWorkspaceDirectory supports mkdir -p style nested creation', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  await fs.openFolderFromHandle(root);
+
+  const result = await fs.createWorkspaceDirectory('src/include/generated', { parents: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'src/include/generated');
+  const paths = result.snapshot.entries.map((e) => e.path);
+  assert.ok(paths.includes('src'));
+  assert.ok(paths.includes('src/include'));
+  assert.ok(paths.includes('src/include/generated'));
+});
+
+test('e2e: createWorkspaceDirectory rejects missing parents without -p', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.createWorkspaceDirectory('src/include'), {
+    ok: false,
+    error: 'missing-parent',
+    path: 'src',
+  });
+});
+
+test('e2e: createWorkspaceDirectory matches Linux existing-directory behavior for -p', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.children.set('include', new FakeDirHandle('include'));
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.createWorkspaceDirectory('include'), {
+    ok: false,
+    error: 'exists',
+    path: 'include',
+  });
+
+  const result = await fs.createWorkspaceDirectory('include', { parents: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.created, false);
+  assert.equal(result.path, 'include');
+});
+
+test('e2e: createWorkspaceDirectory rejects file collisions and invalid names', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.children.set('README', new FakeFileHandle('README'));
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.createWorkspaceDirectory('README'), {
+    ok: false,
+    error: 'exists',
+    path: 'README',
+  });
+  assert.deepEqual(await fs.createWorkspaceDirectory('bad name'), {
+    ok: false,
+    error: 'invalid-name',
+    unsupportedChars: [' '],
+  });
+});
+
+test('e2e: createWorkspaceDirectory reports permission denial without mutating the snapshot', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.getDirectoryHandle = async (name, { create = false } = {}) => {
+    if (!create) { const err = new Error('NotFound'); err.name = 'NotFoundError'; throw err; }
+    const err = new Error(`Denied: ${name}`);
+    err.name = 'NotAllowedError';
+    throw err;
+  };
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.createWorkspaceDirectory('build'), {
+    ok: false,
+    error: 'permission-denied',
+    path: 'build',
+  });
+  assert.equal(fs.getWorkspaceSnapshot().entries.some((e) => e.path === 'build'), false);
 });
 
 test('e2e: writeWorkspaceFile materialises a compile artifact and returns the snapshot', async () => {

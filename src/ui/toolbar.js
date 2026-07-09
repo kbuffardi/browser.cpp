@@ -445,7 +445,7 @@ function inlineCreateErrorMessage(error) {
  * @param {object} snapshot – workspace snapshot from filesystem.js
  * @param {string[]} [revealPaths] – paths whose ancestor dirs should be expanded
  */
-function applyWorkspaceSnapshot(snapshot, revealPaths = []) {
+export function applyWorkspaceSnapshot(snapshot, revealPaths = []) {
   if (!snapshot) return;
   _workspace = snapshot;
   _terminalAPI.refreshWorkspace?.(snapshot);
