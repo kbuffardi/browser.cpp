@@ -65,6 +65,10 @@ jobs:
         if: steps.detect_version.outputs.changed == 'true'
         run: npm run test:e2e
 
+      - name: Run Firefox packaging smoke
+        if: steps.detect_version.outputs.changed == 'true'
+        run: npm run test:browser:firefox
+
       - name: Package release artifacts
         if: steps.detect_version.outputs.changed == 'true'
         run: npm run package:release

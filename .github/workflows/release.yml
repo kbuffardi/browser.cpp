@@ -104,8 +104,17 @@ jobs:
       - name: Run end-to-end tests
         run: npm run test:e2e
 
+      - name: Run Firefox packaging smoke
+        run: npm run test:browser:firefox
+
       - name: Package release artifacts
         run: npm run package:release
+
+      - name: Sign Firefox unlisted XPI
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: npm run sign:firefox:unlisted
 
       - name: Publish GitHub release assets
         env:

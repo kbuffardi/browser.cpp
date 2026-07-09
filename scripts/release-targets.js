@@ -22,13 +22,16 @@ const TARGETS = Object.freeze([
   {
     key: 'firefox',
     label: 'Firefox',
-    channel: 'Firefox Add-ons',
-    packageStrategy: 'blocked',
-    payloadGroup: null,
-    publishable: false,
-    blockReason:
-      'Firefox packaging is blocked until browser-specific manifest and API compatibility work exists.',
-    notes: 'Tracked in the release matrix but intentionally not packaged yet.',
+    channel: 'Firefox Add-ons / signed XPI',
+    packageStrategy: 'distinct',
+    payloadGroup: 'firefox-webext',
+    publishable: true,
+    signing: {
+      listed: 'manual-owner-submission',
+      unlisted: 'required-release-artifact',
+    },
+    notes:
+      'Firefox uses a browser-specific manifest, background script entry, and a separate packaging/signing flow.',
   },
   {
     key: 'brave',

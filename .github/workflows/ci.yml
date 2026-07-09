@@ -37,3 +37,6 @@ jobs:
 
       - name: Run end-to-end session tests
         run: npm run test:e2e
+
+      - name: Run Firefox packaging smoke
+        run: npm run test:browser:firefox

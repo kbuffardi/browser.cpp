@@ -7,6 +7,7 @@ function cleanReleaseWorkspace(options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const targets = [
     path.join(repoRoot, 'dist'),
+    path.join(repoRoot, 'dist-firefox'),
     path.join(repoRoot, 'release'),
   ];
 

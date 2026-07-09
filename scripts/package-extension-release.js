@@ -15,6 +15,10 @@ const {
 
 const NORMALIZED_ZIP_DATE = new Date('2024-01-01T00:00:00Z');
 const TARGETS = getReleaseTargets();
+const PAYLOAD_SOURCE_DIRS = Object.freeze({
+  'chromium-mv3': 'dist',
+  'firefox-webext': 'dist-firefox',
+});
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
@@ -161,28 +165,49 @@ function getCommitSha(repoRoot) {
 function createReleaseArtifacts(options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const distDir = options.distDir || path.join(repoRoot, 'dist');
+  const firefoxDistDir = options.firefoxDistDir || path.join(repoRoot, 'dist-firefox');
   const releaseDir = options.releaseDir || path.join(repoRoot, 'release');
-  const manifestPath = path.join(distDir, 'manifest.json');
-
-  if (!fs.existsSync(manifestPath)) {
-    throw new Error('dist/manifest.json is missing. Run `npm run build` before packaging.');
-  }
 
   const versionResult = validateReleaseVersionSync({
     repoRoot,
     releaseTag: options.releaseTag,
   });
-  const files = collectFiles(distDir);
-  const zipBuffer = buildZipBuffer(files, options.normalizedDate || NORMALIZED_ZIP_DATE);
-  const sharedSha256 = sha256(zipBuffer);
   const publishableTargets = getPublishableReleaseTargets();
+  const payloadCache = new Map();
+  const payloadSourceDirs = new Map([
+    ['chromium-mv3', distDir],
+    ['firefox-webext', firefoxDistDir],
+  ]);
 
   fs.mkdirSync(releaseDir, { recursive: true });
 
   const artifacts = publishableTargets.map((target) => {
+    const payloadGroup = target.payloadGroup;
+    const sourceDir = payloadSourceDirs.get(payloadGroup);
+    if (!sourceDir) {
+      throw new Error(`No source directory is configured for payload group "${payloadGroup}".`);
+    }
+
+    const manifestPath = path.join(sourceDir, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error(`${path.relative(repoRoot, manifestPath)} is missing. Run \`npm run build\` before packaging.`);
+    }
+
+    if (!payloadCache.has(payloadGroup)) {
+      const files = collectFiles(sourceDir);
+      const zipBuffer = buildZipBuffer(files, options.normalizedDate || NORMALIZED_ZIP_DATE);
+      payloadCache.set(payloadGroup, {
+        files,
+        zipBuffer,
+        sha256: sha256(zipBuffer),
+        sourceDir,
+      });
+    }
+
+    const payload = payloadCache.get(payloadGroup);
     const fileName = getArtifactFileName(target, versionResult.version);
     const filePath = path.join(releaseDir, fileName);
-    fs.writeFileSync(filePath, zipBuffer);
+    fs.writeFileSync(filePath, payload.zipBuffer);
     return {
       target: target.key,
       label: target.label,
@@ -190,11 +215,14 @@ function createReleaseArtifacts(options = {}) {
       notes: target.notes,
       packageStrategy: target.packageStrategy,
       payloadGroup: target.payloadGroup,
+      signing: target.signing || null,
       fileName,
       filePath,
-      bytes: zipBuffer.length,
-      sha256: sharedSha256,
-      sharedPayload: true,
+      format: 'zip',
+      bytes: payload.zipBuffer.length,
+      sha256: payload.sha256,
+      sharedPayload: publishableTargets.filter((item) => item.payloadGroup === payloadGroup).length > 1,
+      sourceDir: path.relative(repoRoot, payload.sourceDir),
     };
   });
 
@@ -218,11 +246,17 @@ function createReleaseArtifacts(options = {}) {
     packageLockVersion: versionResult.packageLockVersion,
     packageLockRootVersion: versionResult.packageLockRootVersion,
     distManifestVersion: versionResult.distManifestVersion,
+    firefoxDistManifestVersion: versionResult.firefoxDistManifestVersion,
     normalizedZipDate: (options.normalizedDate || NORMALIZED_ZIP_DATE).toISOString(),
     toolchain: {
       baseUrl: BASE_URL,
       files: FILES.map((file) => file.name),
     },
+    payloads: Object.entries(PAYLOAD_SOURCE_DIRS).map(([payloadGroup, relativeSourceDir]) => ({
+      payloadGroup,
+      sourceDir: relativeSourceDir,
+      sharedByTargets: TARGETS.filter((target) => target.payloadGroup === payloadGroup).map((target) => target.key),
+    })),
     targets: TARGETS.map((target) => ({
       target: target.key,
       label: target.label,
@@ -232,6 +266,7 @@ function createReleaseArtifacts(options = {}) {
       publishable: target.publishable,
       blockReason: target.blockReason || null,
       notes: target.notes,
+      signing: target.signing || null,
       fileName: target.publishable ? getArtifactFileName(target, versionResult.version) : null,
     })),
     artifacts: artifacts.map((artifact) => ({
@@ -241,7 +276,10 @@ function createReleaseArtifacts(options = {}) {
       notes: artifact.notes,
       packageStrategy: artifact.packageStrategy,
       payloadGroup: artifact.payloadGroup,
+      signing: artifact.signing,
       fileName: artifact.fileName,
+      format: artifact.format,
+      sourceDir: artifact.sourceDir,
       bytes: artifact.bytes,
       sha256: artifact.sha256,
       sharedPayload: artifact.sharedPayload,
@@ -252,7 +290,11 @@ function createReleaseArtifacts(options = {}) {
   return {
     version: versionResult.version,
     releaseDir,
-    files,
+    payloads: [...payloadCache.entries()].map(([payloadGroup, payload]) => ({
+      payloadGroup,
+      files: payload.files,
+      sourceDir: payload.sourceDir,
+    })),
     artifacts,
     checksumPath,
     releaseManifestPath,
@@ -261,9 +303,13 @@ function createReleaseArtifacts(options = {}) {
 
 function main() {
   const result = createReleaseArtifacts();
+  const repoRoot = path.resolve(__dirname, '..');
+  const fileCounts = new Map(
+    result.payloads.map((payload) => [path.relative(repoRoot, payload.sourceDir), payload.files.length])
+  );
   for (const artifact of result.artifacts) {
     console.log(
-      `Created ${path.relative(result.releaseDir, artifact.filePath)} (${result.files.length} files, sha256 ${artifact.sha256.slice(0, 12)}...).`
+      `Created ${path.relative(result.releaseDir, artifact.filePath)} (${fileCounts.get(artifact.sourceDir) || 0} files, sha256 ${artifact.sha256.slice(0, 12)}...).`
     );
   }
   console.log(`Created ${path.basename(result.checksumPath)}.`);

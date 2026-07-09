@@ -1,7 +1,5 @@
 /**
- * src/background/service-worker.js
- *
- * Chromium-family Manifest V3 service worker entry point.
+ * Firefox-compatible background script entry point.
  */
 
 import { registerBackgroundHandlers } from './background-main.js';

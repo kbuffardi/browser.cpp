@@ -7,7 +7,7 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 | Editor | Monaco Editor (the engine behind VS Code) |
 | Compiler | WASM-native Clang (runs entirely in the browser, offline) |
 | Terminal | xterm.js with a bash-like shell (`g++`, `./a.out`, `ls`, `mkdir`, `cat`, …) |
-| File access | File System Access API – open & save files on your local drive |
+| File access | File System Access API on Chromium, fallback open/save/folder flows on Firefox |
 | File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
 
@@ -64,7 +64,9 @@ browser.cpp/
 │
 ├── src/
 │   ├── background/
-│   │   └── service-worker.js      MV3 background worker (opens IDE tab)
+│   │   ├── background-main.js     Shared background logic
+│   │   ├── firefox-background.js  Firefox background script entry
+│   │   └── service-worker.js      Chromium MV3 service worker entry
 │   ├── ui/
 │   │   ├── index.html             IDE shell
 │   │   ├── styles.css             VS Code–inspired dark theme
@@ -80,18 +82,21 @@ browser.cpp/
 │   ├── generate-icons.js          Generates PNG extension icons (prebuild)
 │   └── fetch-clang-wasm.js        Downloads clang.js + clang.wasm
 │
-└── dist/                          ← Load this folder as an unpacked extension
-    ├── manifest.json
-    ├── index.html
-    ├── bundle.js
-    ├── service-worker.js
-    ├── compiler.worker.js
-    ├── editor.worker.js            (emitted by monaco-editor-webpack-plugin)
-    ├── ts.worker.js                (emitted by monaco-editor-webpack-plugin)
-    ├── icons/
-    └── clang/
-        ├── clang.js               (downloaded by npm run fetch-clang)
-        └── clang.wasm             (downloaded by npm run fetch-clang)
+├── dist/                          ← Chromium-family unpacked extension output
+│   ├── manifest.json
+│   ├── index.html
+│   ├── bundle.js
+│   ├── service-worker.js
+│   ├── firefox-background.js
+│   ├── compiler.worker.js
+│   ├── editor.worker.js            (emitted by monaco-editor-webpack-plugin)
+│   ├── ts.worker.js                (emitted by monaco-editor-webpack-plugin)
+│   ├── icons/
+│   └── clang/
+│       ├── clang.js               (downloaded by npm run fetch-clang)
+│       └── clang.wasm             (downloaded by npm run fetch-clang)
+└── dist-firefox/                  ← Firefox unpacked extension output
+    └── manifest.json
 ```
 
 ### Compile & run pipeline
@@ -209,6 +214,17 @@ Full feature parity is supported for desktop Chrome, Edge, Brave, and Chromium
 when the browser is based on Chromium 105 or newer. Latest stable is recommended
 for release testing.
 
+Firefox desktop is also a supported release target, but its support contract is
+different:
+
+- compile/run, Monaco, and extension-runtime flows are supported
+- file open/save and folder import use fallback browser flows rather than
+  Chromium File System Access APIs
+- persistent folder write-back and directory-handle session restore may be
+  reduced compared with Chromium-family builds
+- public AMO publication is manual; the protected release workflow generates the
+  Mozilla-signed unlisted XPI for self-distribution
+
 Full parity requires:
 
 - Manifest V3 extension APIs (`chrome.runtime`, `chrome.tabs`, `chrome.storage`)
@@ -244,6 +260,12 @@ npm run test:browser:chrome
 npm run test:browser:edge
 npm run test:browser:brave
 npm run test:browser:chromium
+```
+
+Run the Firefox packaging smoke separately:
+
+```bash
+npm run test:browser:firefox
 ```
 
 For release candidates triggered by a `manifest.json` version bump, GitHub Actions
@@ -321,8 +343,10 @@ This writes:
 
 - `release/browser-cpp-chrome-v<version>.zip` for the Chrome Web Store listing
 - `release/browser-cpp-edge-v<version>.zip` for Microsoft Edge Add-ons
+- `release/browser-cpp-firefox-v<version>.zip` for Firefox unsigned/manual submission packaging
 - `release/browser-cpp-brave-v<version>.zip` for Brave validation/distribution
 - `release/browser-cpp-chromium-v<version>.zip` for Chromium/GitHub distribution
+- `release/firefox-unlisted/*.xpi` after the protected release workflow signs the Firefox unlisted build
 - `release/SHA256SUMS-v<version>.txt`
 - `release/release-manifest-v<version>.json`
 
@@ -330,10 +354,11 @@ The release manifest tracks the browser package matrix:
 
 - Chrome is the canonical Chromium-family payload
 - Edge, Brave, and Chromium currently reuse that payload under browser-labeled filenames
-- Firefox is tracked as blocked until browser-specific manifest and API compatibility work exists
+- Firefox has its own manifest, background entry, unsigned ZIP artifact, and signing metadata
 
-All four emitted ZIPs currently package the same MV3 payload; the browser-specific
-names exist to keep operator workflows and upload steps explicit.
+Chrome, Edge, Brave, and Chromium still share the same MV3 payload. Firefox is
+packaged from `dist-firefox/` as a separate payload because its manifest and
+background model differ from Chromium.
 
 Store submission notes should state:
 
@@ -354,12 +379,16 @@ Use `.github/workflows/release.yml` to publish one GitHub Release per
 4. Cleans `dist/` and `release/`
 5. Fetches the Clang toolchain
 6. Runs lint, build, release validation, and E2E checks
-7. Produces the browser-labeled ZIPs plus checksums and release metadata
-8. Creates or updates GitHub Release `v<version>` and uploads `release/*`
+7. Runs Firefox packaging smoke validation
+8. Produces the browser-labeled ZIPs plus checksums and release metadata
+9. Signs the Firefox unlisted XPI with protected AMO credentials
+10. Creates or updates GitHub Release `v<version>` and uploads `release/*`
 
 Use `workflow_dispatch` with `force=true` to rebuild and re-upload assets for an
 existing release. The workflow does **not** publish directly to browser stores.
 Store publication and Chromium distribution remain human-owned steps.
+Public AMO publication also remains human-owned even though the unlisted Firefox
+XPI is signed automatically during release.
 
 ### Human-owned deployment instructions
 
@@ -418,6 +447,19 @@ Store compatibility plus Brave-specific validation.
 
 There is no official Chromium extension store in this workflow; Chromium is a
 manual/GitHub-distributed channel.
+
+#### Firefox
+
+1. Run `npm run test:browser:firefox`.
+2. Review `amo/metadata/listed.json` and update it if the release changes
+   Firefox-facing product behavior or listing copy.
+3. For public AMO publication, upload the Firefox package and metadata manually
+   through the owner-managed listing workflow.
+4. For self-distribution, verify that the protected release workflow produced a
+   signed artifact under `release/firefox-unlisted/`.
+5. Install the signed XPI in Firefox and complete the manual QA checklist
+   below, paying special attention to the documented workspace-persistence
+   limitations.
 
 ### Manual release QA checklist
 
