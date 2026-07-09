@@ -10,6 +10,7 @@
  *   clear                              – clear the screen
  *   echo <text>                        – print text
  *   ls                                 – list virtual files
+ *   mkdir [-p] <dir>                   – create workspace directories
  *   cat <file>                         – print file content
  *   pwd                                – print working directory
  *   help                               – list available commands
@@ -28,6 +29,7 @@ import {
   isRejectedSource,
   normalizeOverlayPath,
 } from './build-request.mjs';
+import { validateNewDirectoryPath } from './workspace-fs.mjs';
 
 function moduleExports(pkg) {
   return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
@@ -55,7 +57,7 @@ const CRLF   = '\r\n';
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
-const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'cat ', 'pwd', 'git ', 'help'];
+const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'cat ', 'pwd', 'git ', 'help'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -95,6 +97,7 @@ let workspaceFiles = new Set();
 let workspaceCwd = '/';
 let workspaceGit = { isRepo: false, branch: null, remotes: [] };
 let _readWorkspaceFile = null;
+let _onMkdir = null;
 let initialPromptShown = false;
 
 // ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
@@ -203,15 +206,17 @@ let _getSource = null;  // () => string  – returns current editor source
  *   onRunStateChange?: (running:boolean) => void,
  *   getSource: () => string,
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
+ *   onMkdir?: (request:{path:string, parents:boolean}) => Promise<object>,
  * }} callbacks
  */
-export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile }) {
+export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile, onMkdir }) {
   _onCompile = onCompile;
   _onRun     = onRun;
   _onStopRun = onStopRun || null;
   _onRunStateChange = onRunStateChange || null;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile || null;
+  _onMkdir = onMkdir || null;
   initialPromptShown = false;
   busy = true;
 
@@ -474,7 +479,7 @@ function handleKey({ key, domEvent }) {
     if (cmd) {
       history.unshift(cmd);
       if (history.length > MAX_HISTORY_SIZE) history.pop();
-      executeCommand(cmd);
+      void executeCommand(cmd);
     } else {
       writePrompt();
     }
@@ -603,7 +608,7 @@ function handleStdinKey(key, domEvent) {
 
 // ── Command dispatcher ────────────────────────────────────────────────────────
 
-function executeCommand(cmdLine) {
+async function executeCommand(cmdLine) {
   const parts = tokenise(cmdLine);
   if (!parts.length) { writePrompt(); return; }
 
@@ -628,8 +633,11 @@ function executeCommand(cmdLine) {
     case 'cd':
       cmdCd(args);
       break;
+    case 'mkdir':
+      await cmdMkdir(args);
+      break;
     case 'cat':
-      void cmdCat(args);
+      await cmdCat(args);
       break;
     case 'pwd':
       term.write(`${pwdPath()}${CRLF}`);
@@ -818,6 +826,45 @@ async function cmdCat(args) {
   writePrompt();
 }
 
+async function cmdMkdir(args) {
+  if (!workspaceName) {
+    term.write(`${C.red}mkdir: no folder opened${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const parsed = parseMkdirArgs(args);
+  if (!parsed.ok) {
+    const message = parsed.error === 'unknown-option'
+      ? `mkdir: ${parsed.option}: unsupported option`
+      : 'Usage: mkdir [-p] <dir>';
+    term.write(`${C.red}${message}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const resolvedPath = normalizePath(resolvePath(parsed.pathArg));
+  const validated = validateNewDirectoryPath(resolvedPath);
+  if (!validated.ok) {
+    term.write(`${C.red}${formatMkdirValidationError(validated)}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const result = await _onMkdir?.({
+    path: validated.path,
+    parents: parsed.parents,
+  });
+
+  if (!result?.ok) {
+    term.write(`${C.red}${formatMkdirFilesystemError(result, parsed.pathArg)}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  writePrompt();
+}
+
 function cmdGit(args) {
   if (!workspaceName) {
     term.write(`${C.red}git: open a folder first (Ctrl+O)${C.reset}${CRLF}`);
@@ -869,6 +916,7 @@ function cmdHelp() {
     `  ${C.green}echo <text>${C.reset}                                Print text${CRLF}` +
     `  ${C.green}ls [-R] [dir]${C.reset}                              List files/folders in the opened folder${CRLF}` +
     `  ${C.green}cd [dir]${C.reset}                                   Change folder in the opened workspace${CRLF}` +
+    `  ${C.green}mkdir [-p] <dir>${C.reset}                            Create workspace directories${CRLF}` +
     `  ${C.green}cat <file>${C.reset}                                 Print file contents${CRLF}` +
     `  ${C.green}pwd${C.reset}                                        Print current working directory${CRLF}` +
     `  ${C.green}git <cmd>${C.reset}                                  Basic git info for opened repo${CRLF}` +
@@ -899,6 +947,7 @@ export function __setTerminalTestHarness({
   onRunStateChange = null,
   getSource = () => '',
   readWorkspaceFile = null,
+  onMkdir = null,
 } = {}) {
   term = terminalInstance || null;
   fitAddon = null;
@@ -908,6 +957,7 @@ export function __setTerminalTestHarness({
   _onRunStateChange = onRunStateChange;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile;
+  _onMkdir = onMkdir;
   lastBuiltArtifactPath = artifactPath;
   inputBuffer = '';
   history.length = 0;
@@ -921,6 +971,10 @@ export function __setTerminalTestHarness({
 
 export function __handleTerminalKeyForTesting(key, domEvent) {
   handleKey({ key, domEvent });
+}
+
+export async function __executeTerminalCommandForTesting(cmdLine) {
+  await executeCommand(cmdLine);
 }
 
 export function __getTerminalStateForTesting() {
@@ -959,6 +1013,63 @@ function tokenise(line) {
   }
   if (cur) tokens.push(cur);
   return tokens;
+}
+
+function parseMkdirArgs(args) {
+  let parents = false;
+  const paths = [];
+
+  for (const arg of args) {
+    if (arg === '-p') {
+      parents = true;
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      return { ok: false, error: 'unknown-option', option: arg };
+    }
+    paths.push(arg);
+  }
+
+  if (paths.length !== 1) {
+    return { ok: false, error: 'usage' };
+  }
+
+  return { ok: true, parents, pathArg: paths[0] };
+}
+
+function formatMkdirValidationError(result) {
+  if (result.error === 'invalid-name') {
+    const chars = (result.unsupportedChars || []).map((ch) => (ch === ' ' ? "' '" : ch));
+    const verb = chars.length === 1 ? 'is' : 'are';
+    return `${chars.join(', ')} ${verb} not supported in folder names. Use only letters, numbers, hyphens, and underscores.`;
+  }
+
+  if (result.error === 'name-too-long') {
+    return `Keep folder names short, such as: ${result.truncated || ''}`;
+  }
+
+  if (result.error === 'empty') {
+    return 'Usage: mkdir [-p] <dir>';
+  }
+
+  return 'mkdir: cannot create directory: invalid path';
+}
+
+function formatMkdirFilesystemError(result, displayPath) {
+  const path = displayPath || result?.path || '';
+  switch (result?.error) {
+    case 'missing-parent':
+      return `mkdir: cannot create directory '${path}': No such file or directory`;
+    case 'exists':
+      return `mkdir: cannot create directory '${path}': File exists`;
+    case 'not-writable':
+    case 'permission-denied':
+      return `mkdir: cannot create directory '${path}': Permission denied`;
+    case 'no-workspace':
+      return 'mkdir: no folder opened';
+    default:
+      return `mkdir: cannot create directory '${path}'`;
+  }
 }
 
 function promptPath() {
