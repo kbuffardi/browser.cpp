@@ -27,6 +27,29 @@
 - Publish browser store listings and verify installed updates as required by the target browser.
 - The protected release workflow signs the Firefox unlisted XPI with AMO credentials and uploads it with the other release assets.
 
+### Firefox unlisted-signing credentials
+
+The protected release workflow requires two GitHub Actions secrets before it
+starts the release build:
+
+- `AMO_JWT_ISSUER`
+- `AMO_JWT_SECRET`
+
+Create the AMO API credential pair in Mozilla Add-ons, then store the values as
+repository or protected release-environment secrets with these exact names.
+Keep them unavailable to pull-request workflows, do not put them in source,
+local release artifacts, or logs, and grant only the permissions required for
+Firefox signing. The workflow checks only that each value is present and
+non-blank; it never prints either value.
+
+Rotate both secrets through Mozilla and GitHub when the credential expires or
+is suspected to be exposed. After updating them, use
+`workflow_dispatch` with `force=true` to rerun the protected release. The
+workflow must fail before dependency installation when either secret is absent;
+do not bypass signing or publish an unsigned XPI. If the preflight passes but
+signing fails, inspect the protected workflow's AMO/web-ext error, correct the
+credential or AMO configuration, and rerun the forced release.
+
 ## Firefox Verification Test Plan
 
 Use this plan before declaring Firefox support release-ready or bumping the

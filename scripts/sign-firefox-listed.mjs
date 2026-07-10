@@ -4,18 +4,18 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { ensureFirefoxBuild, runWebExt } = require('./firefox-webext.js');
+const {
+  ensureFirefoxBuild,
+  validateAmoCredentials,
+  runWebExt,
+} = require('./firefox-webext.js');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function main() {
   ensureFirefoxBuild(repoRoot);
 
-  const apiKey = process.env.AMO_JWT_ISSUER;
-  const apiSecret = process.env.AMO_JWT_SECRET;
-  if (!apiKey || !apiSecret) {
-    throw new Error('AMO_JWT_ISSUER and AMO_JWT_SECRET are required to sign the Firefox listed package.');
-  }
+  const { apiKey, apiSecret } = validateAmoCredentials();
 
   const metadataPath = path.join(repoRoot, 'amo', 'metadata', 'listed.json');
   if (!fs.existsSync(metadataPath)) {

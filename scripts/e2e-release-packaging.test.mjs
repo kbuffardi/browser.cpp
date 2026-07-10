@@ -23,6 +23,7 @@ const {
 const {
   detectManifestVersionChange,
 } = require('./detect-manifest-version-change.js');
+const { validateAmoCredentials } = require('./firefox-webext.js');
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -81,6 +82,30 @@ function initGitRepo(repoRoot) {
   execFileSync('git', ['config', 'user.email', 'codex@example.com'], { cwd: repoRoot });
   execFileSync('git', ['config', 'user.name', 'Codex'], { cwd: repoRoot });
 }
+
+test('e2e: Firefox signing credentials reject missing values', () => {
+  assert.throws(
+    () => validateAmoCredentials({}),
+    /AMO_JWT_ISSUER is required/
+  );
+});
+
+test('e2e: Firefox signing credentials identify a missing secret', () => {
+  assert.throws(
+    () => validateAmoCredentials({
+      AMO_JWT_ISSUER: 'issuer',
+      AMO_JWT_SECRET: '   ',
+    }),
+    /AMO_JWT_SECRET is required/
+  );
+});
+
+test('e2e: Firefox signing credentials accept a complete pair', () => {
+  assert.doesNotThrow(() => validateAmoCredentials({
+    AMO_JWT_ISSUER: 'issuer',
+    AMO_JWT_SECRET: 'secret',
+  }));
+});
 
 test('e2e: release version sync fails on source manifest mismatch', () => {
   const repoRoot = makeRepoFixture();

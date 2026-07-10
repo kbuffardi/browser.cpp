@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const {
   ensureFirefoxBuild,
+  validateAmoCredentials,
   runWebExt,
   updateReleaseManifest,
 } = require('./firefox-webext.js');
@@ -21,11 +22,7 @@ function findSignedArtifact(dir) {
 function main() {
   ensureFirefoxBuild(repoRoot);
 
-  const apiKey = process.env.AMO_JWT_ISSUER;
-  const apiSecret = process.env.AMO_JWT_SECRET;
-  if (!apiKey || !apiSecret) {
-    throw new Error('AMO_JWT_ISSUER and AMO_JWT_SECRET are required to sign the Firefox unlisted XPI.');
-  }
+  const { apiKey, apiSecret } = validateAmoCredentials();
 
   const artifactsDir = path.join(repoRoot, 'release', 'firefox-unlisted');
   fs.mkdirSync(artifactsDir, { recursive: true });
