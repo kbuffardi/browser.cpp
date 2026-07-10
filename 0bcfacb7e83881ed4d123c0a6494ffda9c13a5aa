@@ -1,0 +1,10 @@
+## AI Agent Reasoning
+
+### Context
+The protected release workflow failed because environment-scoped AMO secrets were referenced without binding the build job to its configured environment.
+
+### Decision
+Bind only `build-release-artifacts` to the existing protected `copilot` environment, preserving step-scoped secret variables and fail-fast validation.
+
+### Reference
+Issue #45
