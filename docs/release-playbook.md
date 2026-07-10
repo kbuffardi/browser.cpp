@@ -36,7 +36,7 @@ starts the release build:
 - `AMO_JWT_SECRET`
 
 Create the AMO API credential pair in Mozilla Add-ons, then store the values as
-repository or protected release-environment secrets with these exact names.
+secrets in the protected `copilot` GitHub Environment with these exact names.
 Keep them unavailable to pull-request workflows, do not put them in source,
 local release artifacts, or logs, and grant only the permissions required for
 Firefox signing. The workflow checks only that each value is present and
