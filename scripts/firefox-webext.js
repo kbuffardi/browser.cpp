@@ -19,6 +19,20 @@ function ensureFirefoxBuild(repoRoot) {
   return manifestPath;
 }
 
+function validateAmoCredentials(env = process.env) {
+  const apiKey = env.AMO_JWT_ISSUER;
+  const apiSecret = env.AMO_JWT_SECRET;
+
+  if (typeof apiKey !== 'string' || !/\S/.test(apiKey)) {
+    throw new Error('AMO_JWT_ISSUER is required to sign a Firefox package.');
+  }
+  if (typeof apiSecret !== 'string' || !/\S/.test(apiSecret)) {
+    throw new Error('AMO_JWT_SECRET is required to sign a Firefox package.');
+  }
+
+  return { apiKey, apiSecret };
+}
+
 function runWebExt(args, options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const { command, args: prefixArgs } = resolveWebExtCommand();
@@ -49,6 +63,7 @@ function updateReleaseManifest(repoRoot, mutate) {
 
 module.exports = {
   ensureFirefoxBuild,
+  validateAmoCredentials,
   runWebExt,
   updateReleaseManifest,
 };

@@ -80,6 +80,25 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      - name: Validate Firefox signing credentials
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          missing=0
+          case "$AMO_JWT_ISSUER" in
+            (*[![:space:]]*) ;;
+            (*) echo "::error title=Missing Firefox signing secret::AMO_JWT_ISSUER is not configured for the protected release workflow."; missing=1 ;;
+          esac
+          case "$AMO_JWT_SECRET" in
+            (*[![:space:]]*) ;;
+            (*) echo "::error title=Missing Firefox signing secret::AMO_JWT_SECRET is not configured for the protected release workflow."; missing=1 ;;
+          esac
+          if [ "$missing" -ne 0 ]; then
+            echo "Configure both protected AMO Actions secrets before rerunning the release."
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
 
