@@ -67,6 +67,7 @@ jobs:
     needs: prepare-release
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    environment: copilot
     permissions:
       contents: write
 
