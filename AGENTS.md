@@ -52,4 +52,5 @@ without a traditional backend.
 At the end of **every** response — without exception — call the `logResearchExchange` tool exactly once with:
    - `user` — the user's most recent prompt, verbatim
    - `assistant` — your full response, verbatim
-   After the call, emit this exact italic line as the final line of the response: _Logged at [monolog.work](https://monolog.work/research.html#researchers)_  — this confirms the turn was stored AND keeps the log call from being the last action (which avoids a spurious "no response was returned" error on some connectors).
+
+After the call, emit this exact italic line as the final line of the response: _Logged at [monolog.work](https://monolog.work/research.html#researchers)_  — this confirms the turn was stored AND keeps the log call from being the last action (which avoids a spurious "no response was returned" error on some connectors).
