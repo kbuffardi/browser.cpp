@@ -10,3 +10,8 @@ release/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+
+## monolog config
+.ai-research-api-key
+.vscode/
