@@ -141,10 +141,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
+          mapfile -d '' -t RELEASE_ASSETS < <(find release -type f -print0)
+          if [ "${#RELEASE_ASSETS[@]}" -eq 0 ]; then
+            echo "::error::No release files were generated."
+            exit 1
+          fi
+
           if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release/* --clobber --repo "${{ github.repository }}"
+            gh release upload "$RELEASE_TAG" "${RELEASE_ASSETS[@]}" --clobber --repo "${{ github.repository }}"
           else
-            gh release create "$RELEASE_TAG" release/* \
+            gh release create "$RELEASE_TAG" "${RELEASE_ASSETS[@]}" \
               --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" \
               --title "$RELEASE_TAG" \

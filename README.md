@@ -382,7 +382,7 @@ Use `.github/workflows/release.yml` to publish one GitHub Release per
 7. Runs Firefox packaging smoke validation
 8. Produces the browser-labeled ZIPs plus checksums and release metadata
 9. Signs the Firefox unlisted XPI with protected AMO credentials
-10. Creates or updates GitHub Release `v<version>` and uploads `release/*`
+10. Creates or updates GitHub Release `v<version>` and uploads all files under `release/`
 
 Use `workflow_dispatch` with `force=true` to rebuild and re-upload assets for an
 existing release. The workflow does **not** publish directly to browser stores.

@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -24,6 +25,14 @@ const {
   detectManifestVersionChange,
 } = require('./detect-manifest-version-change.js');
 const { validateAmoCredentials } = require('./firefox-webext.js');
+
+const releaseWorkflowPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '.github',
+  'workflows',
+  'release.yml'
+);
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -105,6 +114,13 @@ test('e2e: Firefox signing credentials accept a complete pair', () => {
     AMO_JWT_ISSUER: 'issuer',
     AMO_JWT_SECRET: 'secret',
   }));
+});
+
+test('e2e: release workflow uploads files from nested release directories', () => {
+  const workflow = fs.readFileSync(releaseWorkflowPath, 'utf8');
+
+  assert.match(workflow, /find release -type f -print0/);
+  assert.doesNotMatch(workflow, /gh release (?:upload|create)[\s\S]*release\/\*/);
 });
 
 test('e2e: release version sync fails on source manifest mismatch', () => {
