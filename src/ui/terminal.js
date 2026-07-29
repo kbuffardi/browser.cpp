@@ -11,6 +11,7 @@
  *   echo <text>                        – print text
  *   ls                                 – list virtual files
  *   mkdir [-p] <dir>                   – create workspace directories
+ *   touch <file>                       – create an empty workspace file
  *   cat <file>                         – print file content
  *   pwd                                – print working directory
  *   help                               – list available commands
@@ -29,7 +30,7 @@ import {
   isRejectedSource,
   normalizeOverlayPath,
 } from './build-request.mjs';
-import { validateNewDirectoryPath } from './workspace-fs.mjs';
+import { validateNewDirectoryPath, validateNewFilePath } from './workspace-fs.mjs';
 
 function moduleExports(pkg) {
   return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
@@ -57,7 +58,7 @@ const CRLF   = '\r\n';
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
-const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'cat ', 'pwd', 'help'];
+const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'touch ', 'cat ', 'pwd', 'help'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,7 @@ let workspaceFiles = new Set();
 let workspaceCwd = '/';
 let _readWorkspaceFile = null;
 let _onMkdir = null;
+let _onTouch = null;
 let initialPromptShown = false;
 
 // ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
@@ -206,9 +208,10 @@ let _getSource = null;  // () => string  – returns current editor source
  *   getSource: () => string,
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
  *   onMkdir?: (request:{path:string, parents:boolean}) => Promise<object>,
+ *   onTouch?: (request:{path:string}) => Promise<object>,
  * }} callbacks
  */
-export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile, onMkdir }) {
+export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile, onMkdir, onTouch }) {
   _onCompile = onCompile;
   _onRun     = onRun;
   _onStopRun = onStopRun || null;
@@ -216,6 +219,7 @@ export function createTerminal(container, { onCompile, onRun, onStopRun, onRunSt
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile || null;
   _onMkdir = onMkdir || null;
+  _onTouch = onTouch || null;
   initialPromptShown = false;
   busy = true;
 
@@ -633,6 +637,9 @@ async function executeCommand(cmdLine) {
     case 'mkdir':
       await cmdMkdir(args);
       break;
+    case 'touch':
+      await cmdTouch(args);
+      break;
     case 'cat':
       await cmdCat(args);
       break;
@@ -858,6 +865,45 @@ async function cmdMkdir(args) {
   writePrompt();
 }
 
+async function cmdTouch(args) {
+  if (!workspaceName) {
+    term.write(`${C.red}touch: no folder opened${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const parsed = parseTouchArgs(args);
+  if (!parsed.ok) {
+    term.write(`${C.red}Usage: touch <file>${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const rawValidated = validateNewFilePath(parsed.pathArg);
+  if (!rawValidated.ok) {
+    term.write(`${C.red}${formatTouchValidationError(rawValidated, parsed.pathArg)}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const resolvedPath = normalizePath(resolvePath(parsed.pathArg));
+  const validated = validateNewFilePath(resolvedPath);
+  if (!validated.ok) {
+    term.write(`${C.red}${formatTouchValidationError(validated, parsed.pathArg)}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const result = await _onTouch?.({ path: validated.path });
+  if (!result?.ok) {
+    term.write(`${C.red}${formatTouchFilesystemError(result, parsed.pathArg)}${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  writePrompt();
+}
+
 function cmdHelp() {
   term.write(
     `${C.bold}Available commands:${C.reset}${CRLF}` +
@@ -869,6 +915,7 @@ function cmdHelp() {
     `  ${C.green}ls [-R] [dir]${C.reset}                              List files/folders in the opened folder${CRLF}` +
     `  ${C.green}cd [dir]${C.reset}                                   Change folder in the opened workspace${CRLF}` +
     `  ${C.green}mkdir [-p] <dir>${C.reset}                            Create workspace directories${CRLF}` +
+    `  ${C.green}touch <file>${C.reset}                               Create an empty workspace file${CRLF}` +
     `  ${C.green}cat <file>${C.reset}                                 Print file contents${CRLF}` +
     `  ${C.green}pwd${C.reset}                                        Print current working directory${CRLF}` +
     `  ${C.green}help${C.reset}                                       Show this message${CRLF}` +
@@ -899,6 +946,7 @@ export function __setTerminalTestHarness({
   getSource = () => '',
   readWorkspaceFile = null,
   onMkdir = null,
+  onTouch = null,
 } = {}) {
   term = terminalInstance || null;
   fitAddon = null;
@@ -909,6 +957,7 @@ export function __setTerminalTestHarness({
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile;
   _onMkdir = onMkdir;
+  _onTouch = onTouch;
   lastBuiltArtifactPath = artifactPath;
   inputBuffer = '';
   history.length = 0;
@@ -988,6 +1037,13 @@ function parseMkdirArgs(args) {
   return { ok: true, parents, pathArg: paths[0] };
 }
 
+function parseTouchArgs(args) {
+  if (args.length !== 1 || args[0].startsWith('-')) {
+    return { ok: false };
+  }
+  return { ok: true, pathArg: args[0] };
+}
+
 function formatMkdirValidationError(result) {
   if (result.error === 'invalid-name') {
     const chars = (result.unsupportedChars || []).map((ch) => (ch === ' ' ? "' '" : ch));
@@ -1020,6 +1076,32 @@ function formatMkdirFilesystemError(result, displayPath) {
       return 'mkdir: no folder opened';
     default:
       return `mkdir: cannot create directory '${path}'`;
+  }
+}
+
+function formatTouchValidationError(result, displayPath) {
+  if (result.error === 'empty' || result.error === 'no-filename') {
+    return 'Usage: touch <file>';
+  }
+  return `touch: cannot touch '${displayPath}': Invalid path`;
+}
+
+function formatTouchFilesystemError(result, displayPath) {
+  const path = displayPath || result?.path || '';
+  switch (result?.error) {
+    case 'exists':
+      return `touch: cannot touch '${path}': File exists`;
+    case 'missing-parent':
+      return `touch: cannot touch '${path}': No such file or directory`;
+    case 'not-directory':
+      return `touch: cannot touch '${path}': Not a directory`;
+    case 'not-writable':
+    case 'permission-denied':
+      return `touch: cannot touch '${path}': Permission denied`;
+    case 'no-workspace':
+      return 'touch: no folder opened';
+    default:
+      return `touch: cannot touch '${path}'`;
   }
 }
 

@@ -516,6 +516,87 @@ export async function createWorkspaceFile(inputPath, content = '') {
 }
 
 /**
+ * Create an empty file for the terminal's `touch` command.
+ *
+ * Unlike createWorkspaceFile(), this operation must persist to a writable
+ * folder, must not create missing parent directories, and must never truncate
+ * an existing file.
+ *
+ * @param {string} inputPath – workspace-relative path
+ * @returns {Promise<{
+ *   ok:true, path:string, snapshot:object
+ * } | {
+ *   ok:false, error:string, path?:string
+ * }>}
+ */
+export async function touchWorkspaceFile(inputPath) {
+  if (!workspaceName) return { ok: false, error: 'no-workspace' };
+  if (!currentDirectoryHandle) return { ok: false, error: 'not-writable' };
+
+  const validated = validateNewFilePath(inputPath);
+  if (!validated.ok) return validated;
+  const key = validated.path;
+
+  if (entryExists(workspaceEntries, key)) {
+    return { ok: false, error: 'exists', path: key };
+  }
+
+  const segments = key.split('/').filter(Boolean);
+  const filename = segments.pop();
+  let dirHandle = currentDirectoryHandle;
+  let prefix = '';
+
+  for (const segment of segments) {
+    prefix = prefix ? `${prefix}/${segment}` : segment;
+    try {
+      dirHandle = await dirHandle.getDirectoryHandle(segment, { create: false });
+    } catch (err) {
+      if (err?.name === 'NotAllowedError') {
+        return { ok: false, error: 'permission-denied', path: prefix };
+      }
+      if (err?.name === 'TypeMismatchError') {
+        return { ok: false, error: 'not-directory', path: prefix };
+      }
+      return { ok: false, error: 'missing-parent', path: prefix };
+    }
+  }
+
+  try {
+    await dirHandle.getFileHandle(filename, { create: false });
+    return { ok: false, error: 'exists', path: key };
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') {
+      return { ok: false, error: 'permission-denied', path: key };
+    }
+    if (err?.name !== 'NotFoundError' && err?.name !== 'TypeMismatchError') {
+      return { ok: false, error: 'file-create-failed', path: key };
+    }
+    if (err?.name === 'TypeMismatchError') {
+      return { ok: false, error: 'exists', path: key };
+    }
+  }
+
+  let fileHandle;
+  try {
+    fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(new Uint8Array());
+    await writable.close();
+  } catch (err) {
+    try { await dirHandle.removeEntry(filename); } catch (_) { /* best effort cleanup */ }
+    return {
+      ok: false,
+      error: err?.name === 'NotAllowedError' ? 'permission-denied' : 'file-create-failed',
+      path: key,
+    };
+  }
+
+  indexWorkspaceFile(key, fileHandle);
+  await updateFileFingerprint(key, fileHandle);
+  return { ok: true, path: key, snapshot: getWorkspaceSnapshot() };
+}
+
+/**
  * Create a directory in the currently opened workspace folder.
  *
  * Supports nested paths and Linux-like `mkdir -p` semantics: without

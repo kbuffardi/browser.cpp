@@ -309,6 +309,71 @@ test('e2e: createWorkspaceFile refuses when no workspace is open', async () => {
   assert.deepEqual(await fs.createWorkspaceFile('main.cpp', ''), { ok: false, error: 'no-workspace' });
 });
 
+test('e2e: touchWorkspaceFile creates a persisted zero-byte file', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  await fs.openFolderFromHandle(root);
+
+  const result = await fs.touchWorkspaceFile('notes.txt');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'notes.txt');
+  assert.equal(await fs.readWorkspaceFile('notes.txt'), '');
+  assert.ok(root.children.get('notes.txt') instanceof FakeFileHandle);
+  assert.equal((await root.children.get('notes.txt').getFile()).size, 0);
+});
+
+test('e2e: touchWorkspaceFile requires existing parent directories', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.children.set('notes', new FakeDirHandle('notes'));
+  await fs.openFolderFromHandle(root);
+
+  const success = await fs.touchWorkspaceFile('notes/today.txt');
+  assert.equal(success.ok, true);
+  assert.ok(root.children.get('notes').children.get('today.txt') instanceof FakeFileHandle);
+
+  assert.deepEqual(await fs.touchWorkspaceFile('missing/today.txt'), {
+    ok: false,
+    error: 'missing-parent',
+    path: 'missing',
+  });
+});
+
+test('e2e: touchWorkspaceFile rejects existing files without truncating them', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  const existing = new FakeFileHandle('notes.txt');
+  existing.data = new TextEncoder().encode('keep this content');
+  root.children.set('notes.txt', existing);
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.touchWorkspaceFile('notes.txt'), {
+    ok: false,
+    error: 'exists',
+    path: 'notes.txt',
+  });
+  assert.equal(await fs.readWorkspaceFile('notes.txt'), 'keep this content');
+});
+
+test('e2e: touchWorkspaceFile reports permission failures without indexing a file', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.getFileHandle = async () => {
+    const error = new Error('Denied');
+    error.name = 'NotAllowedError';
+    throw error;
+  };
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.touchWorkspaceFile('notes.txt'), {
+    ok: false,
+    error: 'permission-denied',
+    path: 'notes.txt',
+  });
+  assert.equal(fs.getWorkspaceSnapshot().entries.some((entry) => entry.path === 'notes.txt'), false);
+});
+
 test('e2e: createWorkspaceDirectory creates a root directory and refreshes the snapshot', async () => {
   const fs = await importFreshFilesystem();
   const root = new FakeDirHandle('project');
