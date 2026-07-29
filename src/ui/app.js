@@ -84,6 +84,14 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
       return result;
     },
+    onTouch: async ({ path }) => {
+      const result = await fsAPI.touchWorkspaceFile(path);
+      if (result?.ok) {
+        applyWorkspaceSnapshot(result.snapshot, [result.path]);
+        await persistenceGate.persist();
+      }
+      return result;
+    },
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
   });
