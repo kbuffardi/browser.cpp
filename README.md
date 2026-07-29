@@ -187,9 +187,9 @@ be persisted.
 | `help` | Show command list |
 
 Folders opened in browser.cpp may still be git repositories, but the simulated
-terminal does **not** support `git` commands. Treat `.git` files and folders as
-ordinary workspace content, and use a real local terminal for version control
-operations.
+terminal does **not** support `git` commands; for example, `git status` returns
+`bash: git: command not found`. Treat `.git` files and folders as ordinary
+workspace content, and use a real local terminal for version control operations.
 
 ### Project builds
 
