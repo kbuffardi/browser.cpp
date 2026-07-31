@@ -561,3 +561,76 @@ body.is-resizing-horizontal * {
 .session-reload-actions .session-reload-primary:hover {
   filter: brightness(1.05);
 }
+
+/* ── Buffered stdin prompt ────────────────────────────────────────────────── */
+
+#buffered-stdin-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  color: var(--text);
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+#buffered-stdin-dialog::backdrop {
+  background: rgba(17, 17, 27, 0.72);
+}
+
+.buffered-stdin-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+}
+
+.buffered-stdin-content h2 {
+  font-size: 15px;
+}
+
+.buffered-stdin-content p,
+#buffered-stdin-feedback {
+  color: var(--subtext0);
+  line-height: 1.45;
+}
+
+.buffered-stdin-content label {
+  font-weight: 600;
+}
+
+#buffered-stdin-input {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 8px;
+  color: var(--text);
+  background: var(--crust);
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  font: 13px/1.4 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+#buffered-stdin-input:focus {
+  border-color: var(--blue);
+  outline: 1px solid var(--blue);
+}
+
+#buffered-stdin-feedback {
+  min-height: 18px;
+  font-size: 12px;
+  text-align: right;
+}
+
+#buffered-stdin-feedback.is-error {
+  color: var(--red);
+}
+
+.buffered-stdin-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

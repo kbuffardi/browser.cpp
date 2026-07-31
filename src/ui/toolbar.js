@@ -26,6 +26,7 @@ let _fsAPI       = null;
 let _fileName    = 'main.cpp';
 let _workspace   = null;
 let _runAfterSuccessfulCompile = false;
+let _runPreparationActive = false;
 let _lastRunBinaryBytes = null;
 const _expandedWorkspaceDirectories = new Set();
 const WORKSPACE_SYNC_INTERVAL_MS = 2_000;
@@ -98,6 +99,7 @@ export function setWorker(worker) {
   }
   _worker = worker;
   _runAfterSuccessfulCompile = false;
+  _runPreparationActive = false;
   handleWorkerMessages();
   updateStatusBar('compiler', 'loading', 'Compiler loading…');
   setButtonsEnabled(false);
@@ -105,6 +107,16 @@ export function setWorker(worker) {
 
 export function getLastRunBinaryBytes() {
   return _lastRunBinaryBytes ? new Uint8Array(_lastRunBinaryBytes) : null;
+}
+
+export function setRunPreparing(preparing) {
+  _runPreparationActive = preparing;
+  setButtonsEnabled(!preparing);
+  updateStatusBar(
+    'compiler',
+    preparing ? 'busy' : 'ready',
+    preparing ? 'Preparing run…' : 'Compiler ready'
+  );
 }
 
 // ── Button bindings ───────────────────────────────────────────────────────────
@@ -233,12 +245,13 @@ async function handleWorkerMessage(data) {
         await persistWorkspaceFile(data.outputPath || 'a.out', data.outputBytes);
       }
       if (shouldRunAfterCompile && data.success) {
-        _terminalAPI.startRun();
+        await _terminalAPI.startRun();
       }
       break;
     }
 
     case 'run-start':
+      _terminalAPI.onRunStart?.(data);
       updateStatusBar('compiler', 'busy', 'Running…');
       setButtonsEnabled(false);
       break;
@@ -602,18 +615,18 @@ async function actionSaveAs() {
 }
 
 async function actionCompile() {
-  if (!_worker) return;
+  if (!_worker || _runPreparationActive) return;
   _runAfterSuccessfulCompile = false;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
 }
 
-function actionRun() {
-  _terminalAPI.startRun();
+async function actionRun() {
+  await _terminalAPI.startRun();
 }
 
 async function actionCompileRun() {
-  if (!_worker) return;
+  if (!_worker || _runPreparationActive) return;
   _runAfterSuccessfulCompile = true;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
