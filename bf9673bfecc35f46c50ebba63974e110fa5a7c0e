@@ -1,0 +1,17 @@
+## AI Agent Reasoning
+
+### Context
+Firefox extension pages cannot use the existing SharedArrayBuffer-backed live stdin path.
+
+### Decisions Made
+- Use a native dialog for accessible focus management and Escape cancellation.
+- Treat run preparation as distinct from running; only worker run-start enables Stop and live stdin routing.
+- Cap UTF-8 input at 256 KiB and render user input only through textarea values/textContent.
+- Disable compile actions while preparation is active to prevent duplicate worker work.
+
+### Trade-offs
+- Firefox users provide all stdin before execution, so program prompts may appear after input is entered.
+
+### References
+- GitHub issue #53
+- Approved revised plan comment 5138202486
