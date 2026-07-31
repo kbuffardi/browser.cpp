@@ -1,0 +1,17 @@
+## AI Agent Reasoning
+
+### Context
+Issue #53 requires cin programs to run in Firefox extension pages where SharedArrayBuffer is unavailable.
+
+### Decisions Made
+- Preserve the SharedArrayBuffer path for Chromium live stdin.
+- Add a discriminated buffered mode because synchronous WASI fd_read cannot await postMessage input.
+- Validate UI-provided binary, VFS, and stdin fields at the worker boundary.
+- Use cursor-based Uint8Array reads so buffered input is linear-time and reaches deterministic EOF.
+
+### Trade-offs
+- Firefox receives pre-supplied stdin rather than live prompt-by-prompt interaction.
+
+### References
+- GitHub issue #53
+- Approved revised plan comment 5138202486
