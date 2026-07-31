@@ -1,5 +1,7 @@
 'use strict';
 
+export const BUFFERED_STDIN_MAX_BYTES = 256 * 1024;
+
 function isByteSource(value) {
   return value instanceof Uint8Array || value instanceof ArrayBuffer;
 }
@@ -42,6 +44,9 @@ export function validateRunRequest(request) {
     case 'buffered':
       if (!isByteSource(request.stdinBuffer) || request.sharedBuffer !== undefined) {
         return invalid('Invalid buffered stdin: stdinBuffer must be a Uint8Array or ArrayBuffer.');
+      }
+      if (request.stdinBuffer.byteLength > BUFFERED_STDIN_MAX_BYTES) {
+        return invalid('Invalid buffered stdin: input exceeds the 256 KiB limit.');
       }
       stdin = { mode: 'buffered', bytes: asUint8Array(request.stdinBuffer) };
       break;

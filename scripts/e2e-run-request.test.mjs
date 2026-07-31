@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateRunRequest } from '../src/workers/run-request.mjs';
+import {
+  BUFFERED_STDIN_MAX_BYTES,
+  validateRunRequest,
+} from '../src/workers/run-request.mjs';
 
 function interactiveRequest(overrides = {}) {
   return {
@@ -52,6 +55,17 @@ test('e2e: worker run contract rejects mismatched stdin variants', () => {
     assert.equal(result.ok, false);
     assert.match(result.error, /stdin/i);
   }
+});
+
+test('e2e: worker run contract rejects buffered stdin above the shared size limit', () => {
+  const result = validateRunRequest(interactiveRequest({
+    stdinMode: 'buffered',
+    sharedBuffer: undefined,
+    stdinBuffer: new Uint8Array(BUFFERED_STDIN_MAX_BYTES + 1),
+  }));
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /256 KiB/);
 });
 
 test('e2e: worker run contract rejects invalid binary and VFS byte fields', () => {

@@ -10,6 +10,7 @@ test('e2e: buffered stdin dialog has accessible controls and status feedback', a
   assert.match(dialog, /aria-labelledby="buffered-stdin-title"/);
   assert.match(dialog, /<label for="buffered-stdin-input"/);
   assert.match(dialog, /<textarea[\s\S]*id="buffered-stdin-input"[\s\S]*aria-describedby="buffered-stdin-feedback"/);
+  assert.match(dialog, /<textarea[\s\S]*maxlength="262144"/);
   assert.match(dialog, /id="buffered-stdin-feedback"[\s\S]*aria-live="polite"/);
   assert.match(dialog, /<button[^>]*id="buffered-stdin-cancel"/);
   assert.match(dialog, /<button[^>]*id="buffered-stdin-run"/);

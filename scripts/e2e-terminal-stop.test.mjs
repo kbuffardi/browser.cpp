@@ -210,3 +210,17 @@ test('e2e: run callback failure restores idle state without run-start', async ()
   assert.equal(state.running, false);
   assert.ok(writes.join('').includes('Could not start program'));
 });
+
+test('e2e: oversized buffered stdin restores idle state and posts no run request', async () => {
+  const ctx = setupTerminalHarness({
+    supportsInteractiveStdin: false,
+    requestBufferedStdin: async () => 'x'.repeat((256 * 1024) + 1),
+  });
+
+  assert.equal(await startRun(), false);
+
+  assert.deepEqual(ctx.runCalls, []);
+  assert.deepEqual(ctx.runPreparationChanges, [true, false]);
+  assert.equal(__getTerminalStateForTesting().preparingRun, false);
+  assert.ok(ctx.writes.join('').includes('256 KiB'));
+});
