@@ -1,0 +1,16 @@
+## AI Agent Reasoning
+
+### Context
+Firefox WebExtension pages do not currently become cross-origin isolated from Chromium's manifest keys, so issue #53 cannot be fixed with permissions or headers alone.
+
+### Decisions Made
+- Make SAB optional for the Firefox compatibility profile while retaining it for Chromium full parity.
+- Strip Chromium COOP/COEP keys from generated Firefox manifests and assert both absence and Chromium retention.
+- Require an exact real-Firefox cin acceptance because package smoke does not execute the runtime.
+
+### Trade-offs
+- Firefox is reported as compatible with an explicit buffered-stdin limitation rather than full parity.
+
+### References
+- GitHub issue #53
+- Approved revised plan comment 5138202486
