@@ -1,0 +1,1 @@
+Review reasoning: enforce the same 256 KiB buffered-stdin ceiling at both the UI and worker trust boundary so an oversized request cannot bypass the dialog. Extract dialog lifecycle and focus restoration from terminal.js because that file already owns substantial shell/run state; the new module keeps DOM orchestration separate while sharing the request-contract constant.
