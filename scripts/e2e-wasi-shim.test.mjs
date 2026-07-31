@@ -32,6 +32,19 @@ function readStdin(runtime, spans) {
   return { errno, nread, bytes: new Uint8Array(memory.buffer) };
 }
 
+async function readStdinAsync(runtime, spans) {
+  const memory = runtime.getMemoryForTesting();
+  const request = configureRead(memory, spans);
+  const errno = await runtime.wasi.fd_read(
+    0,
+    request.iovsPtr,
+    request.iovsLen,
+    request.nreadPtr
+  );
+  const nread = new DataView(memory.buffer).getUint32(request.nreadPtr, true);
+  return { errno, nread, bytes: new Uint8Array(memory.buffer) };
+}
+
 function writeString(memory, ptr, text) {
   const bytes = new TextEncoder().encode(text);
   new Uint8Array(memory.buffer).set(bytes, ptr);
@@ -85,6 +98,45 @@ test('e2e: wasi shim returns immediate EOF for empty buffered and none stdin', (
     assert.equal(result.errno, 0);
     assert.equal(result.nread, 0);
   }
+});
+
+test('e2e: wasi shim suspends message stdin until data arrives', async () => {
+  const { runtime } = makeRuntime({ mode: 'interactive-message' });
+  const pendingRead = readStdinAsync(runtime, [
+    { base: 128, len: 2 },
+    { base: 160, len: 4 },
+  ]);
+
+  runtime.pushStdin(new TextEncoder().encode('Ada\n'));
+  const result = await pendingRead;
+
+  assert.equal(result.errno, 0);
+  assert.equal(result.nread, 4);
+  assert.equal(new TextDecoder().decode(result.bytes.subarray(128, 130)), 'Ad');
+  assert.equal(new TextDecoder().decode(result.bytes.subarray(160, 162)), 'a\n');
+});
+
+test('e2e: wasi shim drains queued message stdin before reporting EOF', async () => {
+  const { runtime } = makeRuntime({ mode: 'interactive-message' });
+  runtime.pushStdin(new TextEncoder().encode('42'));
+  runtime.endStdin();
+
+  const data = await readStdinAsync(runtime, [{ base: 128, len: 8 }]);
+  assert.equal(data.errno, 0);
+  assert.equal(data.nread, 2);
+  assert.equal(new TextDecoder().decode(data.bytes.subarray(128, 130)), '42');
+
+  const eof = await readStdinAsync(runtime, [{ base: 160, len: 8 }]);
+  assert.equal(eof.errno, 0);
+  assert.equal(eof.nread, 0);
+});
+
+test('e2e: wasi shim returns immediately for a zero-length message stdin read', async () => {
+  const { runtime } = makeRuntime({ mode: 'interactive-message' });
+  const result = await readStdinAsync(runtime, [{ base: 128, len: 0 }]);
+
+  assert.equal(result.errno, 0);
+  assert.equal(result.nread, 0);
 });
 
 test('e2e: wasi shim drains long buffered input without truncation', () => {

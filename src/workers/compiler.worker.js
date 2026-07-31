@@ -10,6 +10,10 @@
  *                       std: string, flags: string[], primarySourcePath, outputName }
  *    { type: 'run', stdinMode: 'interactive', sharedBuffer: SharedArrayBuffer,
  *                   vfsFiles, binaryBytes?: Uint8Array }
+ *    { type: 'run', stdinMode: 'interactive-message', stdinSessionId: string,
+ *                   vfsFiles, binaryBytes?: Uint8Array }
+ *    { type: 'stdin-data', stdinSessionId: string, bytes: Uint8Array }
+ *    { type: 'stdin-eof', stdinSessionId: string }
  *    { type: 'run', stdinMode: 'buffered', stdinBuffer: Uint8Array|ArrayBuffer,
  *                   vfsFiles, binaryBytes?: Uint8Array }
  *    { type: 'run', stdinMode: 'none', vfsFiles, binaryBytes?: Uint8Array }
@@ -47,7 +51,13 @@
 import { parseCompilePlan } from './compile-plan.mjs';
 import { parseDiagnostics } from '../ui/diagnostics.mjs';
 import { createWasiRuntime } from './wasi-shim.mjs';
-import { validateRunRequest } from './run-request.mjs';
+import { validateRunRequest, validateStdinMessage } from './run-request.mjs';
+import {
+  createStdinSessionRouter,
+  createWasiImports,
+  invokeWasiStart,
+  supportsJspi,
+} from './jspi-stdin.mjs';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +87,10 @@ let sysrootBuffer = null;
  * @type {Uint8Array|null}
  */
 let compiledBinary = null;
+
+const stdinSessions = createStdinSessionRouter((diagnostic) => {
+  send({ type: 'stderr', data: `${diagnostic}\n` });
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,7 +197,7 @@ async function loadCompiler() {
 
   compilerState = 'ready';
   send({ type: 'compiler-loading', progress: 100 });
-  send({ type: 'compiler-ready' });
+  send({ type: 'compiler-ready', capabilities: { jspi: supportsJspi() } });
   return true;
 }
 
@@ -478,6 +492,7 @@ function groupDiagnostics(text) {
  *
  * @param {{
  *   stdin: ({mode:'interactive',sharedBuffer:SharedArrayBuffer}|
+ *           {mode:'interactive-message',sessionId:string}|
  *           {mode:'buffered',bytes:Uint8Array}|
  *           {mode:'none'}),
  *   vfsFiles:Array<{path:string,bytes:Uint8Array}>,
@@ -503,18 +518,26 @@ async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
     onStderr: (text) => send({ type: 'stderr', data: text }),
   });
   wasiRuntime.initRunVfs(vfsFiles);
+  const useJspi = stdin.mode === 'interactive-message';
+  if (useJspi) {
+    stdinSessions.activate(stdin.sessionId, wasiRuntime);
+  }
   let exitCode = 0;
 
   try {
+    const wasiImports = useJspi
+      ? createWasiImports(wasiRuntime.wasi)
+      : wasiRuntime.wasi;
     const { instance } = await WebAssembly.instantiate(compiledBinary, {
-      wasi_snapshot_preview1: wasiRuntime.wasi,
+      wasi_snapshot_preview1: wasiImports,
     });
 
     // Give the WASI shim access to the module's memory
     wasiRuntime.setMemory(instance.exports.memory);
 
     // WASI entry point
-    instance.exports._start();
+    if (useJspi) await invokeWasiStart(instance);
+    else instance.exports._start();
   } catch (e) {
     if (e && e.__wasi_exit__) {
       exitCode = e.code;
@@ -525,6 +548,8 @@ async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
       send({ type: 'stderr', data: `Unexpected error: ${String(e)}\n` });
       exitCode = 1;
     }
+  } finally {
+    stdinSessions.clear(wasiRuntime);
   }
 
   // Flush any still-open writable file descriptors so their content is saved
@@ -576,8 +601,31 @@ self.onmessage = async ({ data }) => {
         send({ type: 'run-result', exitCode: 1, vfsChanges: [], vfsDeletes: [] });
         break;
       }
-      send({ type: 'run-start', stdinMode: validation.value.stdin.mode });
+      if (
+        validation.value.stdin.mode === 'interactive-message' &&
+        !supportsJspi()
+      ) {
+        send({ type: 'stderr', data: 'Live Firefox stdin requires JSPI support.\n' });
+        send({ type: 'run-result', exitCode: 1, vfsChanges: [], vfsDeletes: [] });
+        break;
+      }
+      send({
+        type: 'run-start',
+        stdinMode: validation.value.stdin.mode,
+        stdinSessionId: validation.value.stdin.sessionId,
+      });
       await run(validation.value);
+      break;
+    }
+
+    case 'stdin-data':
+    case 'stdin-eof': {
+      const validation = validateStdinMessage(data);
+      if (!validation.ok) {
+        send({ type: 'stderr', data: `${validation.error}\n` });
+        break;
+      }
+      stdinSessions.route(validation.value);
       break;
     }
 

@@ -1,6 +1,8 @@
 'use strict';
 
 export const BUFFERED_STDIN_MAX_BYTES = 256 * 1024;
+export const INTERACTIVE_STDIN_CHUNK_MAX_BYTES = 64 * 1024;
+const STDIN_SESSION_ID_MAX_LENGTH = 128;
 
 function isByteSource(value) {
   return value instanceof Uint8Array || value instanceof ArrayBuffer;
@@ -15,6 +17,50 @@ function asUint8Array(value) {
 
 function invalid(error) {
   return { ok: false, error };
+}
+
+function isValidStdinSessionId(value) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= STDIN_SESSION_ID_MAX_LENGTH;
+}
+
+export function validateStdinMessage(message) {
+  if (!message || !isValidStdinSessionId(message.stdinSessionId)) {
+    return invalid('Invalid stdin message: stdinSessionId is required.');
+  }
+
+  if (message.type === 'stdin-data') {
+    if (!isByteSource(message.bytes)) {
+      return invalid('Invalid stdin-data message: bytes must be a Uint8Array or ArrayBuffer.');
+    }
+    if (message.bytes.byteLength === 0) {
+      return invalid('Invalid stdin-data message: bytes must not be empty.');
+    }
+    if (message.bytes.byteLength > INTERACTIVE_STDIN_CHUNK_MAX_BYTES) {
+      return invalid('Invalid stdin-data message: input chunk exceeds the 64 KiB limit.');
+    }
+    return {
+      ok: true,
+      value: {
+        type: 'stdin-data',
+        sessionId: message.stdinSessionId,
+        bytes: asUint8Array(message.bytes),
+      },
+    };
+  }
+
+  if (message.type === 'stdin-eof') {
+    if (message.bytes !== undefined) {
+      return invalid('Invalid stdin-eof message: bytes are not allowed.');
+    }
+    return {
+      ok: true,
+      value: { type: 'stdin-eof', sessionId: message.stdinSessionId },
+    };
+  }
+
+  return invalid('Invalid stdin message type. Expected stdin-data or stdin-eof.');
 }
 
 /**
@@ -41,6 +87,22 @@ export function validateRunRequest(request) {
       stdin = { mode: 'interactive', sharedBuffer: request.sharedBuffer };
       break;
 
+    case 'interactive-message':
+      if (
+        !isValidStdinSessionId(request.stdinSessionId) ||
+        request.sharedBuffer !== undefined ||
+        request.stdinBuffer !== undefined
+      ) {
+        return invalid(
+          'Invalid interactive-message stdin: stdinSessionId is required and no buffer may be supplied.'
+        );
+      }
+      stdin = {
+        mode: 'interactive-message',
+        sessionId: request.stdinSessionId,
+      };
+      break;
+
     case 'buffered':
       if (!isByteSource(request.stdinBuffer) || request.sharedBuffer !== undefined) {
         return invalid('Invalid buffered stdin: stdinBuffer must be a Uint8Array or ArrayBuffer.');
@@ -59,7 +121,9 @@ export function validateRunRequest(request) {
       break;
 
     default:
-      return invalid('Invalid stdinMode. Expected interactive, buffered, or none.');
+      return invalid(
+        'Invalid stdinMode. Expected interactive, interactive-message, buffered, or none.'
+      );
   }
 
   let binaryBytes = null;

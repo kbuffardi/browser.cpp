@@ -16,6 +16,7 @@ import {
 
 function setupTerminalHarness({
   supportsInteractiveStdin = true,
+  supportsMessageInteractiveStdin = false,
   requestBufferedStdin = async () => '',
   onRun,
 } = {}) {
@@ -24,6 +25,7 @@ function setupTerminalHarness({
   const runPreparationChanges = [];
   const stopCalls = [];
   const runCalls = [];
+  const stdinMessages = [];
   const fakeTerm = {
     clear() {},
     write(text) { writes.push(text); },
@@ -37,10 +39,21 @@ function setupTerminalHarness({
     onRunStateChange: (running) => runStateChanges.push(running),
     onRunPreparationStateChange: (preparing) => runPreparationChanges.push(preparing),
     supportsInteractiveStdin: () => supportsInteractiveStdin,
+    supportsMessageInteractiveStdin: () => supportsMessageInteractiveStdin,
     requestBufferedStdin,
+    onStdinData: (message) => stdinMessages.push(message),
+    onStdinEOF: (message) => stdinMessages.push(message),
+    createStdinSessionId: () => 'stdin-session-test',
   });
 
-  return { writes, runStateChanges, runPreparationChanges, stopCalls, runCalls };
+  return {
+    writes,
+    runStateChanges,
+    runPreparationChanges,
+    stopCalls,
+    runCalls,
+    stdinMessages,
+  };
 }
 
 function ctrlCEvent() {
@@ -161,6 +174,50 @@ test('e2e: non-SAB run posts UTF-8 buffered stdin before entering running state'
   assert.deepEqual(ctx.runStateChanges, [true]);
   assert.deepEqual(ctx.runPreparationChanges, [true, false]);
   assert.equal(__getTerminalStateForTesting().preparingRun, false);
+});
+
+test('e2e: Firefox JSPI run forwards live terminal lines and EOF by session', async () => {
+  const ctx = setupTerminalHarness({
+    supportsInteractiveStdin: false,
+    supportsMessageInteractiveStdin: true,
+    requestBufferedStdin: async () => {
+      throw new Error('buffered input should not be requested');
+    },
+  });
+
+  assert.equal(await startRun(), true);
+  assert.deepEqual(ctx.runCalls[0], {
+    stdinMode: 'interactive-message',
+    stdinSessionId: 'stdin-session-test',
+  });
+
+  onRunStart(ctx.runCalls[0]);
+  for (const character of 'Ada') {
+    __handleTerminalKeyForTesting(character, {
+      key: character,
+      ctrlKey: false,
+      altKey: false,
+    });
+  }
+  __handleTerminalKeyForTesting('\r', {
+    key: 'Enter',
+    ctrlKey: false,
+    altKey: false,
+  });
+  __handleTerminalKeyForTesting('', {
+    key: 'd',
+    ctrlKey: true,
+    altKey: false,
+  });
+
+  assert.equal(ctx.stdinMessages.length, 2);
+  assert.equal(ctx.stdinMessages[0].type, 'stdin-data');
+  assert.equal(ctx.stdinMessages[0].stdinSessionId, 'stdin-session-test');
+  assert.equal(new TextDecoder().decode(ctx.stdinMessages[0].bytes), 'Ada\n');
+  assert.deepEqual(ctx.stdinMessages[1], {
+    type: 'stdin-eof',
+    stdinSessionId: 'stdin-session-test',
+  });
 });
 
 test('e2e: canceling buffered stdin restores idle state and posts no run request', async () => {

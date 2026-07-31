@@ -929,6 +929,12 @@ async function runSmoke(cdp, sessionId) {
     missing.length === 0,
     `Missing required browser capabilities on ${capabilities.href}: ${missing.join(', ')}`
   );
+  assert(
+    capabilities.sharedArrayBuffer &&
+      capabilities.atomicsWaitAsync &&
+      capabilities.crossOriginIsolated,
+    'Chromium smoke requires the existing SharedArrayBuffer stdin transport.'
+  );
 
   let ready;
   try {

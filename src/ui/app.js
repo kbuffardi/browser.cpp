@@ -30,10 +30,6 @@ import {
   applyWorkspaceSnapshot,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
-import {
-  createBrowserCompatibilityReport,
-  formatBrowserCompatibilityMessage,
-} from './browser-capabilities.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -68,6 +64,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       const binaryBytes = toolbarController?.getLastRunBinaryBytes?.() || null;
       worker.postMessage({ type: 'run', ...runRequest, vfsFiles, binaryBytes });
     },
+    onStdinData: (message) => worker.postMessage(message),
+    onStdinEOF: (message) => worker.postMessage(message),
     onStopRun: () => {
       worker.terminate();
       worker = createCompilerWorker();
@@ -98,13 +96,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
   });
-
-  const compatibilityReport = createBrowserCompatibilityReport(window);
-  const compatibilityMessage = formatBrowserCompatibilityMessage(compatibilityReport);
-  if (compatibilityMessage) {
-    console.warn('[browser.cpp]', compatibilityMessage);
-    terminalAPI.printInfo(compatibilityMessage);
-  }
 
   // 4. Toolbar (wires buttons + worker messages + keyboard shortcuts)
   const { restoreSession, persistSession } = createSessionPersistence({

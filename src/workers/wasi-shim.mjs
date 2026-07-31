@@ -52,8 +52,13 @@ export function createWasiRuntime({
   let sharedBuffer = null;
   let sabControl = null;
   const stdinQueue = [];
+  const messageStdinChunks = [];
+  let messageStdinChunkIndex = 0;
+  let messageStdinChunkOffset = 0;
   let stdinBytes = new Uint8Array();
   let stdinCursor = 0;
+  let stdinEnded = false;
+  const stdinWaiters = [];
 
   if (stdinMode === 'interactive') {
     if (
@@ -69,8 +74,75 @@ export function createWasiRuntime({
       throw new TypeError('Buffered stdin requires Uint8Array or ArrayBuffer bytes.');
     }
     stdinBytes = new Uint8Array(stdin.bytes);
-  } else if (stdinMode !== 'none') {
+  } else if (stdinMode !== 'none' && stdinMode !== 'interactive-message') {
     throw new TypeError(`Unsupported stdin mode: ${String(stdinMode)}`);
+  }
+
+  function wakeStdinWaiters() {
+    for (const resolve of stdinWaiters.splice(0)) resolve();
+  }
+
+  function pushStdin(bytes) {
+    if (stdinMode !== 'interactive-message') return false;
+    if (stdinEnded) return false;
+    if (!(bytes instanceof Uint8Array) && !(bytes instanceof ArrayBuffer)) {
+      throw new TypeError('Message stdin requires Uint8Array or ArrayBuffer bytes.');
+    }
+    const chunk = new Uint8Array(bytes).slice();
+    if (chunk.byteLength === 0) return false;
+    messageStdinChunks.push(chunk);
+    wakeStdinWaiters();
+    return true;
+  }
+
+  function endStdin() {
+    if (stdinMode !== 'interactive-message') return false;
+    if (stdinEnded) return false;
+    stdinEnded = true;
+    wakeStdinWaiters();
+    return true;
+  }
+
+  function cancelStdin() {
+    if (stdinMode !== 'interactive-message') return false;
+    stdinEnded = true;
+    messageStdinChunks.length = 0;
+    messageStdinChunkIndex = 0;
+    messageStdinChunkOffset = 0;
+    wakeStdinWaiters();
+    return true;
+  }
+
+  function waitForStdin() {
+    if (messageStdinChunkIndex < messageStdinChunks.length || stdinEnded) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => stdinWaiters.push(resolve));
+  }
+
+  function drainMessageStdin(base, len) {
+    let copied = 0;
+    while (copied < len && messageStdinChunkIndex < messageStdinChunks.length) {
+      const chunk = messageStdinChunks[messageStdinChunkIndex];
+      const available = chunk.length - messageStdinChunkOffset;
+      const toCopy = Math.min(len - copied, available);
+      u8().set(
+        chunk.subarray(messageStdinChunkOffset, messageStdinChunkOffset + toCopy),
+        base + copied
+      );
+      copied += toCopy;
+      messageStdinChunkOffset += toCopy;
+      if (messageStdinChunkOffset === chunk.length) {
+        messageStdinChunkIndex += 1;
+        messageStdinChunkOffset = 0;
+      }
+    }
+
+    if (messageStdinChunkIndex === messageStdinChunks.length) {
+      messageStdinChunks.length = 0;
+      messageStdinChunkIndex = 0;
+    }
+    return copied;
   }
 
   const setMemory = (m) => {
@@ -450,6 +522,31 @@ export function createWasiRuntime({
     },
   };
 
+  if (stdinMode === 'interactive-message') {
+    const fdReadSync = wasi.fd_read.bind(wasi);
+    wasi.fd_read = async (fd, iovsPtr, iovsLen, nreadPtr) => {
+      if (fd !== 0) return fdReadSync(fd, iovsPtr, iovsLen, nreadPtr);
+
+      const spans = iovSpans(iovsPtr, iovsLen);
+      if (spans.every(({ len }) => len === 0)) {
+        view().setUint32(nreadPtr, 0, true);
+        return WASI_ERRNO_SUCCESS;
+      }
+
+      await waitForStdin();
+      let total = 0;
+
+      for (const { base, len } of spans) {
+        const copied = drainMessageStdin(base, len);
+        total += copied;
+        if (copied < len) break;
+      }
+
+      view().setUint32(nreadPtr, total, true);
+      return WASI_ERRNO_SUCCESS;
+    };
+  }
+
   return {
     wasi,
     setMemory,
@@ -458,5 +555,8 @@ export function createWasiRuntime({
     flushRunFds,
     getDirtyVfsFiles,
     getDeletedVfsFiles,
+    pushStdin,
+    endStdin,
+    cancelStdin,
   };
 }
