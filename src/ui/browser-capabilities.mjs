@@ -5,13 +5,21 @@ import { getExtensionAPI } from '../extension-api.mjs';
 const MINIMUM_CHROMIUM_MAJOR = 105;
 const MINIMUM_FIREFOX_MAJOR = 140;
 
-const CORE_REQUIRED_CAPABILITIES = [
+const BASE_REQUIRED_CAPABILITIES = [
   { key: 'extensionRuntime', label: 'Extension runtime API' },
   { key: 'extensionStorage', label: 'Extension storage API' },
   { key: 'worker', label: 'Web Worker' },
   { key: 'webAssembly', label: 'WebAssembly' },
+];
+
+const INTERACTIVE_STDIN_CAPABILITIES = [
   { key: 'sharedArrayBuffer', label: 'SharedArrayBuffer' },
   { key: 'atomicsWaitAsync', label: 'Atomics.waitAsync' },
+];
+
+const CORE_REQUIRED_CAPABILITIES = [
+  ...BASE_REQUIRED_CAPABILITIES,
+  ...INTERACTIVE_STDIN_CAPABILITIES,
 ];
 
 const CHROMIUM_FULL_PARITY_CAPABILITIES = [
@@ -72,6 +80,12 @@ export function collectBrowserCapabilities(root = globalThis) {
   const firefoxMajor = getFirefoxMajor(nav.userAgent);
   const profile = getBrowserProfile(nav.userAgent);
 
+  const sharedArrayBuffer = hasFunction(root.SharedArrayBuffer);
+  const atomicsWaitAsync = hasFunction(atomics.waitAsync);
+  const crossOriginIsolated = root.crossOriginIsolated === true;
+  const interactiveStdin =
+    sharedArrayBuffer && atomicsWaitAsync && crossOriginIsolated;
+
   return {
     userAgent: nav.userAgent ?? '',
     browserFamily: profile.family,
@@ -88,9 +102,11 @@ export function collectBrowserCapabilities(root = globalThis) {
     fileSavePicker: hasFunction(root.showSaveFilePicker),
     worker: hasFunction(root.Worker),
     webAssembly: !!root.WebAssembly?.instantiate,
-    sharedArrayBuffer: hasFunction(root.SharedArrayBuffer),
-    atomicsWaitAsync: hasFunction(atomics.waitAsync),
-    crossOriginIsolated: root.crossOriginIsolated === true,
+    sharedArrayBuffer,
+    atomicsWaitAsync,
+    crossOriginIsolated,
+    interactiveStdin,
+    stdinMode: interactiveStdin ? 'interactive' : 'buffered',
   };
 }
 
@@ -98,7 +114,9 @@ export function createBrowserCompatibilityReport(root = globalThis) {
   const capabilities = collectBrowserCapabilities(root);
   const requiredCapabilities = capabilities.browserFamily === 'chromium'
     ? CHROMIUM_FULL_PARITY_CAPABILITIES
-    : CORE_REQUIRED_CAPABILITIES;
+    : capabilities.browserFamily === 'firefox'
+      ? BASE_REQUIRED_CAPABILITIES
+      : CORE_REQUIRED_CAPABILITIES;
   const missing = requiredCapabilities
     .filter(({ key }) => !capabilities[key])
     .map(({ key, label }) => ({ key, label }));
@@ -126,13 +144,22 @@ export function createBrowserCompatibilityReport(root = globalThis) {
       label: `Firefox ${capabilities.minimumFirefoxMajor}+ is recommended for the supported browser.cpp Firefox release path`,
     });
   }
-  if (!capabilities.crossOriginIsolated) {
+  if (
+    capabilities.browserFamily !== 'firefox' &&
+    !capabilities.crossOriginIsolated
+  ) {
     warnings.push({
       key: 'crossOriginIsolated',
       label: 'Page is not cross-origin isolated; SharedArrayBuffer may be blocked by browser policy',
     });
   }
   if (capabilities.browserFamily === 'firefox') {
+    if (!capabilities.interactiveStdin) {
+      limitations.push({
+        key: 'limitedInteractiveStdin',
+        label: 'Firefox uses pre-supplied buffered stdin; live interactive terminal input is unavailable.',
+      });
+    }
     limitations.push({
       key: 'firefoxFileFallbacks',
       label: 'Firefox uses fallback file and folder flows instead of the Chromium File System Access APIs.',

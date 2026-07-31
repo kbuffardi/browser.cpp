@@ -46,6 +46,8 @@ test('e2e: reports full Chromium-family capability support', () => {
   assert.deepEqual(report.limitations, []);
   assert.equal(report.capabilities.directoryPicker, true);
   assert.equal(report.capabilities.sharedArrayBuffer, true);
+  assert.equal(report.capabilities.interactiveStdin, true);
+  assert.equal(report.capabilities.stdinMode, 'interactive');
 });
 
 test('e2e: reports missing full-parity browser APIs', () => {

@@ -35,9 +35,9 @@ function firefoxLikeRoot(overrides = {}) {
     },
     Worker() {},
     WebAssembly: { instantiate() {} },
-    SharedArrayBuffer() {},
-    Atomics: { waitAsync() {} },
-    crossOriginIsolated: true,
+    SharedArrayBuffer: undefined,
+    Atomics: {},
+    crossOriginIsolated: false,
     ...overrides,
   };
 }
@@ -54,8 +54,12 @@ test('e2e: Firefox compatibility report accepts supported fallback-based capabil
   assert.equal(report.ok, true);
   assert.equal(report.capabilities.browserFamily, 'firefox');
   assert.equal(report.capabilities.supportLevel, 'compatible');
+  assert.equal(report.capabilities.interactiveStdin, false);
+  assert.equal(report.capabilities.stdinMode, 'buffered');
   assert.deepEqual(report.missing, []);
+  assert.ok(report.limitations.some((item) => item.key === 'limitedInteractiveStdin'));
   assert.ok(report.limitations.some((item) => item.key === 'firefoxWorkspacePersistence'));
+  assert.ok(message.includes('pre-supplied buffered stdin'));
   assert.ok(message.includes('Persistent folder write-back'));
 });
 
@@ -70,6 +74,8 @@ test('e2e: target manifest generation creates a Firefox manifest without Chromiu
       service_worker: 'service-worker.js',
       type: 'module',
     },
+    cross_origin_opener_policy: { value: 'same-origin' },
+    cross_origin_embedder_policy: { value: 'require-corp' },
   });
   writeJson(path.join(repoRoot, 'manifest.firefox.json'), {
     browser_specific_settings: {
@@ -92,6 +98,16 @@ test('e2e: target manifest generation creates a Firefox manifest without Chromiu
 
   assert.equal(firefoxManifest.minimum_chrome_version, undefined);
   assert.equal(firefoxManifest.background.service_worker, undefined);
+  assert.equal(firefoxManifest.cross_origin_opener_policy, undefined);
+  assert.equal(firefoxManifest.cross_origin_embedder_policy, undefined);
+  assert.deepEqual(
+    result.chromiumManifest.cross_origin_opener_policy,
+    { value: 'same-origin' }
+  );
+  assert.deepEqual(
+    result.chromiumManifest.cross_origin_embedder_policy,
+    { value: 'require-corp' }
+  );
   assert.deepEqual(firefoxManifest.background.scripts, ['firefox-background.js']);
   assert.equal(firefoxManifest.browser_specific_settings.gecko.id, 'browser.cpp@example.test');
 });
@@ -105,6 +121,8 @@ test('e2e: createFirefoxManifest strips Chromium-specific background configurati
         type: 'module',
       },
       minimum_chrome_version: '105',
+      cross_origin_opener_policy: { value: 'same-origin' },
+      cross_origin_embedder_policy: { value: 'require-corp' },
     },
     {
       browser_specific_settings: {
@@ -117,5 +135,7 @@ test('e2e: createFirefoxManifest strips Chromium-specific background configurati
 
   assert.equal(manifest.minimum_chrome_version, undefined);
   assert.equal(manifest.background.service_worker, undefined);
+  assert.equal(manifest.cross_origin_opener_policy, undefined);
+  assert.equal(manifest.cross_origin_embedder_policy, undefined);
   assert.deepEqual(manifest.background.scripts, ['firefox-background.js']);
 });

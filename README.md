@@ -219,6 +219,8 @@ Firefox desktop is also a supported release target, but its support contract is
 different:
 
 - compile/run, Monaco, and extension-runtime flows are supported
+- programs that read `std::cin` use pre-supplied buffered stdin (up to 256 KiB);
+  live prompt-by-prompt stdin remains available on Chromium-family builds
 - file open/save and folder import use fallback browser flows rather than
   Chromium File System Access APIs
 - persistent folder write-back and directory-handle session restore may be
@@ -232,7 +234,7 @@ Full parity requires:
 - File System Access APIs (`showOpenFilePicker`, `showDirectoryPicker`,
   `showSaveFilePicker`)
 - Web Workers and WebAssembly
-- `SharedArrayBuffer` and `Atomics.waitAsync` for interactive stdin
+- `SharedArrayBuffer` and `Atomics.waitAsync` for Chromium live interactive stdin
 - Managed browser policies that allow local file read/write prompts
 
 ### Release-blocking checks
@@ -459,8 +461,8 @@ manual/GitHub-distributed channel.
 4. For self-distribution, verify that the protected release workflow produced a
    signed artifact under `release/firefox-unlisted/`.
 5. Install the signed XPI in Firefox and complete the manual QA checklist
-   below, paying special attention to the documented workspace-persistence
-   limitations.
+   in `docs/firefox-stdin-runtime-acceptance.md`, paying special attention to
+   buffered stdin and the documented workspace-persistence limitations.
 
 ### Manual release QA checklist
 
@@ -524,7 +526,9 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
   script" dialog.  The compiler runs in a dedicated Web Worker to avoid blocking
   the UI.
 - **Browser scope**: Full parity targets desktop Chrome, Edge, Brave, and
-  Chromium. Firefox and Safari are outside the current release target.
+  Chromium. Firefox is a compatible release target with buffered stdin and
+  workspace-persistence limitations; Safari is outside the current release
+  target.
 - **Managed browsers**: Enterprise policies that block File System Access prompts
   prevent full local workspace read/write support.
 
