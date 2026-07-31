@@ -42,6 +42,8 @@ function createChromiumManifest(baseManifest) {
 function createFirefoxManifest(baseManifest, firefoxOverlay) {
   const manifest = mergeObjects(baseManifest, firefoxOverlay);
   delete manifest.minimum_chrome_version;
+  delete manifest.cross_origin_opener_policy;
+  delete manifest.cross_origin_embedder_policy;
   manifest.background = {
     scripts: ['firefox-background.js'],
   };

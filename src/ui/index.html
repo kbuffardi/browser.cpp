@@ -96,6 +96,30 @@
     </footer>
 
   </div>
+
+  <dialog id="buffered-stdin-dialog" aria-labelledby="buffered-stdin-title">
+    <div class="buffered-stdin-content">
+      <h2 id="buffered-stdin-title">Pre-supplied stdin</h2>
+      <p>
+        Live interactive input is unavailable in this browser. Enter all input
+        before the program starts; it will receive EOF after these bytes.
+      </p>
+      <label for="buffered-stdin-input">Program input</label>
+      <textarea
+        id="buffered-stdin-input"
+        rows="8"
+        maxlength="262144"
+        spellcheck="false"
+        aria-describedby="buffered-stdin-feedback"
+      ></textarea>
+      <div id="buffered-stdin-feedback" aria-live="polite">0 / 262,144 bytes</div>
+      <div class="buffered-stdin-actions">
+        <button type="button" id="buffered-stdin-cancel">Cancel</button>
+        <button type="button" id="buffered-stdin-run" class="btn-primary">Run program</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- bundle.js injected by HtmlWebpackPlugin -->
 </body>
 </html>

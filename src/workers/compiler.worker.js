@@ -8,8 +8,11 @@
  *  Inbound messages (from main thread):
  *    { type: 'compile', sourcePaths: string[], files: Array<{path,content}>,
  *                       std: string, flags: string[], primarySourcePath, outputName }
- *    { type: 'run',     sharedBuffer: SharedArrayBuffer, vfsFiles,
- *                       binaryBytes?: Uint8Array }
+ *    { type: 'run', stdinMode: 'interactive', sharedBuffer: SharedArrayBuffer,
+ *                   vfsFiles, binaryBytes?: Uint8Array }
+ *    { type: 'run', stdinMode: 'buffered', stdinBuffer: Uint8Array|ArrayBuffer,
+ *                   vfsFiles, binaryBytes?: Uint8Array }
+ *    { type: 'run', stdinMode: 'none', vfsFiles, binaryBytes?: Uint8Array }
  *    { type: 'status'  }
  *
  *  Outbound messages (to main thread):
@@ -44,6 +47,7 @@
 import { parseCompilePlan } from './compile-plan.mjs';
 import { parseDiagnostics } from '../ui/diagnostics.mjs';
 import { createWasiRuntime } from './wasi-shim.mjs';
+import { validateRunRequest } from './run-request.mjs';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -472,14 +476,15 @@ function groupDiagnostics(text) {
 /**
  * Instantiate and execute the compiled WASM binary with a minimal WASI shim.
  *
- * @param {SharedArrayBuffer} sharedBuffer – SAB created by the terminal that
- *   provides interactive stdin via Atomics.  The SAB must be pre-zeroed (state
- *   = 0) so that fd_read blocks immediately when no input is ready.
- * @param {Array<{path:string, bytes:Uint8Array}>} vfsFiles – workspace files
- *   to expose to the program via fstream.  Written/created files are collected
- *   and returned in the `run-result` message as `vfsChanges`.
+ * @param {{
+ *   stdin: ({mode:'interactive',sharedBuffer:SharedArrayBuffer}|
+ *           {mode:'buffered',bytes:Uint8Array}|
+ *           {mode:'none'}),
+ *   vfsFiles:Array<{path:string,bytes:Uint8Array}>,
+ *   binaryBytes:Uint8Array|null
+ * }} request validated run request
  */
-async function run(sharedBuffer, vfsFiles = [], binaryBytes = null) {
+async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
   if (binaryBytes) {
     compiledBinary = binaryBytes instanceof Uint8Array
       ? new Uint8Array(binaryBytes)
@@ -493,7 +498,7 @@ async function run(sharedBuffer, vfsFiles = [], binaryBytes = null) {
   }
 
   const wasiRuntime = createWasiRuntime({
-    sharedBuffer,
+    stdin,
     onStdout: (text) => send({ type: 'stdout', data: text }),
     onStderr: (text) => send({ type: 'stderr', data: text }),
   });
@@ -564,10 +569,17 @@ self.onmessage = async ({ data }) => {
       }
       break;
 
-    case 'run':
-      send({ type: 'run-start' });
-      await run(data.sharedBuffer, data.vfsFiles || [], data.binaryBytes || null);
+    case 'run': {
+      const validation = validateRunRequest(data);
+      if (!validation.ok) {
+        send({ type: 'stderr', data: `${validation.error}\n` });
+        send({ type: 'run-result', exitCode: 1, vfsChanges: [], vfsDeletes: [] });
+        break;
+      }
+      send({ type: 'run-start', stdinMode: validation.value.stdin.mode });
+      await run(validation.value);
       break;
+    }
 
     case 'status':
       send({ type: 'status-reply', state: compilerState });

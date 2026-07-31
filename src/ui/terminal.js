@@ -31,6 +31,8 @@ import {
   normalizeOverlayPath,
 } from './build-request.mjs';
 import { validateNewDirectoryPath, validateNewFilePath } from './workspace-fs.mjs';
+import { BUFFERED_STDIN_MAX_BYTES } from '../workers/run-request.mjs';
+import { requestBufferedStdin } from './buffered-stdin-dialog.mjs';
 
 function moduleExports(pkg) {
   return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
@@ -87,6 +89,10 @@ let lastBuiltArtifactPath = null;
 
 /** True while a compiled program is executing – input is routed to stdin. */
 let running = false;
+/** True while a run request is collecting input or preparing workspace files. */
+let preparingRun = false;
+/** Stdin behavior for the active run. */
+let activeStdinMode = 'none';
 
 /** Resolve function set when waiting for run output to complete */
 let runDone = null;
@@ -192,7 +198,18 @@ let _onCompile = null;
 let _onRun     = null;
 let _onStopRun = null;
 let _onRunStateChange = null;
+let _onRunPreparationStateChange = null;
 let _getSource = null;  // () => string  – returns current editor source
+let _supportsInteractiveStdin = supportsInteractiveStdin;
+let _requestBufferedStdin = requestBufferedStdin;
+
+function supportsInteractiveStdin() {
+  return (
+    typeof SharedArrayBuffer !== 'undefined' &&
+    typeof globalThis.Atomics?.waitAsync === 'function' &&
+    globalThis.crossOriginIsolated === true
+  );
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -202,24 +219,38 @@ let _getSource = null;  // () => string  – returns current editor source
  * @param {HTMLElement} container
  * @param {{
  *   onCompile: (request:{sourcePaths:(string[]|null), flags:string[], std:string, outputName:(string|null), cwd:string}) => void,
- *   onRun:     (sharedBuffer:SharedArrayBuffer) => void,
+ *   onRun:     (request:{stdinMode:string,sharedBuffer?:SharedArrayBuffer,stdinBuffer?:Uint8Array}) => Promise<void>|void,
  *   onStopRun?: () => void,
  *   onRunStateChange?: (running:boolean) => void,
+ *   onRunPreparationStateChange?: (preparing:boolean) => void,
  *   getSource: () => string,
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
  *   onMkdir?: (request:{path:string, parents:boolean}) => Promise<object>,
  *   onTouch?: (request:{path:string}) => Promise<object>,
  * }} callbacks
  */
-export function createTerminal(container, { onCompile, onRun, onStopRun, onRunStateChange, getSource, readWorkspaceFile, onMkdir, onTouch }) {
+export function createTerminal(container, {
+  onCompile,
+  onRun,
+  onStopRun,
+  onRunStateChange,
+  onRunPreparationStateChange,
+  getSource,
+  readWorkspaceFile,
+  onMkdir,
+  onTouch,
+}) {
   _onCompile = onCompile;
   _onRun     = onRun;
   _onStopRun = onStopRun || null;
   _onRunStateChange = onRunStateChange || null;
+  _onRunPreparationStateChange = onRunPreparationStateChange || null;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile || null;
   _onMkdir = onMkdir || null;
   _onTouch = onTouch || null;
+  _supportsInteractiveStdin = supportsInteractiveStdin;
+  _requestBufferedStdin = requestBufferedStdin;
   initialPromptShown = false;
   busy = true;
 
@@ -293,39 +324,71 @@ export function showInitialPrompt() {
 }
 
 /**
- * Start executing the last compiled binary with interactive stdin support.
+ * Start executing the last compiled binary.
  *
- * Creates a SharedArrayBuffer for stdin coordination, enters stdin-capture
- * mode, and dispatches the run request to the compiler worker via _onRun.
+ * Uses live SharedArrayBuffer stdin when cross-origin isolation is available,
+ * otherwise collects pre-supplied buffered stdin before dispatch.
  * Can be called from the terminal command line (`./a.out`) or directly from
  * the toolbar Run button.
+ *
+ * @returns {Promise<boolean>} whether a valid worker run request was posted
  */
-export function startRun() {
-  if (!term) return;
-  if (running) return; // already running
+export async function startRun() {
+  if (!term || running || preparingRun) return false;
 
   if (!lastBuiltArtifactPath) {
     term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
     writePrompt();
-    return;
+    return false;
   }
 
-  if (typeof SharedArrayBuffer === 'undefined') {
-    term.write(
-      `${C.red}Interactive stdin requires SharedArrayBuffer, which is unavailable ` +
-      `in this context.  The page must be served with Cross-Origin-Opener-Policy: ` +
-      `same-origin and Cross-Origin-Embedder-Policy: require-corp headers.${C.reset}${CRLF}`
-    );
+  setRunPreparationState(true);
+  busy = true;
+  inputBuffer = '';
+
+  try {
+    let request;
+    if (_supportsInteractiveStdin()) {
+      const sharedBuffer = new SharedArrayBuffer(SAB_HEADER_BYTES + SAB_DATA_BYTES);
+      _initSAB(sharedBuffer);
+      request = { stdinMode: 'interactive', sharedBuffer };
+    } else {
+      const text = await _requestBufferedStdin();
+      if (text === null) {
+        setRunPreparationState(false);
+        busy = false;
+        writePrompt();
+        return false;
+      }
+
+      const stdinBuffer = new TextEncoder().encode(text);
+      if (stdinBuffer.byteLength > BUFFERED_STDIN_MAX_BYTES) {
+        throw new Error('Buffered stdin exceeds the 256 KiB limit.');
+      }
+      request = { stdinMode: 'buffered', stdinBuffer };
+    }
+
+    if (!_onRun) throw new Error('Run callback is unavailable.');
+    term.write(CRLF);
+    await _onRun(request);
+    return true;
+  } catch (error) {
+    setRunPreparationState(false);
+    activeStdinMode = 'none';
+    busy = false;
+    _clearSAB();
+    term.write(`${C.red}Could not start program: ${error?.message || String(error)}${C.reset}${CRLF}`);
     writePrompt();
-    return;
+    return false;
   }
+}
 
-  const sab = new SharedArrayBuffer(SAB_HEADER_BYTES + SAB_DATA_BYTES);
-  _initSAB(sab);
+/** Mark a validated worker request as actively running. */
+export function onRunStart({ stdinMode = 'none' } = {}) {
+  setRunPreparationState(false);
+  activeStdinMode = stdinMode;
   setRunState(true);
-  inputBuffer = ''; // clear any partial command line
-  term.write(CRLF);
-  _onRun?.(sab);
+  busy = false;
 }
 
 /**
@@ -346,6 +409,8 @@ export function stopRun({ echoCtrlC = false } = {}) {
   }
   inputBuffer = '';
   _clearSAB();
+  setRunPreparationState(false);
+  activeStdinMode = 'none';
   setRunState(false);
   busy = false;
   runDone?.();
@@ -395,15 +460,18 @@ export function onCompileResult({ success, diagnostics, outputPath }) {
  * @param {{ exitCode:number }} result
  */
 export function onRunResult({ exitCode }) {
+  const shouldRestorePrompt = running || preparingRun;
   if (exitCode !== 0) {
     term?.write(`${CRLF}${C.yellow}Process exited with code ${exitCode}.${C.reset}${CRLF}`);
   }
+  setRunPreparationState(false);
+  activeStdinMode = 'none';
   setRunState(false);
   busy = false;
   _clearSAB();
   runDone?.();
   runDone = null;
-  writePrompt();
+  if (shouldRestorePrompt) writePrompt();
 }
 
 /** Print an informational message to the terminal. */
@@ -466,7 +534,11 @@ function handleKey({ key, domEvent }) {
 
   // While a program is executing, route keystrokes to stdin instead of the shell
   if (running) {
-    handleStdinKey(key, domEvent);
+    if (activeStdinMode === 'interactive') {
+      handleStdinKey(key, domEvent);
+    } else if (domEvent.ctrlKey && domEvent.key === 'c') {
+      stopRun({ echoCtrlC: true });
+    }
     return;
   }
 
@@ -659,7 +731,7 @@ async function executeCommand(cmdLine) {
     default:
       // Detect ./exe invocations
       if (cmd.startsWith('./')) {
-        cmdRun(cmd);
+        await cmdRun(cmd);
       } else {
         term.write(
           `${C.red}bash: ${cmd}: command not found${C.reset}${CRLF}` +
@@ -716,7 +788,7 @@ function cmdGxx(args) {
   _onCompile?.({ sourcePaths: resolved, flags, std, outputName, cwd: workspaceCwd });
 }
 
-function cmdRun(cmd) {
+async function cmdRun(cmd) {
   const { ok, error } = resolveRunTarget(cmd, lastBuiltArtifactPath);
   if (!ok) {
     if (error === 'no-binary') {
@@ -727,7 +799,7 @@ function cmdRun(cmd) {
     writePrompt();
     return;
   }
-  startRun();
+  await startRun();
 }
 
 function cmdLs(args = []) {
@@ -936,6 +1008,12 @@ function setRunState(nextRunning) {
   _onRunStateChange?.(running);
 }
 
+function setRunPreparationState(nextPreparing) {
+  if (preparingRun === nextPreparing) return;
+  preparingRun = nextPreparing;
+  _onRunPreparationStateChange?.(preparingRun);
+}
+
 export function __setTerminalTestHarness({
   term: terminalInstance,
   lastBuiltArtifactPath: artifactPath = null,
@@ -943,10 +1021,13 @@ export function __setTerminalTestHarness({
   onRun = null,
   onStopRun = null,
   onRunStateChange = null,
+  onRunPreparationStateChange = null,
   getSource = () => '',
   readWorkspaceFile = null,
   onMkdir = null,
   onTouch = null,
+  supportsInteractiveStdin: supportsInteractiveStdinForTest = () => true,
+  requestBufferedStdin: requestBufferedStdinForTest = async () => '',
 } = {}) {
   term = terminalInstance || null;
   fitAddon = null;
@@ -954,16 +1035,21 @@ export function __setTerminalTestHarness({
   _onRun = onRun;
   _onStopRun = onStopRun;
   _onRunStateChange = onRunStateChange;
+  _onRunPreparationStateChange = onRunPreparationStateChange;
   _getSource = getSource;
   _readWorkspaceFile = readWorkspaceFile;
   _onMkdir = onMkdir;
   _onTouch = onTouch;
+  _supportsInteractiveStdin = supportsInteractiveStdinForTest;
+  _requestBufferedStdin = requestBufferedStdinForTest;
   lastBuiltArtifactPath = artifactPath;
   inputBuffer = '';
   history.length = 0;
   historyIdx = -1;
   busy = false;
   running = false;
+  preparingRun = false;
+  activeStdinMode = 'none';
   runDone = null;
   initialPromptShown = false;
   _clearSAB();
@@ -980,6 +1066,8 @@ export async function __executeTerminalCommandForTesting(cmdLine) {
 export function __getTerminalStateForTesting() {
   return {
     running,
+    preparingRun,
+    activeStdinMode,
     busy,
     inputBuffer,
     pendingChunks: _pendingChunks.length,

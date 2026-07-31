@@ -63,10 +63,10 @@ window.addEventListener('DOMContentLoaded', async () => {
       });
       worker.postMessage({ type: 'compile', ...payload });
     },
-    onRun: async (sab) => {
+    onRun: async (runRequest) => {
       const vfsFiles = await fsAPI.readAllWorkspaceFiles();
       const binaryBytes = toolbarController?.getLastRunBinaryBytes?.() || null;
-      worker.postMessage({ type: 'run', sharedBuffer: sab, vfsFiles, binaryBytes });
+      worker.postMessage({ type: 'run', ...runRequest, vfsFiles, binaryBytes });
     },
     onStopRun: () => {
       worker.terminate();
@@ -75,6 +75,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     },
     onRunStateChange: (isRunning) => {
       setStopButtonRunning(isRunning);
+    },
+    onRunPreparationStateChange: (isPreparing) => {
+      toolbarController?.setRunPreparing(isPreparing);
     },
     onMkdir: async ({ path, parents }) => {
       const result = await fsAPI.createWorkspaceDirectory(path, { parents });

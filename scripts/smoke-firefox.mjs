@@ -20,6 +20,8 @@ function main() {
 
   assert.equal(manifest.background?.service_worker, undefined);
   assert.deepEqual(manifest.background?.scripts, ['firefox-background.js']);
+  assert.equal(manifest.cross_origin_opener_policy, undefined);
+  assert.equal(manifest.cross_origin_embedder_policy, undefined);
   assert.equal(manifest.browser_specific_settings?.gecko?.id, 'browser.cpp@kbuffardi.github.io');
 
   runWebExt([
@@ -42,7 +44,9 @@ function main() {
   assert.ok(builtArtifacts.length > 0, 'Expected web-ext build to emit a Firefox package.');
 
   console.log(`Firefox smoke validation passed with ${builtArtifacts[0]}.`);
-  console.log('Runtime compile/run verification remains part of the manual Firefox release QA checklist.');
+  console.log(
+    'Runtime compile/run verification remains required via docs/firefox-stdin-runtime-acceptance.md.'
+  );
 }
 
 main();

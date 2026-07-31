@@ -87,7 +87,8 @@ real Firefox desktop build:
 2. Confirm Monaco renders and the default sample appears without blocking
    console/runtime errors.
 3. Compile and run the default sample program.
-4. Run a program that reads stdin and confirm terminal interaction works.
+4. Complete `docs/firefox-stdin-runtime-acceptance.md` and confirm pre-supplied
+   buffered stdin works without the old SharedArrayBuffer/COOP/COEP error.
 5. Open a local source file with Firefox's fallback picker and save changes.
 6. Import a folder, compile a multi-file project, and confirm diagnostics appear
    in the expected file.
