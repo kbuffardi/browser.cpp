@@ -1,0 +1,19 @@
+## AI Agent Reasoning
+
+### Context
+Implement GitHub issue #55: live line-buffered terminal input on Firefox 153+ without changing Chromium behavior or expanding into Firefox file persistence.
+
+### Decisions Made
+- Kept SharedArrayBuffer/Atomics as the first transport so Chromium behavior and request shape remain unchanged.
+- Added a separate session-scoped postMessage transport because Firefox extension pages cannot rely on SharedArrayBuffer.
+- Used worker-side detection of both WebAssembly.Suspending and WebAssembly.promising as the execution authority, with Firefox 153 as the UI support floor.
+- Retained buffered stdin for older or JSPI-disabled Firefox environments.
+- Added per-run session IDs and EOF rejection so stale or post-completion input cannot cross process boundaries.
+
+### Trade-offs
+- Input is canonical and line-buffered, not a raw POSIX PTY.
+- Real Firefox JSPI runtime acceptance remains manual because the repository smoke harness validates Firefox packaging rather than executing the extension.
+
+### References
+- Issue: #55
+- Plan: specs/issue-55-20260731-plan-agent-firefox-jspi-live-stdin.md
