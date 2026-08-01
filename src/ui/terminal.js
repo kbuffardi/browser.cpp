@@ -31,8 +31,15 @@ import {
   normalizeOverlayPath,
 } from './build-request.mjs';
 import { validateNewDirectoryPath, validateNewFilePath } from './workspace-fs.mjs';
-import { BUFFERED_STDIN_MAX_BYTES } from '../workers/run-request.mjs';
+import {
+  BUFFERED_STDIN_MAX_BYTES,
+  INTERACTIVE_STDIN_CHUNK_MAX_BYTES,
+} from '../workers/run-request.mjs';
 import { requestBufferedStdin } from './buffered-stdin-dialog.mjs';
+import {
+  collectBrowserCapabilities,
+  selectStdinTransport,
+} from './browser-capabilities.mjs';
 
 function moduleExports(pkg) {
   return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
@@ -93,6 +100,7 @@ let running = false;
 let preparingRun = false;
 /** Stdin behavior for the active run. */
 let activeStdinMode = 'none';
+let activeStdinSessionId = null;
 
 /** Resolve function set when waiting for run output to complete */
 let runDone = null;
@@ -144,6 +152,16 @@ function _clearSAB() {
  */
 function _sendStdinLine(line) {
   const bytes = new TextEncoder().encode(line + '\n');
+  if (activeStdinMode === 'interactive-message') {
+    for (let offset = 0; offset < bytes.length; offset += INTERACTIVE_STDIN_CHUNK_MAX_BYTES) {
+      _onStdinData?.({
+        type: 'stdin-data',
+        stdinSessionId: activeStdinSessionId,
+        bytes: bytes.slice(offset, offset + INTERACTIVE_STDIN_CHUNK_MAX_BYTES),
+      });
+    }
+    return;
+  }
   for (let offset = 0; offset < bytes.length; offset += SAB_DATA_BYTES) {
     _pendingChunks.push(bytes.subarray(offset, offset + SAB_DATA_BYTES));
   }
@@ -152,6 +170,13 @@ function _sendStdinLine(line) {
 
 /** Signal EOF on stdin (Ctrl+D on an empty line, or Ctrl+C). */
 function _sendStdinEOF() {
+  if (activeStdinMode === 'interactive-message') {
+    _onStdinEOF?.({
+      type: 'stdin-eof',
+      stdinSessionId: activeStdinSessionId,
+    });
+    return;
+  }
   _pendingChunks.push(null); // null sentinel = EOF
   _flushStdin();
 }
@@ -197,10 +222,15 @@ async function _doFlush() {
 let _onCompile = null;
 let _onRun     = null;
 let _onStopRun = null;
+let _onStdinData = null;
+let _onStdinEOF = null;
 let _onRunStateChange = null;
 let _onRunPreparationStateChange = null;
 let _getSource = null;  // () => string  – returns current editor source
 let _supportsInteractiveStdin = supportsInteractiveStdin;
+let _workerCapabilities = { jspi: false };
+let _getStdinTransport = getStdinTransport;
+let _createStdinSessionId = createStdinSessionId;
 let _requestBufferedStdin = requestBufferedStdin;
 
 function supportsInteractiveStdin() {
@@ -209,6 +239,21 @@ function supportsInteractiveStdin() {
     typeof globalThis.Atomics?.waitAsync === 'function' &&
     globalThis.crossOriginIsolated === true
   );
+}
+
+function getStdinTransport() {
+  const capabilities = collectBrowserCapabilities(globalThis);
+  if (_supportsInteractiveStdin()) {
+    capabilities.sharedBufferInteractiveStdin = true;
+  }
+  return selectStdinTransport(capabilities, _workerCapabilities);
+}
+
+function createStdinSessionId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `stdin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -221,6 +266,8 @@ function supportsInteractiveStdin() {
  *   onCompile: (request:{sourcePaths:(string[]|null), flags:string[], std:string, outputName:(string|null), cwd:string}) => void,
  *   onRun:     (request:{stdinMode:string,sharedBuffer?:SharedArrayBuffer,stdinBuffer?:Uint8Array}) => Promise<void>|void,
  *   onStopRun?: () => void,
+ *   onStdinData?: (message:{type:'stdin-data',stdinSessionId:string,bytes:Uint8Array}) => void,
+ *   onStdinEOF?: (message:{type:'stdin-eof',stdinSessionId:string}) => void,
  *   onRunStateChange?: (running:boolean) => void,
  *   onRunPreparationStateChange?: (preparing:boolean) => void,
  *   getSource: () => string,
@@ -233,6 +280,8 @@ export function createTerminal(container, {
   onCompile,
   onRun,
   onStopRun,
+  onStdinData,
+  onStdinEOF,
   onRunStateChange,
   onRunPreparationStateChange,
   getSource,
@@ -243,6 +292,8 @@ export function createTerminal(container, {
   _onCompile = onCompile;
   _onRun     = onRun;
   _onStopRun = onStopRun || null;
+  _onStdinData = onStdinData || null;
+  _onStdinEOF = onStdinEOF || null;
   _onRunStateChange = onRunStateChange || null;
   _onRunPreparationStateChange = onRunPreparationStateChange || null;
   _getSource = getSource;
@@ -250,6 +301,8 @@ export function createTerminal(container, {
   _onMkdir = onMkdir || null;
   _onTouch = onTouch || null;
   _supportsInteractiveStdin = supportsInteractiveStdin;
+  _getStdinTransport = getStdinTransport;
+  _createStdinSessionId = createStdinSessionId;
   _requestBufferedStdin = requestBufferedStdin;
   initialPromptShown = false;
   busy = true;
@@ -323,11 +376,17 @@ export function showInitialPrompt() {
   writePrompt();
 }
 
+/** Update capabilities reported by the currently active compiler worker. */
+export function setWorkerCapabilities(capabilities = {}) {
+  _workerCapabilities = { jspi: capabilities.jspi === true };
+}
+
 /**
  * Start executing the last compiled binary.
  *
  * Uses live SharedArrayBuffer stdin when cross-origin isolation is available,
- * otherwise collects pre-supplied buffered stdin before dispatch.
+ * Firefox JSPI message stdin when its worker confirms support, and otherwise
+ * collects pre-supplied buffered stdin before dispatch.
  * Can be called from the terminal command line (`./a.out`) or directly from
  * the toolbar Run button.
  *
@@ -348,10 +407,17 @@ export async function startRun() {
 
   try {
     let request;
-    if (_supportsInteractiveStdin()) {
+    const stdinTransport = _getStdinTransport();
+    if (stdinTransport === 'shared-buffer') {
       const sharedBuffer = new SharedArrayBuffer(SAB_HEADER_BYTES + SAB_DATA_BYTES);
       _initSAB(sharedBuffer);
       request = { stdinMode: 'interactive', sharedBuffer };
+    } else if (stdinTransport === 'message-jspi') {
+      activeStdinSessionId = _createStdinSessionId();
+      request = {
+        stdinMode: 'interactive-message',
+        stdinSessionId: activeStdinSessionId,
+      };
     } else {
       const text = await _requestBufferedStdin();
       if (text === null) {
@@ -375,6 +441,7 @@ export async function startRun() {
   } catch (error) {
     setRunPreparationState(false);
     activeStdinMode = 'none';
+    activeStdinSessionId = null;
     busy = false;
     _clearSAB();
     term.write(`${C.red}Could not start program: ${error?.message || String(error)}${C.reset}${CRLF}`);
@@ -384,9 +451,10 @@ export async function startRun() {
 }
 
 /** Mark a validated worker request as actively running. */
-export function onRunStart({ stdinMode = 'none' } = {}) {
+export function onRunStart({ stdinMode = 'none', stdinSessionId = null } = {}) {
   setRunPreparationState(false);
   activeStdinMode = stdinMode;
+  activeStdinSessionId = stdinMode === 'interactive-message' ? stdinSessionId : null;
   setRunState(true);
   busy = false;
 }
@@ -411,6 +479,7 @@ export function stopRun({ echoCtrlC = false } = {}) {
   _clearSAB();
   setRunPreparationState(false);
   activeStdinMode = 'none';
+  activeStdinSessionId = null;
   setRunState(false);
   busy = false;
   runDone?.();
@@ -466,6 +535,7 @@ export function onRunResult({ exitCode }) {
   }
   setRunPreparationState(false);
   activeStdinMode = 'none';
+  activeStdinSessionId = null;
   setRunState(false);
   busy = false;
   _clearSAB();
@@ -534,7 +604,7 @@ function handleKey({ key, domEvent }) {
 
   // While a program is executing, route keystrokes to stdin instead of the shell
   if (running) {
-    if (activeStdinMode === 'interactive') {
+    if (activeStdinMode === 'interactive' || activeStdinMode === 'interactive-message') {
       handleStdinKey(key, domEvent);
     } else if (domEvent.ctrlKey && domEvent.key === 'c') {
       stopRun({ echoCtrlC: true });
@@ -1020,6 +1090,8 @@ export function __setTerminalTestHarness({
   onCompile = null,
   onRun = null,
   onStopRun = null,
+  onStdinData = null,
+  onStdinEOF = null,
   onRunStateChange = null,
   onRunPreparationStateChange = null,
   getSource = () => '',
@@ -1027,6 +1099,8 @@ export function __setTerminalTestHarness({
   onMkdir = null,
   onTouch = null,
   supportsInteractiveStdin: supportsInteractiveStdinForTest = () => true,
+  supportsMessageInteractiveStdin: supportsMessageInteractiveStdinForTest = () => false,
+  createStdinSessionId: createStdinSessionIdForTest = () => 'stdin-session-test',
   requestBufferedStdin: requestBufferedStdinForTest = async () => '',
 } = {}) {
   term = terminalInstance || null;
@@ -1034,6 +1108,8 @@ export function __setTerminalTestHarness({
   _onCompile = onCompile;
   _onRun = onRun;
   _onStopRun = onStopRun;
+  _onStdinData = onStdinData;
+  _onStdinEOF = onStdinEOF;
   _onRunStateChange = onRunStateChange;
   _onRunPreparationStateChange = onRunPreparationStateChange;
   _getSource = getSource;
@@ -1041,6 +1117,12 @@ export function __setTerminalTestHarness({
   _onMkdir = onMkdir;
   _onTouch = onTouch;
   _supportsInteractiveStdin = supportsInteractiveStdinForTest;
+  _getStdinTransport = () => {
+    if (supportsInteractiveStdinForTest()) return 'shared-buffer';
+    if (supportsMessageInteractiveStdinForTest()) return 'message-jspi';
+    return 'buffered';
+  };
+  _createStdinSessionId = createStdinSessionIdForTest;
   _requestBufferedStdin = requestBufferedStdinForTest;
   lastBuiltArtifactPath = artifactPath;
   inputBuffer = '';
@@ -1050,6 +1132,7 @@ export function __setTerminalTestHarness({
   running = false;
   preparingRun = false;
   activeStdinMode = 'none';
+  activeStdinSessionId = null;
   runDone = null;
   initialPromptShown = false;
   _clearSAB();

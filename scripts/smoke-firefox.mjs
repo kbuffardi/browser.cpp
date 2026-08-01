@@ -45,7 +45,7 @@ function main() {
 
   console.log(`Firefox smoke validation passed with ${builtArtifacts[0]}.`);
   console.log(
-    'Runtime compile/run verification remains required via docs/firefox-stdin-runtime-acceptance.md.'
+    'Firefox 153+ JSPI live-stdin runtime verification remains required via docs/firefox-stdin-runtime-acceptance.md.'
   );
 }
 

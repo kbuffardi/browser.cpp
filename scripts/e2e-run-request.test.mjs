@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   BUFFERED_STDIN_MAX_BYTES,
+  INTERACTIVE_STDIN_CHUNK_MAX_BYTES,
   validateRunRequest,
+  validateStdinMessage,
 } from '../src/workers/run-request.mjs';
 
 function interactiveRequest(overrides = {}) {
@@ -21,6 +23,17 @@ test('e2e: worker run contract accepts and normalizes all stdin modes', () => {
   const interactive = validateRunRequest(interactiveRequest());
   assert.equal(interactive.ok, true);
   assert.equal(interactive.value.stdin.mode, 'interactive');
+
+  const interactiveMessage = validateRunRequest(interactiveRequest({
+    stdinMode: 'interactive-message',
+    sharedBuffer: undefined,
+    stdinSessionId: 'stdin-session-1',
+  }));
+  assert.equal(interactiveMessage.ok, true);
+  assert.deepEqual(interactiveMessage.value.stdin, {
+    mode: 'interactive-message',
+    sessionId: 'stdin-session-1',
+  });
 
   const buffered = validateRunRequest(interactiveRequest({
     stdinMode: 'buffered',
@@ -47,11 +60,59 @@ test('e2e: worker run contract rejects mismatched stdin variants', () => {
     interactiveRequest({ sharedBuffer: new ArrayBuffer(16) }),
     interactiveRequest({ stdinMode: 'buffered', sharedBuffer: undefined, stdinBuffer: 'Ada' }),
     interactiveRequest({ stdinMode: 'none', sharedBuffer: new SharedArrayBuffer(16) }),
+    interactiveRequest({ stdinMode: 'interactive-message', sharedBuffer: undefined }),
+    interactiveRequest({
+      stdinMode: 'interactive-message',
+      sharedBuffer: undefined,
+      stdinSessionId: '',
+    }),
     interactiveRequest({ stdinMode: 'unknown' }),
   ];
 
   for (const request of cases) {
     const result = validateRunRequest(request);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /stdin/i);
+  }
+});
+
+test('e2e: worker stdin message contract validates session-scoped data and EOF', () => {
+  const bytes = new TextEncoder().encode('Ada\n');
+  const data = validateStdinMessage({
+    type: 'stdin-data',
+    stdinSessionId: 'stdin-session-1',
+    bytes: bytes.buffer,
+  });
+  assert.equal(data.ok, true);
+  assert.equal(data.value.type, 'stdin-data');
+  assert.equal(data.value.sessionId, 'stdin-session-1');
+  assert.deepEqual([...data.value.bytes], [...bytes]);
+
+  const eof = validateStdinMessage({
+    type: 'stdin-eof',
+    stdinSessionId: 'stdin-session-1',
+  });
+  assert.deepEqual(eof, {
+    ok: true,
+    value: { type: 'stdin-eof', sessionId: 'stdin-session-1' },
+  });
+});
+
+test('e2e: worker stdin message contract rejects malformed and oversized input', () => {
+  const cases = [
+    { type: 'stdin-data', stdinSessionId: '', bytes: new Uint8Array([1]) },
+    { type: 'stdin-data', stdinSessionId: 'session', bytes: 'Ada' },
+    { type: 'stdin-data', stdinSessionId: 'session', bytes: new Uint8Array() },
+    {
+      type: 'stdin-data',
+      stdinSessionId: 'session',
+      bytes: new Uint8Array(INTERACTIVE_STDIN_CHUNK_MAX_BYTES + 1),
+    },
+    { type: 'stdin-eof', stdinSessionId: 'session', bytes: new Uint8Array() },
+  ];
+
+  for (const message of cases) {
+    const result = validateStdinMessage(message);
     assert.equal(result.ok, false);
     assert.match(result.error, /stdin/i);
   }

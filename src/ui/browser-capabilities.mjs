@@ -4,6 +4,7 @@ import { getExtensionAPI } from '../extension-api.mjs';
 
 const MINIMUM_CHROMIUM_MAJOR = 105;
 const MINIMUM_FIREFOX_MAJOR = 140;
+export const FIREFOX_JSPI_STDIN_MINIMUM_MAJOR = 153;
 
 const BASE_REQUIRED_CAPABILITIES = [
   { key: 'extensionRuntime', label: 'Extension runtime API' },
@@ -72,7 +73,7 @@ function getBrowserProfile(userAgent = '') {
   };
 }
 
-export function collectBrowserCapabilities(root = globalThis) {
+export function collectBrowserCapabilities(root = globalThis, workerCapabilities = {}) {
   const nav = root.navigator ?? {};
   const api = getExtensionAPI(root);
   const atomics = root.Atomics ?? {};
@@ -83,8 +84,18 @@ export function collectBrowserCapabilities(root = globalThis) {
   const sharedArrayBuffer = hasFunction(root.SharedArrayBuffer);
   const atomicsWaitAsync = hasFunction(atomics.waitAsync);
   const crossOriginIsolated = root.crossOriginIsolated === true;
-  const interactiveStdin =
+  const sharedBufferInteractiveStdin =
     sharedArrayBuffer && atomicsWaitAsync && crossOriginIsolated;
+  const jspi = hasFunction(root.WebAssembly?.Suspending) &&
+    hasFunction(root.WebAssembly?.promising);
+  const jspiPotentialInteractiveStdin = profile.family === 'firefox' &&
+    firefoxMajor >= FIREFOX_JSPI_STDIN_MINIMUM_MAJOR &&
+    jspi;
+  const workerJspi = workerCapabilities.jspi === true;
+  const jspiInteractiveStdin = profile.family === 'firefox' &&
+    firefoxMajor >= FIREFOX_JSPI_STDIN_MINIMUM_MAJOR &&
+    workerJspi;
+  const interactiveStdin = sharedBufferInteractiveStdin || jspiInteractiveStdin;
 
   return {
     userAgent: nav.userAgent ?? '',
@@ -105,13 +116,39 @@ export function collectBrowserCapabilities(root = globalThis) {
     sharedArrayBuffer,
     atomicsWaitAsync,
     crossOriginIsolated,
+    jspi,
+    workerJspi,
+    sharedBufferInteractiveStdin,
+    jspiPotentialInteractiveStdin,
+    jspiInteractiveStdin,
     interactiveStdin,
-    stdinMode: interactiveStdin ? 'interactive' : 'buffered',
+    stdinMode: sharedBufferInteractiveStdin
+      ? 'interactive'
+      : jspiInteractiveStdin
+        ? 'interactive-message'
+        : 'buffered',
   };
 }
 
-export function createBrowserCompatibilityReport(root = globalThis) {
-  const capabilities = collectBrowserCapabilities(root);
+/**
+ * Choose the run-time stdin transport after the compiler worker reports its
+ * own JSPI capability. The established Chromium SharedArrayBuffer path always
+ * wins and Firefox message stdin is never selected from the user agent alone.
+ */
+export function selectStdinTransport(capabilities, workerCapabilities = {}) {
+  if (capabilities.sharedBufferInteractiveStdin) return 'shared-buffer';
+  if (
+    capabilities.browserFamily === 'firefox' &&
+    capabilities.firefoxMajor >= FIREFOX_JSPI_STDIN_MINIMUM_MAJOR &&
+    workerCapabilities.jspi === true
+  ) {
+    return 'message-jspi';
+  }
+  return 'buffered';
+}
+
+export function createBrowserCompatibilityReport(root = globalThis, workerCapabilities = {}) {
+  const capabilities = collectBrowserCapabilities(root, workerCapabilities);
   const requiredCapabilities = capabilities.browserFamily === 'chromium'
     ? CHROMIUM_FULL_PARITY_CAPABILITIES
     : capabilities.browserFamily === 'firefox'

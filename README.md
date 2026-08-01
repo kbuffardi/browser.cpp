@@ -6,7 +6,7 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 |---------|--------|
 | Editor | Monaco Editor (the engine behind VS Code) |
 | Compiler | WASM-native Clang (runs entirely in the browser, offline) |
-| Terminal | xterm.js with a bash-like shell (`g++`, `./a.out`, `ls`, `mkdir`, `touch`, `cat`, …) |
+| Terminal | xterm.js with a bash-like shell and live line input on Chromium and Firefox 153+ |
 | File access | File System Access API on Chromium, fallback open/save/folder flows on Firefox |
 | File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
@@ -219,8 +219,9 @@ Firefox desktop is also a supported release target, but its support contract is
 different:
 
 - compile/run, Monaco, and extension-runtime flows are supported
-- programs that read `std::cin` use pre-supplied buffered stdin (up to 256 KiB);
-  live prompt-by-prompt stdin remains available on Chromium-family builds
+- Firefox 153+ uses WebAssembly JSPI for live, line-buffered `std::cin`,
+  `std::getline`, and `scanf` input; Firefox 140–152 (or a runtime without
+  JSPI) retains the pre-supplied buffered stdin fallback (up to 256 KiB)
 - file open/save and folder import use fallback browser flows rather than
   Chromium File System Access APIs
 - persistent folder write-back and directory-handle session restore may be
@@ -235,6 +236,7 @@ Full parity requires:
   `showSaveFilePicker`)
 - Web Workers and WebAssembly
 - `SharedArrayBuffer` and `Atomics.waitAsync` for Chromium live interactive stdin
+- `WebAssembly.Suspending` and `WebAssembly.promising` for Firefox 153+ live stdin
 - Managed browser policies that allow local file read/write prompts
 
 ### Release-blocking checks
@@ -462,7 +464,8 @@ manual/GitHub-distributed channel.
    signed artifact under `release/firefox-unlisted/`.
 5. Install the signed XPI in Firefox and complete the manual QA checklist
    in `docs/firefox-stdin-runtime-acceptance.md`, paying special attention to
-   buffered stdin and the documented workspace-persistence limitations.
+   JSPI live stdin, its buffered fallback, and the documented
+   workspace-persistence limitations.
 
 ### Manual release QA checklist
 
@@ -526,9 +529,10 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
   script" dialog.  The compiler runs in a dedicated Web Worker to avoid blocking
   the UI.
 - **Browser scope**: Full parity targets desktop Chrome, Edge, Brave, and
-  Chromium. Firefox is a compatible release target with buffered stdin and
-  workspace-persistence limitations; Safari is outside the current release
-  target.
+  Chromium. Firefox 153+ supports live canonical (line-buffered) stdin through
+  JSPI; older supported Firefox versions use buffered stdin. This is not a raw
+  POSIX PTY, and Firefox workspace-persistence limitations remain. Safari is
+  outside the current release target.
 - **Managed browsers**: Enterprise policies that block File System Access prompts
   prevent full local workspace read/write support.
 

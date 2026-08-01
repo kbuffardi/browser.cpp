@@ -17,6 +17,10 @@ import {
 } from './build-request.mjs';
 import { parseDiagnostics, diagnosticsForPath } from './diagnostics.mjs';
 import { directoriesForPath } from './workspace-fs.mjs';
+import {
+  createBrowserCompatibilityReport,
+  formatBrowserCompatibilityMessage,
+} from './browser-capabilities.mjs';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let _worker      = null;
@@ -34,6 +38,7 @@ let _workspaceSyncTimer = null;
 let _workspaceSyncRunning = false;
 let _workspaceSyncQueued = false;
 let _workspaceSyncEventsBound = false;
+let _lastCompatibilityMessage = null;
 
 // ── Multi-tab state ───────────────────────────────────────────────────────────
 // Map<path, { content: string, dirty: boolean }>
@@ -100,6 +105,7 @@ export function setWorker(worker) {
   _worker = worker;
   _runAfterSuccessfulCompile = false;
   _runPreparationActive = false;
+  _terminalAPI?.setWorkerCapabilities?.({ jspi: false });
   handleWorkerMessages();
   updateStatusBar('compiler', 'loading', 'Compiler loading…');
   setButtonsEnabled(false);
@@ -196,6 +202,16 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'compiler-ready':
+      _terminalAPI.setWorkerCapabilities?.(data.capabilities);
+      {
+        const report = createBrowserCompatibilityReport(globalThis, data.capabilities);
+        const message = formatBrowserCompatibilityMessage(report);
+        if (message && message !== _lastCompatibilityMessage) {
+          _lastCompatibilityMessage = message;
+          console.warn('[browser.cpp]', message);
+          _terminalAPI.printInfo(message);
+        }
+      }
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       setButtonsEnabled(true);
       _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
