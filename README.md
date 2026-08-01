@@ -220,8 +220,8 @@ different:
 
 - compile/run, Monaco, and extension-runtime flows are supported
 - Firefox 153+ uses WebAssembly JSPI for live, line-buffered `std::cin`,
-  `std::getline`, and `scanf` input; Firefox 140–152 (or a runtime without
-  JSPI) retains the pre-supplied buffered stdin fallback (up to 256 KiB)
+  `std::getline`, and `scanf` input; Firefox runtimes without worker-side JSPI
+  cannot run stdin-reading programs
 - file open/save and folder import use fallback browser flows rather than
   Chromium File System Access APIs
 - persistent folder write-back and directory-handle session restore may be
@@ -464,7 +464,7 @@ manual/GitHub-distributed channel.
    signed artifact under `release/firefox-unlisted/`.
 5. Install the signed XPI in Firefox and complete the manual QA checklist
    in `docs/firefox-stdin-runtime-acceptance.md`, paying special attention to
-   JSPI live stdin, its buffered fallback, and the documented
+   JSPI live stdin and the documented
    workspace-persistence limitations.
 
 ### Manual release QA checklist
@@ -530,7 +530,7 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
   the UI.
 - **Browser scope**: Full parity targets desktop Chrome, Edge, Brave, and
   Chromium. Firefox 153+ supports live canonical (line-buffered) stdin through
-  JSPI; older supported Firefox versions use buffered stdin. This is not a raw
+  JSPI; older or no-JSPI Firefox runtimes cannot provide terminal stdin. This is not a raw
   POSIX PTY, and Firefox workspace-persistence limitations remain. Safari is
   outside the current release target.
 - **Managed browsers**: Enterprise policies that block File System Access prompts

@@ -47,7 +47,7 @@ test('e2e: extracts Firefox major versions from Firefox user agents', () => {
   assert.equal(getFirefoxMajor('Chrome/126.0.0.0 Safari/537.36'), null);
 });
 
-test('e2e: Firefox compatibility report accepts supported fallback-based capabilities', () => {
+test('e2e: Firefox compatibility report identifies live stdin as unsupported without JSPI', () => {
   const report = createBrowserCompatibilityReport(firefoxLikeRoot());
   const message = formatBrowserCompatibilityMessage(report);
 
@@ -55,11 +55,11 @@ test('e2e: Firefox compatibility report accepts supported fallback-based capabil
   assert.equal(report.capabilities.browserFamily, 'firefox');
   assert.equal(report.capabilities.supportLevel, 'compatible');
   assert.equal(report.capabilities.interactiveStdin, false);
-  assert.equal(report.capabilities.stdinMode, 'buffered');
+  assert.equal(report.capabilities.stdinMode, 'unsupported');
   assert.deepEqual(report.missing, []);
   assert.ok(report.limitations.some((item) => item.key === 'limitedInteractiveStdin'));
   assert.ok(report.limitations.some((item) => item.key === 'firefoxWorkspacePersistence'));
-  assert.ok(message.includes('pre-supplied buffered stdin'));
+  assert.ok(message.includes('requires worker-side JSPI'));
   assert.ok(message.includes('Persistent folder write-back'));
 });
 

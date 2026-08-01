@@ -126,7 +126,7 @@ export function collectBrowserCapabilities(root = globalThis, workerCapabilities
       ? 'interactive'
       : jspiInteractiveStdin
         ? 'interactive-message'
-        : 'buffered',
+      : 'unsupported',
   };
 }
 
@@ -144,7 +144,7 @@ export function selectStdinTransport(capabilities, workerCapabilities = {}) {
   ) {
     return 'message-jspi';
   }
-  return 'buffered';
+  return 'unsupported';
 }
 
 export function createBrowserCompatibilityReport(root = globalThis, workerCapabilities = {}) {
@@ -194,7 +194,7 @@ export function createBrowserCompatibilityReport(root = globalThis, workerCapabi
     if (!capabilities.interactiveStdin) {
       limitations.push({
         key: 'limitedInteractiveStdin',
-        label: 'Firefox uses pre-supplied buffered stdin; live interactive terminal input is unavailable.',
+        label: 'Firefox requires worker-side JSPI for live terminal stdin.',
       });
     }
     limitations.push({

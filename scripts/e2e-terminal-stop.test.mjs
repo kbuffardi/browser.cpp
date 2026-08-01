@@ -17,7 +17,6 @@ import {
 function setupTerminalHarness({
   supportsInteractiveStdin = true,
   supportsMessageInteractiveStdin = false,
-  requestBufferedStdin = async () => '',
   onRun,
 } = {}) {
   const writes = [];
@@ -40,7 +39,6 @@ function setupTerminalHarness({
     onRunPreparationStateChange: (preparing) => runPreparationChanges.push(preparing),
     supportsInteractiveStdin: () => supportsInteractiveStdin,
     supportsMessageInteractiveStdin: () => supportsMessageInteractiveStdin,
-    requestBufferedStdin,
     onStdinData: (message) => stdinMessages.push(message),
     onStdinEOF: (message) => stdinMessages.push(message),
     createStdinSessionId: () => 'stdin-session-test',
@@ -152,37 +150,23 @@ test('e2e: normal run completion reports not-running state', async () => {
   assert.equal(__getTerminalStateForTesting().running, false);
 });
 
-test('e2e: non-SAB run posts UTF-8 buffered stdin before entering running state', async () => {
+test('e2e: run without a live stdin transport reports unsupported and posts no request', async () => {
   const ctx = setupTerminalHarness({
     supportsInteractiveStdin: false,
-    requestBufferedStdin: async () => 'Grüße\n',
   });
 
-  assert.equal(await startRun(), true);
-
-  assert.equal(ctx.runCalls.length, 1);
-  assert.equal(ctx.runCalls[0].stdinMode, 'buffered');
-  assert.deepEqual(
-    [...ctx.runCalls[0].stdinBuffer],
-    [...new TextEncoder().encode('Grüße\n')]
-  );
+  assert.equal(await startRun(), false);
+  assert.deepEqual(ctx.runCalls, []);
   assert.deepEqual(ctx.runStateChanges, []);
-  assert.deepEqual(ctx.runPreparationChanges, [true]);
-  assert.equal(__getTerminalStateForTesting().preparingRun, true);
-
-  onRunStart({ stdinMode: 'buffered' });
-  assert.deepEqual(ctx.runStateChanges, [true]);
   assert.deepEqual(ctx.runPreparationChanges, [true, false]);
   assert.equal(__getTerminalStateForTesting().preparingRun, false);
+  assert.ok(ctx.writes.join('').includes('Live terminal stdin is unavailable'));
 });
 
 test('e2e: Firefox JSPI run forwards live terminal lines and EOF by session', async () => {
   const ctx = setupTerminalHarness({
     supportsInteractiveStdin: false,
     supportsMessageInteractiveStdin: true,
-    requestBufferedStdin: async () => {
-      throw new Error('buffered input should not be requested');
-    },
   });
 
   assert.equal(await startRun(), true);
@@ -220,37 +204,6 @@ test('e2e: Firefox JSPI run forwards live terminal lines and EOF by session', as
   });
 });
 
-test('e2e: canceling buffered stdin restores idle state and posts no run request', async () => {
-  const ctx = setupTerminalHarness({
-    supportsInteractiveStdin: false,
-    requestBufferedStdin: async () => null,
-  });
-
-  assert.equal(await startRun(), false);
-
-  assert.deepEqual(ctx.runCalls, []);
-  assert.deepEqual(ctx.runPreparationChanges, [true, false]);
-  assert.equal(__getTerminalStateForTesting().preparingRun, false);
-  assert.equal(__getTerminalStateForTesting().running, false);
-});
-
-test('e2e: duplicate run while buffered input is pending posts only one request', async () => {
-  let resolveInput;
-  const pendingInput = new Promise((resolve) => { resolveInput = resolve; });
-  const ctx = setupTerminalHarness({
-    supportsInteractiveStdin: false,
-    requestBufferedStdin: () => pendingInput,
-  });
-
-  const firstRun = startRun();
-  assert.equal(await startRun(), false);
-  resolveInput('Ada\n');
-  assert.equal(await firstRun, true);
-
-  assert.equal(ctx.runCalls.length, 1);
-  assert.equal(ctx.runCalls[0].stdinMode, 'buffered');
-});
-
 test('e2e: run callback failure restores idle state without run-start', async () => {
   const writes = [];
   __setTerminalTestHarness({
@@ -266,18 +219,4 @@ test('e2e: run callback failure restores idle state without run-start', async ()
   assert.equal(state.preparingRun, false);
   assert.equal(state.running, false);
   assert.ok(writes.join('').includes('Could not start program'));
-});
-
-test('e2e: oversized buffered stdin restores idle state and posts no run request', async () => {
-  const ctx = setupTerminalHarness({
-    supportsInteractiveStdin: false,
-    requestBufferedStdin: async () => 'x'.repeat((256 * 1024) + 1),
-  });
-
-  assert.equal(await startRun(), false);
-
-  assert.deepEqual(ctx.runCalls, []);
-  assert.deepEqual(ctx.runPreparationChanges, [true, false]);
-  assert.equal(__getTerminalStateForTesting().preparingRun, false);
-  assert.ok(ctx.writes.join('').includes('256 KiB'));
 });
