@@ -14,8 +14,6 @@
  *                   vfsFiles, binaryBytes?: Uint8Array }
  *    { type: 'stdin-data', stdinSessionId: string, bytes: Uint8Array }
  *    { type: 'stdin-eof', stdinSessionId: string }
- *    { type: 'run', stdinMode: 'buffered', stdinBuffer: Uint8Array|ArrayBuffer,
- *                   vfsFiles, binaryBytes?: Uint8Array }
  *    { type: 'run', stdinMode: 'none', vfsFiles, binaryBytes?: Uint8Array }
  *    { type: 'status'  }
  *
@@ -493,7 +491,6 @@ function groupDiagnostics(text) {
  * @param {{
  *   stdin: ({mode:'interactive',sharedBuffer:SharedArrayBuffer}|
  *           {mode:'interactive-message',sessionId:string}|
- *           {mode:'buffered',bytes:Uint8Array}|
  *           {mode:'none'}),
  *   vfsFiles:Array<{path:string,bytes:Uint8Array}>,
  *   binaryBytes:Uint8Array|null

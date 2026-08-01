@@ -98,8 +98,8 @@ test('e2e: Firefox 153 reports JSPI potential but waits for worker confirmation'
   assert.equal(capabilities.jspi, true);
   assert.equal(capabilities.jspiPotentialInteractiveStdin, true);
   assert.equal(capabilities.interactiveStdin, false);
-  assert.equal(capabilities.stdinMode, 'buffered');
-  assert.equal(selectStdinTransport(capabilities, { jspi: false }), 'buffered');
+  assert.equal(capabilities.stdinMode, 'unsupported');
+  assert.equal(selectStdinTransport(capabilities, { jspi: false }), 'unsupported');
   assert.equal(selectStdinTransport(capabilities, { jspi: true }), 'message-jspi');
 
   const negotiatedReport = createBrowserCompatibilityReport({
@@ -142,7 +142,7 @@ test('e2e: stdin selection keeps Chromium SharedArrayBuffer first and gates olde
     firefoxMajor: 152,
     sharedBufferInteractiveStdin: false,
   };
-  assert.equal(selectStdinTransport(firefox152, { jspi: true }), 'buffered');
+  assert.equal(selectStdinTransport(firefox152, { jspi: true }), 'unsupported');
 });
 
 test('e2e: stdin session routing ignores late messages from previous runs', () => {

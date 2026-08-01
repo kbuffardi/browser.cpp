@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  BUFFERED_STDIN_MAX_BYTES,
   INTERACTIVE_STDIN_CHUNK_MAX_BYTES,
   validateRunRequest,
   validateStdinMessage,
@@ -34,18 +33,6 @@ test('e2e: worker run contract accepts and normalizes all stdin modes', () => {
     mode: 'interactive-message',
     sessionId: 'stdin-session-1',
   });
-
-  const buffered = validateRunRequest(interactiveRequest({
-    stdinMode: 'buffered',
-    sharedBuffer: undefined,
-    stdinBuffer: new TextEncoder().encode('Ada\n41\n').buffer,
-  }));
-  assert.equal(buffered.ok, true);
-  assert.equal(buffered.value.stdin.mode, 'buffered');
-  assert.deepEqual(
-    [...buffered.value.stdin.bytes],
-    [...new TextEncoder().encode('Ada\n41\n')]
-  );
 
   const none = validateRunRequest(interactiveRequest({
     stdinMode: 'none',
@@ -118,15 +105,15 @@ test('e2e: worker stdin message contract rejects malformed and oversized input',
   }
 });
 
-test('e2e: worker run contract rejects buffered stdin above the shared size limit', () => {
+test('e2e: worker run contract rejects buffered stdin entirely', () => {
   const result = validateRunRequest(interactiveRequest({
     stdinMode: 'buffered',
     sharedBuffer: undefined,
-    stdinBuffer: new Uint8Array(BUFFERED_STDIN_MAX_BYTES + 1),
+    stdinBuffer: new Uint8Array([1]),
   }));
 
   assert.equal(result.ok, false);
-  assert.match(result.error, /256 KiB/);
+  assert.match(result.error, /stdin/i);
 });
 
 test('e2e: worker run contract rejects invalid binary and VFS byte fields', () => {
