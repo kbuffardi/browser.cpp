@@ -215,8 +215,7 @@ Full feature parity is supported for desktop Chrome, Edge, Brave, and Chromium
 when the browser is based on Chromium 105 or newer. Latest stable is recommended
 for release testing.
 
-Firefox desktop is also a supported release target, but its support contract is
-different:
+Firefox desktop can load the extension, but support remains experimental:
 
 - compile/run, Monaco, and extension-runtime flows are supported
 - Firefox 153+ uses WebAssembly JSPI for live, line-buffered `std::cin`,
@@ -348,7 +347,6 @@ This writes:
 
 - `release/browser-cpp-chrome-v<version>.zip` for the Chrome Web Store listing
 - `release/browser-cpp-edge-v<version>.zip` for Microsoft Edge Add-ons
-- `release/browser-cpp-firefox-v<version>.zip` for Firefox unsigned/manual submission packaging
 - `release/browser-cpp-brave-v<version>.zip` for Brave validation/distribution
 - `release/browser-cpp-chromium-v<version>.zip` for Chromium/GitHub distribution
 - `release/firefox-unlisted/*.xpi` after the protected release workflow signs the Firefox unlisted build
@@ -359,11 +357,11 @@ The release manifest tracks the browser package matrix:
 
 - Chrome is the canonical Chromium-family payload
 - Edge, Brave, and Chromium currently reuse that payload under browser-labeled filenames
-- Firefox has its own manifest, background entry, unsigned ZIP artifact, and signing metadata
+- Firefox has its own manifest, background entry, smoke-tested temporary package, and signing metadata
 
 Chrome, Edge, Brave, and Chromium still share the same MV3 payload. Firefox is
-packaged from `dist-firefox/` as a separate payload because its manifest and
-background model differ from Chromium.
+built from `dist-firefox/` as a separate payload because its manifest and
+background model differ from Chromium; release distribution uses the signed XPI.
 
 Store submission notes should state:
 
@@ -385,7 +383,7 @@ Use `.github/workflows/release.yml` to publish one GitHub Release per
 5. Fetches the Clang toolchain
 6. Runs lint, build, release validation, and E2E checks
 7. Runs Firefox packaging smoke validation
-8. Produces the browser-labeled ZIPs plus checksums and release metadata
+8. Produces the Chromium-family ZIPs plus checksums and release metadata
 9. Signs the Firefox unlisted XPI with protected AMO credentials
 10. Creates or updates GitHub Release `v<version>` and uploads all files under `release/`
 
@@ -458,7 +456,7 @@ manual/GitHub-distributed channel.
 1. Run `npm run test:browser:firefox`.
 2. Review `amo/metadata/listed.json` and update it if the release changes
    Firefox-facing product behavior or listing copy.
-3. For public AMO publication, upload the Firefox package and metadata manually
+3. For public AMO publication, build the Firefox package from `dist-firefox/`, then upload it with the metadata manually
    through the owner-managed listing workflow.
 4. For self-distribution, verify that the protected release workflow produced a
    signed artifact under `release/firefox-unlisted/`.

@@ -1,6 +1,6 @@
 {
   "name": "browser.cpp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "In-browser C++20 IDE with WASM Clang toolchain",
   "private": true,
   "scripts": {

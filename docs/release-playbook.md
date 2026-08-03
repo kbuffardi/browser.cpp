@@ -22,7 +22,7 @@
 ## Manual Release Flow
 
 - Review the uploaded artifacts and confirm the version bump is intentional.
-- For Firefox, confirm the unsigned ZIP and the AMO/manual-submission metadata are present before owner handoff.
+- For Firefox, confirm the Firefox build and AMO/manual-submission metadata are ready before owner handoff.
 - Use the existing tag/manual release workflow for final publication.
 - Publish browser store listings and verify installed updates as required by the target browser.
 - The protected release workflow signs the Firefox unlisted XPI with AMO credentials and uploads it with the other release assets.
@@ -74,7 +74,7 @@ Passing these gates proves that:
 
 - Firefox-specific manifest generation succeeds
 - the Firefox extension package passes `web-ext` lint/build smoke
-- release packaging emits the Firefox artifact and release manifest
+- release packaging emits the Chromium-family artifacts and release manifest
 - manifest/package metadata stay version-synchronized
 
 ### Manual Firefox runtime QA
@@ -97,7 +97,7 @@ real Firefox desktop build:
    persistence behavior matches reality.
 8. Restart Firefox and verify session/workspace restore behavior matches the
    documented limitations.
-9. Install the packaged Firefox ZIP/XPI and repeat the compile/run sanity check.
+9. Install the signed Firefox XPI and repeat the compile/run sanity check.
 
 ### Release decision
 

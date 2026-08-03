@@ -207,7 +207,24 @@ test('e2e: clean release workspace removes stale dist and release outputs', () =
   assert.equal(fs.existsSync(path.join(repoRoot, 'release')), false);
 });
 
-test('e2e: release packaging creates all browser artifacts and metadata', () => {
+test('e2e: release packaging removes stale Firefox ZIP artifacts', () => {
+  const repoRoot = makeRepoFixture();
+  fs.mkdirSync(path.join(repoRoot, 'release'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'release', 'browser-cpp-firefox-v0.3.0.zip'),
+    'stale Firefox artifact\n',
+    'utf8'
+  );
+
+  createReleaseArtifacts({ repoRoot });
+
+  assert.equal(
+    fs.existsSync(path.join(repoRoot, 'release', 'browser-cpp-firefox-v0.3.0.zip')),
+    false
+  );
+});
+
+test('e2e: release packaging creates Chromium-family browser artifacts and metadata', () => {
   const repoRoot = makeRepoFixture();
   const result = createReleaseArtifacts({ repoRoot });
 
@@ -232,9 +249,13 @@ test('e2e: release packaging creates all browser artifacts and metadata', () => 
   assert.equal(checksumLines.length, publishableTargets.length);
 
   const firefoxTarget = manifest.targets.find((target) => target.target === 'firefox');
-  assert.equal(firefoxTarget.publishable, true);
+  assert.equal(firefoxTarget.publishable, false);
   assert.equal(firefoxTarget.packageStrategy, 'distinct');
-  assert.equal(firefoxTarget.fileName, 'browser-cpp-firefox-v1.2.3.zip');
+  assert.equal(firefoxTarget.fileName, null);
+  assert.equal(
+    firefoxTarget.blockReason,
+    'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.'
+  );
   assert.equal(firefoxTarget.signing.listed, 'manual-owner-submission');
   assert.equal(firefoxTarget.signing.unlisted, 'required-release-artifact');
 
@@ -242,16 +263,14 @@ test('e2e: release packaging creates all browser artifacts and metadata', () => 
   assert.equal(edgeArtifact.packageStrategy, 'shared-with:chrome');
   assert.equal(edgeArtifact.payloadGroup, 'chromium-mv3');
 
-  const firefoxArtifact = manifest.artifacts.find((artifact) => artifact.target === 'firefox');
-  assert.equal(firefoxArtifact.packageStrategy, 'distinct');
-  assert.equal(firefoxArtifact.payloadGroup, 'firefox-webext');
-  assert.equal(firefoxArtifact.sharedPayload, false);
-  assert.equal(firefoxArtifact.format, 'zip');
-  assert.equal(firefoxArtifact.sourceDir, 'dist-firefox');
+  assert.equal(
+    manifest.artifacts.some((artifact) => artifact.target === 'firefox'),
+    false
+  );
 
   for (const artifact of result.artifacts) {
     assert.equal(fs.existsSync(artifact.filePath), true);
-    assert.match(artifact.fileName, /^browser-cpp-(chrome|edge|firefox|brave|chromium)-v1\.2\.3\.zip$/);
+    assert.match(artifact.fileName, /^browser-cpp-(chrome|edge|brave|chromium)-v1\.2\.3\.zip$/);
   }
 });
 
@@ -277,13 +296,13 @@ test('e2e: release-target metadata includes Firefox and shared Chromium payloads
 
   const firefox = getReleaseTarget('firefox');
   assert.equal(firefox.packageStrategy, 'distinct');
-  assert.equal(firefox.publishable, true);
+  assert.equal(firefox.publishable, false);
   assert.equal(firefox.payloadGroup, 'firefox-webext');
 
   const publishableTargets = getPublishableReleaseTargets();
   assert.deepEqual(
     publishableTargets.map((target) => target.key),
-    ['chrome', 'edge', 'firefox', 'brave', 'chromium']
+    ['chrome', 'edge', 'brave', 'chromium']
   );
 });
 
