@@ -162,6 +162,16 @@ function getCommitSha(repoRoot) {
   return null;
 }
 
+function removeStaleFirefoxZipArtifacts(releaseDir) {
+  if (!fs.existsSync(releaseDir)) return;
+
+  for (const name of fs.readdirSync(releaseDir)) {
+    if (!/^browser-cpp-firefox-v.+\.zip$/.test(name)) continue;
+    const filePath = path.join(releaseDir, name);
+    if (fs.statSync(filePath).isFile()) fs.unlinkSync(filePath);
+  }
+}
+
 function createReleaseArtifacts(options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const distDir = options.distDir || path.join(repoRoot, 'dist');
@@ -180,6 +190,7 @@ function createReleaseArtifacts(options = {}) {
   ]);
 
   fs.mkdirSync(releaseDir, { recursive: true });
+  removeStaleFirefoxZipArtifacts(releaseDir);
 
   const artifacts = publishableTargets.map((target) => {
     const payloadGroup = target.payloadGroup;

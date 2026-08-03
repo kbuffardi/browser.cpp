@@ -207,6 +207,23 @@ test('e2e: clean release workspace removes stale dist and release outputs', () =
   assert.equal(fs.existsSync(path.join(repoRoot, 'release')), false);
 });
 
+test('e2e: release packaging removes stale Firefox ZIP artifacts', () => {
+  const repoRoot = makeRepoFixture();
+  fs.mkdirSync(path.join(repoRoot, 'release'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'release', 'browser-cpp-firefox-v0.3.0.zip'),
+    'stale Firefox artifact\n',
+    'utf8'
+  );
+
+  createReleaseArtifacts({ repoRoot });
+
+  assert.equal(
+    fs.existsSync(path.join(repoRoot, 'release', 'browser-cpp-firefox-v0.3.0.zip')),
+    false
+  );
+});
+
 test('e2e: release packaging creates Chromium-family browser artifacts and metadata', () => {
   const repoRoot = makeRepoFixture();
   const result = createReleaseArtifacts({ repoRoot });
