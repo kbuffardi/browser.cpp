@@ -4,10 +4,10 @@ Use this procedure to validate live JSPI terminal input from GitHub issue #55
 in a real Firefox extension context. `npm run test:browser:firefox` validates
 packaging and manifest compatibility, but does not execute a compiled program.
 
-Firefox 153+ should use live, canonical (line-buffered) input. Firefox 140–152,
-or a runtime where JSPI is unavailable, should keep the pre-supplied buffered
-fallback. Persistent folder write-back is outside this test and retains its
-documented Firefox limitations.
+Firefox 153+ with worker-side JSPI must use live, canonical (line-buffered)
+input. A Firefox runtime where JSPI is unavailable must report stdin as
+unsupported and must not open a pre-supplied-input dialog. Persistent folder
+write-back is outside this test and retains its documented Firefox limitations.
 
 ## Setup
 
@@ -55,7 +55,7 @@ int main() {
 
 1. Choose **Compile and Run**.
 2. Confirm `Name? ` appears before entering anything and that the
-   **Pre-supplied stdin** dialog does not open.
+   pre-supplied-input dialog does not open.
 3. Type `Ada`, press Enter, and confirm `Age? ` appears afterward.
 4. Type `41` and press Enter.
 5. Confirm the final line is `Hello Ada, next year 42` and the process exits
@@ -72,19 +72,14 @@ This validates two independent suspend/resume cycles and prompt ordering.
 3. Run once more and complete both inputs successfully. Confirm no input from
    either prior run appears in the new process.
 
-## Buffered fallback test
+## Unsupported-runtime test
 
 Repeat in Firefox 140–152, or in a controlled environment where the worker does
 not expose both `WebAssembly.Suspending` and `WebAssembly.promising`.
 
 1. Choose **Compile and Run**.
-2. Confirm the **Pre-supplied stdin** dialog opens.
-3. Enter `Ada`, a newline, `41`, and a final newline; then choose **Run
-   program**.
-4. Confirm the same successful final output.
-
-The fallback must not attempt message-interactive stdin merely from the Firefox
-version string or main-window capabilities.
+2. Confirm no pre-supplied-input dialog opens.
+3. Confirm the terminal reports that live stdin is unavailable and posts no run.
 
 ## Error exclusions
 
@@ -107,6 +102,6 @@ Record the following in the pull request or follow-up release evidence:
 - exact observed prompt/output ordering
 - confirmation that each input was entered only after its prompt appeared
 - Ctrl+D, Ctrl+C, and clean-rerun results
-- confirmation that the buffered dialog was absent on Firefox 153+ JSPI and
-  present in the no-JSPI fallback test
+- confirmation that no pre-supplied-input dialog exists and no-JSPI reports
+  unsupported stdin
 - confirmation that stderr and the Browser Console had no unexpected errors

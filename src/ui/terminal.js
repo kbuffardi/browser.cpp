@@ -31,11 +31,7 @@ import {
   normalizeOverlayPath,
 } from './build-request.mjs';
 import { validateNewDirectoryPath, validateNewFilePath } from './workspace-fs.mjs';
-import {
-  BUFFERED_STDIN_MAX_BYTES,
-  INTERACTIVE_STDIN_CHUNK_MAX_BYTES,
-} from '../workers/run-request.mjs';
-import { requestBufferedStdin } from './buffered-stdin-dialog.mjs';
+import { INTERACTIVE_STDIN_CHUNK_MAX_BYTES } from '../workers/run-request.mjs';
 import {
   collectBrowserCapabilities,
   selectStdinTransport,
@@ -231,7 +227,6 @@ let _supportsInteractiveStdin = supportsInteractiveStdin;
 let _workerCapabilities = { jspi: false };
 let _getStdinTransport = getStdinTransport;
 let _createStdinSessionId = createStdinSessionId;
-let _requestBufferedStdin = requestBufferedStdin;
 
 function supportsInteractiveStdin() {
   return (
@@ -264,7 +259,7 @@ function createStdinSessionId() {
  * @param {HTMLElement} container
  * @param {{
  *   onCompile: (request:{sourcePaths:(string[]|null), flags:string[], std:string, outputName:(string|null), cwd:string}) => void,
- *   onRun:     (request:{stdinMode:string,sharedBuffer?:SharedArrayBuffer,stdinBuffer?:Uint8Array}) => Promise<void>|void,
+ *   onRun:     (request:{stdinMode:string,sharedBuffer?:SharedArrayBuffer,stdinSessionId?:string}) => Promise<void>|void,
  *   onStopRun?: () => void,
  *   onStdinData?: (message:{type:'stdin-data',stdinSessionId:string,bytes:Uint8Array}) => void,
  *   onStdinEOF?: (message:{type:'stdin-eof',stdinSessionId:string}) => void,
@@ -303,7 +298,6 @@ export function createTerminal(container, {
   _supportsInteractiveStdin = supportsInteractiveStdin;
   _getStdinTransport = getStdinTransport;
   _createStdinSessionId = createStdinSessionId;
-  _requestBufferedStdin = requestBufferedStdin;
   initialPromptShown = false;
   busy = true;
 
@@ -385,8 +379,8 @@ export function setWorkerCapabilities(capabilities = {}) {
  * Start executing the last compiled binary.
  *
  * Uses live SharedArrayBuffer stdin when cross-origin isolation is available,
- * Firefox JSPI message stdin when its worker confirms support, and otherwise
- * collects pre-supplied buffered stdin before dispatch.
+ * Firefox JSPI message stdin when its worker confirms support. Unsupported
+ * runtimes are rejected before a worker run request is posted.
  * Can be called from the terminal command line (`./a.out`) or directly from
  * the toolbar Run button.
  *
@@ -419,19 +413,9 @@ export async function startRun() {
         stdinSessionId: activeStdinSessionId,
       };
     } else {
-      const text = await _requestBufferedStdin();
-      if (text === null) {
-        setRunPreparationState(false);
-        busy = false;
-        writePrompt();
-        return false;
-      }
-
-      const stdinBuffer = new TextEncoder().encode(text);
-      if (stdinBuffer.byteLength > BUFFERED_STDIN_MAX_BYTES) {
-        throw new Error('Buffered stdin exceeds the 256 KiB limit.');
-      }
-      request = { stdinMode: 'buffered', stdinBuffer };
+      throw new Error(
+        'Live terminal stdin is unavailable in this browser/runtime. Firefox requires JSPI support; Chromium requires SharedArrayBuffer support.'
+      );
     }
 
     if (!_onRun) throw new Error('Run callback is unavailable.');
@@ -1101,7 +1085,6 @@ export function __setTerminalTestHarness({
   supportsInteractiveStdin: supportsInteractiveStdinForTest = () => true,
   supportsMessageInteractiveStdin: supportsMessageInteractiveStdinForTest = () => false,
   createStdinSessionId: createStdinSessionIdForTest = () => 'stdin-session-test',
-  requestBufferedStdin: requestBufferedStdinForTest = async () => '',
 } = {}) {
   term = terminalInstance || null;
   fitAddon = null;
@@ -1120,10 +1103,9 @@ export function __setTerminalTestHarness({
   _getStdinTransport = () => {
     if (supportsInteractiveStdinForTest()) return 'shared-buffer';
     if (supportsMessageInteractiveStdinForTest()) return 'message-jspi';
-    return 'buffered';
+    return 'unsupported';
   };
   _createStdinSessionId = createStdinSessionIdForTest;
-  _requestBufferedStdin = requestBufferedStdinForTest;
   lastBuiltArtifactPath = artifactPath;
   inputBuffer = '';
   history.length = 0;

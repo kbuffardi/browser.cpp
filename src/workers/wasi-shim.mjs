@@ -55,8 +55,6 @@ export function createWasiRuntime({
   const messageStdinChunks = [];
   let messageStdinChunkIndex = 0;
   let messageStdinChunkOffset = 0;
-  let stdinBytes = new Uint8Array();
-  let stdinCursor = 0;
   let stdinEnded = false;
   const stdinWaiters = [];
 
@@ -69,11 +67,6 @@ export function createWasiRuntime({
     }
     sharedBuffer = stdin.sharedBuffer;
     sabControl = new Int32Array(sharedBuffer);
-  } else if (stdinMode === 'buffered') {
-    if (!(stdin.bytes instanceof Uint8Array) && !(stdin.bytes instanceof ArrayBuffer)) {
-      throw new TypeError('Buffered stdin requires Uint8Array or ArrayBuffer bytes.');
-    }
-    stdinBytes = new Uint8Array(stdin.bytes);
   } else if (stdinMode !== 'none' && stdinMode !== 'interactive-message') {
     throw new TypeError(`Unsupported stdin mode: ${String(stdinMode)}`);
   }
@@ -286,19 +279,6 @@ export function createWasiRuntime({
 
       if (stdinMode === 'none') {
         view().setUint32(nreadPtr, 0, true);
-        return WASI_ERRNO_SUCCESS;
-      }
-
-      if (stdinMode === 'buffered') {
-        for (const { base, len } of spans) {
-          const available = stdinBytes.length - stdinCursor;
-          if (available <= 0) break;
-          const toRead = Math.min(len, available);
-          u8().set(stdinBytes.subarray(stdinCursor, stdinCursor + toRead), base);
-          stdinCursor += toRead;
-          total += toRead;
-        }
-        view().setUint32(nreadPtr, total, true);
         return WASI_ERRNO_SUCCESS;
       }
 

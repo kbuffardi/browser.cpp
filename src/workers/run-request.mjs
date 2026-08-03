@@ -1,6 +1,5 @@
 'use strict';
 
-export const BUFFERED_STDIN_MAX_BYTES = 256 * 1024;
 export const INTERACTIVE_STDIN_CHUNK_MAX_BYTES = 64 * 1024;
 const STDIN_SESSION_ID_MAX_LENGTH = 128;
 
@@ -103,16 +102,6 @@ export function validateRunRequest(request) {
       };
       break;
 
-    case 'buffered':
-      if (!isByteSource(request.stdinBuffer) || request.sharedBuffer !== undefined) {
-        return invalid('Invalid buffered stdin: stdinBuffer must be a Uint8Array or ArrayBuffer.');
-      }
-      if (request.stdinBuffer.byteLength > BUFFERED_STDIN_MAX_BYTES) {
-        return invalid('Invalid buffered stdin: input exceeds the 256 KiB limit.');
-      }
-      stdin = { mode: 'buffered', bytes: asUint8Array(request.stdinBuffer) };
-      break;
-
     case 'none':
       if (request.sharedBuffer !== undefined || request.stdinBuffer !== undefined) {
         return invalid('Invalid none stdin: no stdin buffer may be supplied.');
@@ -122,7 +111,7 @@ export function validateRunRequest(request) {
 
     default:
       return invalid(
-        'Invalid stdinMode. Expected interactive, interactive-message, buffered, or none.'
+        'Invalid stdinMode. Expected interactive, interactive-message, or none.'
       );
   }
 
