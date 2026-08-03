@@ -25,7 +25,8 @@ const TARGETS = Object.freeze([
     channel: 'Firefox Add-ons / signed XPI',
     packageStrategy: 'distinct',
     payloadGroup: 'firefox-webext',
-    publishable: true,
+    publishable: false,
+    blockReason: 'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.',
     signing: {
       listed: 'manual-owner-submission',
       unlisted: 'required-release-artifact',

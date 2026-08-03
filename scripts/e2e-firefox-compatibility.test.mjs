@@ -59,8 +59,10 @@ test('e2e: Firefox compatibility report accepts supported fallback-based capabil
   assert.deepEqual(report.missing, []);
   assert.ok(report.limitations.some((item) => item.key === 'limitedInteractiveStdin'));
   assert.ok(report.limitations.some((item) => item.key === 'firefoxWorkspacePersistence'));
-  assert.ok(message.includes('pre-supplied buffered stdin'));
-  assert.ok(message.includes('Persistent folder write-back'));
+  assert.equal(
+    message,
+    'Firefox support is still experimental. Brave, Chrome, Chromium, or Edge browsers are recommended.'
+  );
 });
 
 test('e2e: target manifest generation creates a Firefox manifest without Chromium-only background keys', () => {

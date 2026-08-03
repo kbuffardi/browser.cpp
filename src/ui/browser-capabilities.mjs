@@ -5,6 +5,8 @@ import { getExtensionAPI } from '../extension-api.mjs';
 const MINIMUM_CHROMIUM_MAJOR = 105;
 const MINIMUM_FIREFOX_MAJOR = 140;
 export const FIREFOX_JSPI_STDIN_MINIMUM_MAJOR = 153;
+export const FIREFOX_EXPERIMENTAL_WARNING =
+  'Firefox support is still experimental. Brave, Chrome, Chromium, or Edge browsers are recommended.';
 
 const BASE_REQUIRED_CAPABILITIES = [
   { key: 'extensionRuntime', label: 'Extension runtime API' },
@@ -223,6 +225,10 @@ export function createBrowserCompatibilityReport(root = globalThis, workerCapabi
 }
 
 export function formatBrowserCompatibilityMessage(report) {
+  if (report.capabilities?.browserFamily === 'firefox') {
+    return FIREFOX_EXPERIMENTAL_WARNING;
+  }
+
   const lines = [];
   if (report.missing.length) {
     lines.push('Browser compatibility warning: required capabilities are missing:');
