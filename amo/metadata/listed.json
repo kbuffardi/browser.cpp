@@ -3,7 +3,7 @@
   "ownerAction": "manual-submission",
   "summary": "Public AMO listing remains a manual owner-managed release step.",
   "artifacts": [
-    "release/browser-cpp-firefox-v<version>.zip"
+    "dist-firefox/ (package manually with web-ext for listed AMO submission)"
   ],
   "notes": [
     "Review Firefox limitations around file and workspace persistence before submission.",
