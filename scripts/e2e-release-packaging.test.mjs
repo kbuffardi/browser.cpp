@@ -235,6 +235,10 @@ test('e2e: release packaging creates Chromium-family browser artifacts and metad
   assert.equal(firefoxTarget.publishable, false);
   assert.equal(firefoxTarget.packageStrategy, 'distinct');
   assert.equal(firefoxTarget.fileName, null);
+  assert.equal(
+    firefoxTarget.blockReason,
+    'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.'
+  );
   assert.equal(firefoxTarget.signing.listed, 'manual-owner-submission');
   assert.equal(firefoxTarget.signing.unlisted, 'required-release-artifact');
 

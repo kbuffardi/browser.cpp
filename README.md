@@ -360,8 +360,8 @@ The release manifest tracks the browser package matrix:
 - Firefox has its own manifest, background entry, smoke-tested temporary package, and signing metadata
 
 Chrome, Edge, Brave, and Chromium still share the same MV3 payload. Firefox is
-packaged from `dist-firefox/` as a separate payload because its manifest and
-background model differ from Chromium.
+built from `dist-firefox/` as a separate payload because its manifest and
+background model differ from Chromium; release distribution uses the signed XPI.
 
 Store submission notes should state:
 
