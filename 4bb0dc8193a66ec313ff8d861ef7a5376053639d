@@ -1,0 +1,14 @@
+## AI Agent Reasoning
+
+### Context
+Issue #61 requires Explorer folders to remain collapsed through external workspace updates while keeping new Explorer files visible.
+
+### Decisions Made
+- Ordinary workspace snapshots preserve only existing user-selected expansion paths.
+- The Explorer New File completion is the sole path that expands file ancestors.
+
+### Trade-offs
+- A new file can be opened in the editor while external additions remain hidden beneath collapsed folders, preserving the user's tree context.
+
+### References
+- Issue: #61
