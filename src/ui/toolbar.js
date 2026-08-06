@@ -307,7 +307,7 @@ async function handleWorkerMessage(data) {
           }
         }
         if (snapshot) {
-          applyWorkspaceSnapshot(snapshot, changedPaths);
+          applyWorkspaceSnapshot(snapshot);
           await reloadOverwrittenTabs(changedPaths);
         }
       }
@@ -445,7 +445,8 @@ async function submitInlineFileCreation(rawName, errorEl, onReject) {
   }
 
   endInlineFileCreation();
-  applyWorkspaceSnapshot(result.snapshot, [result.path]);
+  applyWorkspaceSnapshot(result.snapshot);
+  revealWorkspacePath(result.path);
   openTabForFile(result.path, '');
   markDirty(false);
   highlightWorkspaceFile(result.path);
@@ -467,24 +468,25 @@ function inlineCreateErrorMessage(error) {
 
 /**
  * Adopt a refreshed workspace snapshot after an incremental mutation: update the
- * in-memory workspace, refresh the terminal index (preserving cwd), expand the
- * ancestor directories of any newly created paths so they are visible, and
- * re-render the Explorer.
+ * in-memory workspace, refresh the terminal index (preserving cwd), preserve
+ * the user's directory expansion choices, and re-render the Explorer.
  *
  * @param {object} snapshot – workspace snapshot from filesystem.js
- * @param {string[]} [revealPaths] – paths whose ancestor dirs should be expanded
  */
-export function applyWorkspaceSnapshot(snapshot, revealPaths = []) {
+export function applyWorkspaceSnapshot(snapshot) {
   if (!snapshot) return;
   _workspace = snapshot;
   _terminalAPI.refreshWorkspace?.(snapshot);
   pruneExpandedWorkspaceDirectories(snapshot);
-  for (const path of revealPaths) {
-    for (const dir of directoriesForPath(path)) {
-      _expandedWorkspaceDirectories.add(dir);
-    }
-  }
   renderWorkspaceSidebar(snapshot);
+}
+
+/** Reveal a path created through the Explorer's explicit New File action. */
+function revealWorkspacePath(path) {
+  for (const dir of directoriesForPath(path)) {
+    _expandedWorkspaceDirectories.add(dir);
+  }
+  renderWorkspaceSidebar(_workspace);
 }
 
 function pruneExpandedWorkspaceDirectories(snapshot) {
@@ -511,8 +513,7 @@ async function syncWorkspaceFromDisk(reason) {
     if (!result?.snapshot) return null;
     if (!hasWorkspaceDiff(result)) return result;
 
-    const revealPaths = (result.added || []).map((entry) => normalizeOverlayPath(entry.path));
-    applyWorkspaceSnapshot(result.snapshot, revealPaths);
+    applyWorkspaceSnapshot(result.snapshot);
 
     const changedPaths = (result.changed || []).map((entry) => normalizeOverlayPath(entry.path));
     if (changedPaths.length) {
@@ -548,7 +549,7 @@ function hasWorkspaceDiff(result) {
 async function persistWorkspaceFile(path, bytes) {
   try {
     const snapshot = await _fsAPI.writeWorkspaceFile(path, bytes);
-    if (snapshot) applyWorkspaceSnapshot(snapshot, [normalizeOverlayPath(path)]);
+    if (snapshot) applyWorkspaceSnapshot(snapshot);
     await syncWorkspaceFromDisk('compile-result');
   } catch (err) {
     console.warn('[browser.cpp] Failed to persist workspace file:', path, err);
