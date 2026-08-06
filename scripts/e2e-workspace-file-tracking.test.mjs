@@ -622,6 +622,7 @@ class FakeElement {
     this.children = [];
     this.listeners = new Map();
     this.dataset = {};
+    this.attributes = new Map();
     this.style = {};
     this._className = '';
     this.classList = {
@@ -693,8 +694,9 @@ class FakeElement {
   setAttribute(name, value) {
     if (name === 'id') { this.id = value; return; }
     if (name.startsWith('data-')) this.dataset[name.slice(5)] = value;
+    this.attributes.set(name, String(value));
   }
-  getAttribute() { return null; }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
 
   querySelectorAll(selector) {
     if (selector !== 'li') return [];
@@ -844,6 +846,12 @@ function renderedTreePaths(document) {
     .filter(Boolean) ?? [];
 }
 
+function renderedTreeItem(document, path) {
+  return document.getElementById('file-tree')
+    ?.querySelectorAll('li')
+    .find((item) => item.dataset.path === path) ?? null;
+}
+
 function shortcutEvent(key, { metaKey = false, ctrlKey = false, shiftKey = false } = {}) {
   let prevented = false;
   return {
@@ -926,6 +934,85 @@ test('e2e: submitting a nested path creates parent directories and opens the fil
   assert.deepEqual(ctx.fsCalls.create.map((c) => c.path), ['src/lib/util.hpp']);
   assert.ok(ctx.toolbar.getOpenTabPaths().includes('src/lib/util.hpp'));
   assert.ok(ctx.terminalCalls.refresh.length >= 1, 'terminal workspace refreshed');
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src', 'src/lib', 'src/lib/util.hpp']);
+  assert.equal(renderedTreeItem(ctx.document, 'src').getAttribute('aria-expanded'), 'true');
+  assert.equal(renderedTreeItem(ctx.document, 'src/lib').getAttribute('aria-expanded'), 'true');
+});
+
+test('e2e: restored nested directories start collapsed until the user expands each level', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({
+    name: 'p',
+    entries: [
+      { path: 'src', kind: 'directory' },
+      { path: 'src/lib', kind: 'directory' },
+      { path: 'src/lib/util.hpp', kind: 'file' },
+    ],
+  }, [], null);
+
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src']);
+  assert.equal(renderedTreeItem(ctx.document, 'src').getAttribute('aria-expanded'), 'false');
+
+  renderedTreeItem(ctx.document, 'src').click();
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src', 'src/lib']);
+  assert.equal(renderedTreeItem(ctx.document, 'src/lib').getAttribute('aria-expanded'), 'false');
+
+  renderedTreeItem(ctx.document, 'src/lib').click();
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src', 'src/lib', 'src/lib/util.hpp']);
+});
+
+test('e2e: refresh keeps expanded directories but prunes directories that no longer exist', async () => {
+  const ctx = await setupToolbar();
+  const initial = {
+    name: 'p',
+    entries: [
+      { path: 'src', kind: 'directory' },
+      { path: 'src/lib', kind: 'directory' },
+      { path: 'src/lib/util.hpp', kind: 'file' },
+    ],
+  };
+  await ctx.toolbar.restoreWorkspace(initial, [], null);
+
+  renderedTreeItem(ctx.document, 'src').click();
+  ctx.toolbar.applyWorkspaceSnapshot({
+    name: 'p',
+    entries: [...initial.entries, { path: 'src/lib/deep.hpp', kind: 'file' }],
+  });
+
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src', 'src/lib']);
+  assert.equal(renderedTreeItem(ctx.document, 'src').getAttribute('aria-expanded'), 'true');
+  assert.equal(renderedTreeItem(ctx.document, 'src/lib').getAttribute('aria-expanded'), 'false');
+
+  ctx.toolbar.applyWorkspaceSnapshot({ name: 'p', entries: [] });
+  ctx.toolbar.applyWorkspaceSnapshot(initial);
+  assert.equal(renderedTreeItem(ctx.document, 'src').getAttribute('aria-expanded'), 'false');
+});
+
+test('e2e: external disk refresh does not expand newly added nested directories', async () => {
+  const ctx = await setupToolbar({
+    refreshWorkspaceResult: {
+      snapshot: {
+        name: 'p',
+        entries: [
+          { path: 'generated', kind: 'directory' },
+          { path: 'generated/output.txt', kind: 'file' },
+        ],
+      },
+      added: [
+        { path: 'generated', kind: 'directory' },
+        { path: 'generated/output.txt', kind: 'file' },
+      ],
+      removed: [],
+      changed: [],
+    },
+  });
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [] }, [], null);
+
+  ctx.document.dispatch('visibilitychange');
+  await tick();
+
+  assert.deepEqual(renderedTreePaths(ctx.document), ['generated']);
+  assert.equal(renderedTreeItem(ctx.document, 'generated').getAttribute('aria-expanded'), 'false');
 });
 
 test('e2e: Escape cancels inline creation and removes the row cleanly', async () => {
@@ -1224,7 +1311,8 @@ test('e2e: runtime-created files appear in the refreshed workspace snapshot', as
   const latestWorkspace = ctx.terminalCalls.refresh.at(-1);
   assert.ok(latestWorkspace.entries.some((entry) => entry.path === 'generated' && entry.kind === 'directory'));
   assert.ok(latestWorkspace.entries.some((entry) => entry.path === createdPath && entry.kind === 'file'));
-  assert.deepEqual(renderedTreePaths(ctx.document), ['generated', createdPath]);
+  assert.deepEqual(renderedTreePaths(ctx.document), ['generated']);
+  assert.equal(renderedTreeItem(ctx.document, 'generated').getAttribute('aria-expanded'), 'false');
 });
 
 test('e2e: runtime file writes warn when no writable folder workspace is open', async () => {
