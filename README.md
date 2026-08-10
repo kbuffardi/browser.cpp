@@ -156,6 +156,30 @@ be persisted.
 
 ---
 
+## C++ and runtime support
+
+browser.cpp supports C++14, C++17, and C++20 compilation plus common in-memory
+libc++/STL use (containers, strings, algorithms, smart pointers, and streams).
+`stdout`/`stderr`, random bytes, wall-clock time, supported live line-buffered
+stdin, and workspace-backed `fstream`/`ifstream`/`ofstream` are available. See
+[fstream / File I/O](#fstream--file-io) for the workspace write-back model.
+
+This is not an exhaustive STL compatibility matrix: availability ultimately
+depends on the bundled WASI libc/libc++ sysroot and browser.cpp's narrow runtime
+shim. OS-dependent features are intentionally limited:
+
+- No networking or sockets; no subprocesses, shell execution, `system`, `fork`,
+  or `exec`.
+- No real environment variables and fixed program arguments (`./a.out` only).
+- No reliable `std::thread` or thread-backed concurrency support; this is not a
+  raw POSIX terminal.
+- No full host-filesystem semantics beyond the opened workspace: do not rely on
+  directory iteration, symlinks, permissions, or other platform-specific file
+  operations. Locale databases and other platform-specific facilities are also
+  not guaranteed.
+
+---
+
 
 
 | Action | Shortcut |
