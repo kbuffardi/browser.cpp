@@ -9,6 +9,7 @@ const { validateReleaseVersionSync } = require('./check-release-version-sync');
 const { BASE_URL, FILES } = require('./fetch-clang-wasm');
 const {
   getArtifactFileName,
+  getReleaseArtifactTargets,
   getPublishableReleaseTargets,
   getReleaseTargets,
 } = require('./release-targets');
@@ -172,6 +173,16 @@ function removeStaleFirefoxZipArtifacts(releaseDir) {
   }
 }
 
+function removeStaleChromiumZipArtifacts(releaseDir) {
+  if (!fs.existsSync(releaseDir)) return;
+
+  for (const name of fs.readdirSync(releaseDir)) {
+    if (!/^browser-cpp-(?:chrome|edge|brave|chromium|chromium-family)-v.+\.zip$/.test(name)) continue;
+    const filePath = path.join(releaseDir, name);
+    if (fs.statSync(filePath).isFile()) fs.unlinkSync(filePath);
+  }
+}
+
 function createReleaseArtifacts(options = {}) {
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
   const distDir = options.distDir || path.join(repoRoot, 'dist');
@@ -183,6 +194,7 @@ function createReleaseArtifacts(options = {}) {
     releaseTag: options.releaseTag,
   });
   const publishableTargets = getPublishableReleaseTargets();
+  const artifactTargets = getReleaseArtifactTargets();
   const payloadCache = new Map();
   const payloadSourceDirs = new Map([
     ['chromium-mv3', distDir],
@@ -191,8 +203,9 @@ function createReleaseArtifacts(options = {}) {
 
   fs.mkdirSync(releaseDir, { recursive: true });
   removeStaleFirefoxZipArtifacts(releaseDir);
+  removeStaleChromiumZipArtifacts(releaseDir);
 
-  const artifacts = publishableTargets.map((target) => {
+  const artifacts = artifactTargets.map((target) => {
     const payloadGroup = target.payloadGroup;
     const sourceDir = payloadSourceDirs.get(payloadGroup);
     if (!sourceDir) {
@@ -225,6 +238,7 @@ function createReleaseArtifacts(options = {}) {
       channel: target.channel,
       notes: target.notes,
       packageStrategy: target.packageStrategy,
+      artifactKey: target.artifactKey,
       payloadGroup: target.payloadGroup,
       signing: target.signing || null,
       fileName,
@@ -233,6 +247,9 @@ function createReleaseArtifacts(options = {}) {
       bytes: payload.zipBuffer.length,
       sha256: payload.sha256,
       sharedPayload: publishableTargets.filter((item) => item.payloadGroup === payloadGroup).length > 1,
+      compatibleTargets: publishableTargets
+        .filter((item) => item.artifactKey === target.artifactKey)
+        .map((item) => item.key),
       sourceDir: path.relative(repoRoot, payload.sourceDir),
     };
   });
@@ -273,6 +290,7 @@ function createReleaseArtifacts(options = {}) {
       label: target.label,
       channel: target.channel,
       packageStrategy: target.packageStrategy,
+      artifactKey: target.artifactKey,
       payloadGroup: target.payloadGroup,
       publishable: target.publishable,
       blockReason: target.blockReason || null,
@@ -286,6 +304,7 @@ function createReleaseArtifacts(options = {}) {
       channel: artifact.channel,
       notes: artifact.notes,
       packageStrategy: artifact.packageStrategy,
+      artifactKey: artifact.artifactKey,
       payloadGroup: artifact.payloadGroup,
       signing: artifact.signing,
       fileName: artifact.fileName,
@@ -294,6 +313,7 @@ function createReleaseArtifacts(options = {}) {
       bytes: artifact.bytes,
       sha256: artifact.sha256,
       sharedPayload: artifact.sharedPayload,
+      compatibleTargets: artifact.compatibleTargets,
     })),
   };
   fs.writeFileSync(releaseManifestPath, `${JSON.stringify(releaseManifest, null, 2)}\n`, 'utf8');

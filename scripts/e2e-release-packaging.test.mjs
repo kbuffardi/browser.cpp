@@ -13,6 +13,7 @@ const { synchronizeVersionFromManifest } = require('./sync-version-from-manifest
 const { validateReleaseVersionSync } = require('./check-release-version-sync.js');
 const { cleanReleaseWorkspace } = require('./clean-release-workspace.js');
 const {
+  getReleaseArtifactTargets,
   getPublishableReleaseTargets,
   getReleaseTarget,
   getReleaseTargets,
@@ -224,18 +225,19 @@ test('e2e: release packaging removes stale Firefox ZIP artifacts', () => {
   );
 });
 
-test('e2e: release packaging creates Chromium-family browser artifacts and metadata', () => {
+test('e2e: release packaging creates one Chromium-family artifact and target mappings', () => {
   const repoRoot = makeRepoFixture();
   const result = createReleaseArtifacts({ repoRoot });
 
-  const publishableTargets = getPublishableReleaseTargets();
-  assert.equal(result.artifacts.length, publishableTargets.length);
+  const artifactTargets = getReleaseArtifactTargets();
+  assert.equal(result.artifacts.length, artifactTargets.length);
+  assert.equal(result.artifacts.length, 1);
 
   const manifest = JSON.parse(fs.readFileSync(result.releaseManifestPath, 'utf8'));
   assert.equal(manifest.version, '1.2.3');
   assert.deepEqual(
     manifest.artifacts.map((artifact) => artifact.target),
-    publishableTargets.map((target) => target.key)
+    artifactTargets.map((target) => target.key)
   );
   assert.deepEqual(
     manifest.targets.map((target) => target.target),
@@ -246,7 +248,10 @@ test('e2e: release packaging creates Chromium-family browser artifacts and metad
     .readFileSync(result.checksumPath, 'utf8')
     .trim()
     .split('\n');
-  assert.equal(checksumLines.length, publishableTargets.length);
+  assert.equal(checksumLines.length, artifactTargets.length);
+  assert.deepEqual(checksumLines, [
+    `${manifest.artifacts[0].sha256}  browser-cpp-chromium-family-v1.2.3.zip`,
+  ]);
 
   const firefoxTarget = manifest.targets.find((target) => target.target === 'firefox');
   assert.equal(firefoxTarget.publishable, false);
@@ -259,18 +264,29 @@ test('e2e: release packaging creates Chromium-family browser artifacts and metad
   assert.equal(firefoxTarget.signing.listed, 'manual-owner-submission');
   assert.equal(firefoxTarget.signing.unlisted, 'required-release-artifact');
 
-  const edgeArtifact = manifest.artifacts.find((artifact) => artifact.target === 'edge');
-  assert.equal(edgeArtifact.packageStrategy, 'shared-with:chrome');
-  assert.equal(edgeArtifact.payloadGroup, 'chromium-mv3');
+  const chromiumTargets = ['chrome', 'edge', 'brave', 'chromium'];
+  for (const targetKey of chromiumTargets) {
+    const target = manifest.targets.find((item) => item.target === targetKey);
+    assert.equal(target.artifactKey, 'chromium-family');
+    assert.equal(target.fileName, 'browser-cpp-chromium-family-v1.2.3.zip');
+  }
 
   assert.equal(
     manifest.artifacts.some((artifact) => artifact.target === 'firefox'),
     false
   );
 
-  for (const artifact of result.artifacts) {
-    assert.equal(fs.existsSync(artifact.filePath), true);
-    assert.match(artifact.fileName, /^browser-cpp-(chrome|edge|brave|chromium)-v1\.2\.3\.zip$/);
+  const [artifact] = result.artifacts;
+  assert.equal(fs.existsSync(artifact.filePath), true);
+  assert.equal(artifact.fileName, 'browser-cpp-chromium-family-v1.2.3.zip');
+  assert.equal(artifact.artifactKey, 'chromium-family');
+  assert.equal(artifact.compatibleTargets.join(','), chromiumTargets.join(','));
+
+  for (const targetKey of chromiumTargets) {
+    assert.equal(
+      fs.existsSync(path.join(repoRoot, 'release', `browser-cpp-${targetKey}-v1.2.3.zip`)),
+      false
+    );
   }
 });
 
@@ -288,7 +304,7 @@ test('e2e: release packaging refuses mismatched built manifest versions', () => 
   );
 });
 
-test('e2e: release-target metadata includes Firefox and shared Chromium payloads', () => {
+test('e2e: release-target metadata maps Chromium targets to one artifact and preserves Firefox', () => {
   assert.deepEqual(
     TARGETS.map((target) => target.key),
     ['chrome', 'edge', 'firefox', 'brave', 'chromium']
@@ -304,6 +320,14 @@ test('e2e: release-target metadata includes Firefox and shared Chromium payloads
     publishableTargets.map((target) => target.key),
     ['chrome', 'edge', 'brave', 'chromium']
   );
+
+  assert.deepEqual(
+    getReleaseArtifactTargets().map((target) => target.key),
+    ['chromium']
+  );
+  for (const target of publishableTargets) {
+    assert.equal(target.artifactKey, 'chromium-family');
+  }
 });
 
 test('e2e: manifest version change detection reports same-repo version bumps', () => {

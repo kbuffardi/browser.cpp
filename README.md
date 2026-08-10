@@ -273,7 +273,7 @@ npm run test:browser:firefox
 ```
 
 For release candidates triggered by a `manifest.json` version bump, GitHub Actions
-uploads browser-labeled release artifacts for same-repo pull requests only. The
+uploads the shared Chromium-family release artifact for same-repo pull requests only. The
 release workflow uses `manifest.json` as the version source of truth and expects
 `package.json` to stay in sync with that value. See `docs/release-playbook.md`
 for the full release flow and the remaining human-owned publish steps.
@@ -337,7 +337,7 @@ check in every target browser:
 
 ### Release packages
 
-Create browser-labeled release ZIPs from the built `dist/` contents:
+Create the shared Chromium-family release ZIP from the built `dist/` contents:
 
 ```bash
 npm run package:release
@@ -345,18 +345,14 @@ npm run package:release
 
 This writes:
 
-- `release/browser-cpp-chrome-v<version>.zip` for the Chrome Web Store listing
-- `release/browser-cpp-edge-v<version>.zip` for Microsoft Edge Add-ons
-- `release/browser-cpp-brave-v<version>.zip` for Brave validation/distribution
-- `release/browser-cpp-chromium-v<version>.zip` for Chromium/GitHub distribution
+- `release/browser-cpp-chromium-family-v<version>.zip` for Chrome, Edge, Brave, and Chromium
 - `release/firefox-unlisted/*.xpi` after the protected release workflow signs the Firefox unlisted build
 - `release/SHA256SUMS-v<version>.txt`
 - `release/release-manifest-v<version>.json`
 
 The release manifest tracks the browser package matrix:
 
-- Chrome is the canonical Chromium-family payload
-- Edge, Brave, and Chromium currently reuse that payload under browser-labeled filenames
+- Chrome, Edge, Brave, and Chromium map to the same Chromium-family ZIP
 - Firefox has its own manifest, background entry, smoke-tested temporary package, and signing metadata
 
 Chrome, Edge, Brave, and Chromium still share the same MV3 payload. Firefox is
@@ -383,7 +379,7 @@ Use `.github/workflows/release.yml` to publish one GitHub Release per
 5. Fetches the Clang toolchain
 6. Runs lint, build, release validation, and E2E checks
 7. Runs Firefox packaging smoke validation
-8. Produces the Chromium-family ZIPs plus checksums and release metadata
+8. Produces one Chromium-family ZIP plus checksums and release metadata
 9. Signs the Firefox unlisted XPI with protected AMO credentials
 10. Creates or updates GitHub Release `v<version>` and uploads all files under `release/`
 
@@ -403,7 +399,7 @@ assets, published GitHub Release `v<version>`.
 
 1. Verify you still have access to the existing Chrome Web Store item for
    browser.cpp.
-2. Upload `release/browser-cpp-chrome-v<version>.zip`.
+2. Upload `release/browser-cpp-chromium-family-v<version>.zip`.
 3. Update listing copy, screenshots, privacy details, and reviewer notes if the
    release changes user-visible behavior, permissions, or file-access guidance.
 4. Confirm the listing still describes the extension as a local-only WASI/WebAssembly
@@ -417,7 +413,7 @@ assets, published GitHub Release `v<version>`.
 1. Verify the Microsoft Partner Center account is active, or create it before
    the first Edge release.
 2. Create the Edge Add-ons listing if one does not exist yet.
-3. Upload `release/browser-cpp-edge-v<version>.zip`.
+3. Upload `release/browser-cpp-chromium-family-v<version>.zip`.
 4. Complete the store listing fields, availability/market settings, privacy
    links, and any certification notes requested by Partner Center.
 5. Submit for certification and respond to reviewer feedback.
@@ -440,7 +436,7 @@ Store compatibility plus Brave-specific validation.
 #### Chromium
 
 1. Verify that GitHub Release `v<version>` includes:
-   - `release/browser-cpp-chromium-v<version>.zip`
+   - `release/browser-cpp-chromium-family-v<version>.zip`
    - `release/SHA256SUMS-v<version>.txt`
    - `release/release-manifest-v<version>.json`
 2. Publish manual installation instructions for Chromium users, including that
