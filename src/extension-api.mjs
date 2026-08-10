@@ -14,3 +14,15 @@ export function getExtensionAPI(root = globalThis) {
 export function getExtensionRuntimeError(api = getExtensionAPI()) {
   return api?.runtime?.lastError ?? null;
 }
+
+/** Return the installed extension's status-bar label, or an empty string outside an extension. */
+export function getExtensionVersionLabel(root = globalThis) {
+  try {
+    const version = getExtensionAPI(root)?.runtime?.getManifest?.()?.version;
+    return typeof version === 'string' && version.trim()
+      ? `browser.cpp v${version}`
+      : '';
+  } catch (_) {
+    return '';
+  }
+}
