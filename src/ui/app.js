@@ -26,14 +26,19 @@ import {
   getOpenTabsSnapshot,
   restoreWorkspace,
   resetToNewProject,
+  restoreNoWorkspaceSource,
   assembleCompilePayload,
   applyWorkspaceSnapshot,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
+import { getExtensionVersionLabel } from '../extension-api.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('DOMContentLoaded', async () => {
+  const versionStatus = document.getElementById('status-version');
+  if (versionStatus) versionStatus.textContent = getExtensionVersionLabel();
+
   // 1. Monaco editor
   const editorContainer = document.getElementById('editor-container');
   editorAPI.createEditor(editorContainer);
@@ -106,11 +111,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     getActiveTabPath,
     getOpenTabsSnapshot,
     restoreWorkspace,
+    restoreNoWorkspaceSource,
     confirmReload: promptReloadPreviousProject,
     startNewProject: resetToNewProject,
   });
   const persistenceGate = createPersistenceGate(persistSession);
   toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
+  resetToNewProject();
 
   // 5. Track unsaved changes
   editorAPI.onDidChangeContent(() => markDirty(true));

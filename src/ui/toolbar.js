@@ -46,6 +46,8 @@ const _openTabs = new Map();
 let _activeTabPath = null;
 /** When true, programmatic setValue calls do not trigger markDirty(true). */
 let _loadingFile = false;
+const UNSAVED_TAB_PATH = 'unsaved.cpp';
+const UNSAVED_TAB_LABEL = 'unsaved file';
 
 // ── Session persistence callback ──────────────────────────────────────────────
 /** Optional callback supplied by app.js to persist the session after state changes. */
@@ -581,17 +583,21 @@ async function reloadOverwrittenTabs(changedPaths) {
 }
 
 /**
- * Load the default new-project state (no workspace, a single `main.cpp` tab with
+ * Load the default new-project state (no workspace, a single unsaved tab with
  * `editorAPI.DEFAULT_SOURCE`). Unlike {@link actionNew} this skips the
  * unsaved-changes confirmation so it can drive the relaunch "Start new project"
  * path, where the prior session is being intentionally abandoned.
  */
 export function resetToNewProject() {
+  restoreNoWorkspaceSource(_editorAPI.DEFAULT_SOURCE ?? '');
+}
+
+/** Restore a source-only session into the same no-workspace tab state as a new project. */
+export function restoreNoWorkspaceSource(source) {
   closeAllTabs();
   _fsAPI.newFile();
   clearWorkspaceMode();
-  const defaultContent = _editorAPI.DEFAULT_SOURCE ?? '';
-  openTabForFile('main.cpp', defaultContent);
+  openTabForFile(UNSAVED_TAB_PATH, source);
 }
 
 async function actionSave() {
@@ -609,9 +615,10 @@ async function actionSave() {
       return;
     }
 
-    const name = await _fsAPI.saveFile(_editorAPI.getValue(), _fileName);
+    const suggestedName = _activeTabPath === UNSAVED_TAB_PATH ? 'main.cpp' : _fileName;
+    const name = await _fsAPI.saveFile(_editorAPI.getValue(), suggestedName);
     if (name) {
-      setFileName(name);
+      renameActiveTabPath(name);
       markDirty(false);
     }
   } catch (err) {
@@ -621,9 +628,10 @@ async function actionSave() {
 
 async function actionSaveAs() {
   try {
-    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), _fileName);
+    const suggestedName = _activeTabPath === UNSAVED_TAB_PATH ? 'main.cpp' : _fileName;
+    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), suggestedName);
     if (name) {
-      setFileName(name);
+      renameActiveTabPath(name);
       markDirty(false);
     }
   } catch (err) {
@@ -742,13 +750,13 @@ function setButtonsEnabled(enabled) {
 
 /** Update the filename shown in the status bar and sidebar. */
 function setFileName(name) {
-  _fileName = name;
+  _fileName = tabDisplayName(name);
   const statusFile = document.getElementById('status-file');
-  if (statusFile) statusFile.textContent = name;
+  if (statusFile) statusFile.textContent = _fileName;
   if (_workspace) {
     highlightWorkspaceFile(name);
   } else {
-    updateSidebar(name);
+    updateSidebar(_fileName);
   }
 }
 
@@ -777,6 +785,10 @@ function inferLanguage(path) {
   return 'plaintext';
 }
 
+function tabDisplayName(path) {
+  return path === UNSAVED_TAB_PATH ? UNSAVED_TAB_LABEL : workspaceBaseName(path) || path;
+}
+
 /** Returns true if any open tab has unsaved changes. */
 function hasUnsavedChanges() {
   for (const tab of _openTabs.values()) {
@@ -796,17 +808,17 @@ function renderTabBar() {
     div.className = `tab${active ? ' active' : ''}${tab.dirty ? ' dirty' : ''}`;
     div.setAttribute('role', 'tab');
     div.setAttribute('aria-selected', String(active));
-    div.setAttribute('title', path);
+    div.setAttribute('title', tabDisplayName(path));
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'tab-name';
-    nameSpan.textContent = workspaceBaseName(path) || path;
+    nameSpan.textContent = tabDisplayName(path);
     div.appendChild(nameSpan);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
-    closeBtn.title = `Close ${workspaceBaseName(path) || path}`;
-    closeBtn.setAttribute('aria-label', `Close ${workspaceBaseName(path) || path}`);
+    closeBtn.title = `Close ${tabDisplayName(path)}`;
+    closeBtn.setAttribute('aria-label', `Close ${tabDisplayName(path)}`);
     closeBtn.textContent = '×';
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -837,15 +849,7 @@ function switchToTab(path) {
   _editorAPI.setLanguage(inferLanguage(path));
   _loadingFile = false;
 
-  _fileName = workspaceBaseName(path) || path;
-  const statusFile = document.getElementById('status-file');
-  if (statusFile) statusFile.textContent = _fileName;
-
-  if (_workspace) {
-    highlightWorkspaceFile(path);
-  } else {
-    updateSidebar(_fileName);
-  }
+  setFileName(path);
 
   renderTabBar();
   schedulePersist(); // debounced – tracks active tab changes
@@ -862,6 +866,19 @@ function openTabForFile(path, content) {
     _openTabs.set(path, { content, dirty: false });
   }
   switchToTab(path);
+}
+
+function renameActiveTabPath(nextPath) {
+  if (!_activeTabPath || !_openTabs.has(_activeTabPath) || !nextPath) return;
+  const previousPath = _activeTabPath;
+  const tab = _openTabs.get(previousPath);
+  tab.content = _editorAPI.getValue();
+  _openTabs.delete(previousPath);
+  _openTabs.set(nextPath, tab);
+  _activeTabPath = nextPath;
+  setFileName(nextPath);
+  renderTabBar();
+  schedulePersist();
 }
 
 /** Close the tab for the given path, prompting if it has unsaved changes. */
