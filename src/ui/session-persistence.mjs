@@ -147,6 +147,7 @@ export function createSessionPersistence({
   getActiveTabPath,
   getOpenTabsSnapshot = () => null,
   restoreWorkspace,
+  restoreNoWorkspaceSource = (source) => editorAPI.setValue(source),
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
   confirmReload = () => true,
@@ -261,7 +262,7 @@ export function createSessionPersistence({
       }
 
       if (session.source) {
-        editorAPI.setValue(session.source);
+        restoreNoWorkspaceSource(session.source);
         markDirty(false);
       }
     } catch (_) {

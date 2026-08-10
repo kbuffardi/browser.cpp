@@ -5,10 +5,14 @@ import {
   createSessionPersistence,
   createPersistenceGate,
 } from '../src/ui/session-persistence.mjs';
+import { getExtensionVersionLabel } from '../src/extension-api.mjs';
 import {
   initToolbar,
+  resetToNewProject,
+  assembleCompilePayload,
   restoreWorkspace as restoreToolbarWorkspace,
   getOpenTabPaths as getToolbarOpenTabPaths,
+  getActiveTabPath as getToolbarActiveTabPath,
 } from '../src/ui/toolbar.js';
 
 class FakeElement {
@@ -500,12 +504,7 @@ test('e2e: restores source fallback when no workspace handle is available', asyn
         throw new Error('workspace restore should not be attempted');
       },
     },
-    editorAPI: {
-      getValue: () => '',
-      setValue: (source) => {
-        restoredSource = source;
-      },
-    },
+    editorAPI: { getValue: () => '', setValue: () => {} },
     markDirty: (nextDirtyState) => {
       dirtyState = nextDirtyState;
     },
@@ -513,6 +512,9 @@ test('e2e: restores source fallback when no workspace handle is available', asyn
     getActiveTabPath: () => null,
     restoreWorkspace: async () => {
       throw new Error('workspace restore should not be called');
+    },
+    restoreNoWorkspaceSource: (source) => {
+      restoredSource = source;
     },
     storage,
     handleStore,
@@ -522,6 +524,63 @@ test('e2e: restores source fallback when no workspace handle is available', asyn
 
   assert.equal(restoredSource, 'int main() { return 0; }\n');
   assert.equal(dirtyState, false);
+});
+
+test('e2e: formats the installed extension version from either extension namespace', () => {
+  assert.equal(
+    getExtensionVersionLabel({ chrome: { runtime: { getManifest: () => ({ version: '0.4.3' }) } } }),
+    'browser.cpp v0.4.3'
+  );
+  assert.equal(
+    getExtensionVersionLabel({ browser: { runtime: { getManifest: () => ({ version: '1.2.3' }) } } }),
+    'browser.cpp v1.2.3'
+  );
+  assert.equal(getExtensionVersionLabel({}), '');
+});
+
+test('e2e: default and restored no-workspace source use an unsaved C++ tab that saves to a real path', async () => {
+  const originalDocument = global.document;
+  global.document = createFakeDocument();
+  try {
+    let editorValue = '';
+    let suggestedName = null;
+    initToolbar(
+      { onmessage: null, postMessage() {} },
+      {
+        DEFAULT_SOURCE: 'int main() { return 0; }\n',
+        getValue: () => editorValue,
+        setValue: (value) => { editorValue = value; },
+        clearDiagnostics: () => {},
+        setLanguage: () => {},
+      },
+      { setWorkspace: () => {}, clearTerminal: () => {} },
+      {
+        newFile: () => {},
+        saveFile: async (_content, name) => {
+          suggestedName = name;
+          return 'hello.cpp';
+        },
+      },
+      () => {}
+    );
+
+    resetToNewProject();
+
+    assert.deepEqual(getToolbarOpenTabPaths(), ['unsaved.cpp']);
+    assert.equal(getToolbarActiveTabPath(), 'unsaved.cpp');
+    assert.equal(global.document.getElementById('tab-bar').children[0].children[0].textContent, 'unsaved file');
+
+    const payload = await assembleCompilePayload({});
+    assert.equal(payload.primarySourcePath, 'unsaved.cpp');
+
+    global.document.getElementById('btn-save').click();
+    await waitFor(() => getToolbarActiveTabPath() === 'hello.cpp', 'saved tab should use its real file path');
+    assert.equal(suggestedName, 'main.cpp');
+    assert.deepEqual(getToolbarOpenTabPaths(), ['hello.cpp']);
+    assert.equal(global.document.getElementById('tab-bar').children[0].children[0].textContent, 'hello.cpp');
+  } finally {
+    global.document = originalDocument;
+  }
 });
 
 test('e2e: startup gate prevents pre-restore persistence from wiping workspace session', async () => {

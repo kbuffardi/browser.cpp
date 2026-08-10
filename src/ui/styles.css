@@ -467,6 +467,7 @@ select:focus {
 }
 
 .status-item { white-space: nowrap; }
+.status-version { margin-left: auto; }
 
 #status-compiler.ready  { color: var(--green); }
 #status-compiler.error  { color: var(--red); }
