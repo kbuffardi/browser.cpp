@@ -16,7 +16,7 @@
   - fetches the Clang WASM toolchain
   - runs lint, build, and E2E checks
   - runs Firefox packaging smoke checks
-  - packages browser-labeled release artifacts
+  - packages one shared Chromium-family release ZIP and target metadata
   - uploads the artifacts for review
 
 ## Manual Release Flow
@@ -74,7 +74,7 @@ Passing these gates proves that:
 
 - Firefox-specific manifest generation succeeds
 - the Firefox extension package passes `web-ext` lint/build smoke
-- release packaging emits the Chromium-family artifacts and release manifest
+- release packaging emits one Chromium-family ZIP and a release manifest that maps Chrome, Edge, Brave, and Chromium to it
 - manifest/package metadata stay version-synchronized
 
 ### Manual Firefox runtime QA

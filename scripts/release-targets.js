@@ -5,25 +5,28 @@ const TARGETS = Object.freeze([
     key: 'chrome',
     label: 'Chrome',
     channel: 'Chrome Web Store',
-    packageStrategy: 'distinct',
+    packageStrategy: 'shared-artifact:chromium-family',
+    artifactKey: 'chromium-family',
     payloadGroup: 'chromium-mv3',
     publishable: true,
-    notes: 'Primary public store listing and canonical Chromium-family payload.',
+    notes: 'Primary public store listing using the shared Chromium-family payload.',
   },
   {
     key: 'edge',
     label: 'Edge',
     channel: 'Microsoft Edge Add-ons',
-    packageStrategy: 'shared-with:chrome',
+    packageStrategy: 'shared-artifact:chromium-family',
+    artifactKey: 'chromium-family',
     payloadGroup: 'chromium-mv3',
     publishable: true,
-    notes: 'Browser-labeled asset that intentionally reuses the Chrome payload.',
+    notes: 'Uses the shared Chromium-family payload.',
   },
   {
     key: 'firefox',
     label: 'Firefox',
     channel: 'Firefox Add-ons / signed XPI',
     packageStrategy: 'distinct',
+    artifactKey: null,
     payloadGroup: 'firefox-webext',
     publishable: false,
     blockReason: 'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.',
@@ -38,19 +41,21 @@ const TARGETS = Object.freeze([
     key: 'brave',
     label: 'Brave',
     channel: 'Chrome Web Store compatibility',
-    packageStrategy: 'shared-with:chrome',
+    packageStrategy: 'shared-artifact:chromium-family',
+    artifactKey: 'chromium-family',
     payloadGroup: 'chromium-mv3',
     publishable: true,
-    notes: 'Browser-labeled asset for Brave validation against the Chrome payload.',
+    notes: 'Uses the shared Chromium-family payload for Brave validation.',
   },
   {
     key: 'chromium',
     label: 'Chromium',
     channel: 'GitHub/manual distribution',
-    packageStrategy: 'shared-with:chrome',
+    packageStrategy: 'distinct',
+    artifactKey: 'chromium-family',
     payloadGroup: 'chromium-mv3',
     publishable: true,
-    notes: 'Browser-labeled asset for unmanaged Chromium distribution.',
+    notes: 'Canonical shared artifact for Chromium-family distribution.',
   },
 ]);
 
@@ -62,17 +67,27 @@ function getPublishableReleaseTargets() {
   return getReleaseTargets().filter((target) => target.publishable);
 }
 
+function getReleaseArtifactTargets() {
+  return getPublishableReleaseTargets().filter(
+    (target) => target.packageStrategy === 'distinct' && target.artifactKey
+  );
+}
+
 function getReleaseTarget(key) {
   return getReleaseTargets().find((target) => target.key === key) || null;
 }
 
 function getArtifactFileName(target, version) {
+  if (target.artifactKey === 'chromium-family') {
+    return `browser-cpp-chromium-family-v${version}.zip`;
+  }
   return `browser-cpp-${target.key}-v${version}.zip`;
 }
 
 module.exports = {
   TARGETS,
   getArtifactFileName,
+  getReleaseArtifactTargets,
   getPublishableReleaseTargets,
   getReleaseTarget,
   getReleaseTargets,
