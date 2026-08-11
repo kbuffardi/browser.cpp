@@ -599,7 +599,6 @@ function clearTransientProjectState() {
   _runAfterSuccessfulCompile = false;
   _runPreparationActive = false;
   _lastRunBinaryBytes = null;
-  _terminalAPI.clearTerminal?.();
   _editorAPI.clearDiagnostics?.();
 }
 
@@ -608,6 +607,7 @@ export function restoreNoWorkspaceSource(source) {
   closeAllTabs();
   _fsAPI.newFile();
   clearWorkspaceMode();
+  _terminalAPI.resetTerminalSession?.(null);
   openTabForFile(UNSAVED_TAB_PATH, source);
   markDirty(false);
 }
@@ -1097,7 +1097,7 @@ function showOpenError(err) {
 function setWorkspaceMode(workspace) {
   _workspace = workspace;
   _expandedWorkspaceDirectories.clear();
-  _terminalAPI.setWorkspace?.(workspace);
+  _terminalAPI.resetTerminalSession?.(workspace);
   updateCompileButtons();
   startWorkspaceSyncPolling();
 }
@@ -1105,7 +1105,6 @@ function setWorkspaceMode(workspace) {
 function clearWorkspaceMode() {
   _workspace = null;
   _expandedWorkspaceDirectories.clear();
-  _terminalAPI.setWorkspace?.(null);
   const tree = document.getElementById('file-tree');
   if (tree) tree.innerHTML = '';
   updateCompileButtons(false);
