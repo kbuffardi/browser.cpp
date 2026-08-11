@@ -131,11 +131,16 @@ test('e2e: mkdir reports filesystem errors using shell-style messages', async ()
   assert.ok(ctx.writes.join('').includes("mkdir: cannot create directory 'src/include': No such file or directory"));
 });
 
-test('e2e: mkdir fails when no workspace folder is open', async () => {
+test('e2e: every terminal command except help is gated before a workspace opens', async () => {
   const ctx = setupTerminalHarness();
 
   await __executeTerminalCommandForTesting('mkdir include');
+  await __executeTerminalCommandForTesting('ls');
+  await __executeTerminalCommandForTesting('g++ main.cpp');
 
-  assert.ok(ctx.writes.join('').includes('mkdir: no folder opened'));
+  assert.equal(
+    (ctx.writes.join('').match(/Open a folder or save a file before using terminal commands\./g) || []).length,
+    3
+  );
   assert.deepEqual(ctx.mkdirCalls, []);
 });

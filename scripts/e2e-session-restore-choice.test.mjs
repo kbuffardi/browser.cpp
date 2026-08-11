@@ -188,7 +188,7 @@ test('e2e: start-new clears session + handle + live fs state and loads default',
   assert.equal(remaining.browser_cpp_session, null, 'persisted session cleared');
 });
 
-test('e2e: after start-new, the next persist saves fresh state not the abandoned workspace', async () => {
+test('e2e: after start-new, the next persist leaves the untitled state unpersisted', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
   const handle = {
@@ -210,7 +210,7 @@ test('e2e: after start-new, the next persist saves fresh state not the abandoned
   });
 
   // Shared live state: clearPersistedSession() must null the directory handle so
-  // a follow-up persist records the default source-only session.
+  // a follow-up persist leaves the default untitled session unpersisted.
   const live = { directoryHandle: handle, source: 'int main() { /* fresh */ }\n' };
   const persistence = createSessionPersistence({
     fsAPI: {
@@ -235,9 +235,7 @@ test('e2e: after start-new, the next persist saves fresh state not the abandoned
   await persistence.persistSession();
 
   const saved = (await storage.get('browser_cpp_session')).browser_cpp_session;
-  assert.ok(saved, 'a session is persisted');
-  assert.equal(saved.source, 'int main() { /* fresh */ }\n');
-  assert.equal(saved.openTabPaths, undefined, 'no workspace tabs persisted');
+  assert.equal(saved, null, 'the untitled buffer is not persisted');
   assert.equal(handleStore.current, null, 'no directory handle persisted');
 });
 
@@ -294,7 +292,7 @@ test('e2e: snapshot-only session prompts before restoring (reload chosen)', asyn
   assert.deepEqual(restored[0].tabContentByPath, { 'main.cpp': 'int main(){}\n' });
 });
 
-test('e2e: source-only session auto-restores without prompting', async () => {
+test('e2e: untitled source is neither persisted nor restored', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
 
@@ -309,9 +307,9 @@ test('e2e: source-only session auto-restores without prompting', async () => {
     handleStore,
   });
   await first.persistSession();
+  assert.equal((await storage.get('browser_cpp_session')).browser_cpp_session, null);
 
   let restoredSource = null;
-  let dirty = true;
   let confirmCalls = 0;
   const second = createSessionPersistence({
     fsAPI: { getDirectoryHandle: () => null, openFolderFromHandle: async () => null },
@@ -321,9 +319,7 @@ test('e2e: source-only session auto-restores without prompting', async () => {
         restoredSource = source;
       },
     },
-    markDirty: (value) => {
-      dirty = value;
-    },
+    markDirty: () => {},
     getOpenTabPaths: () => [],
     getActiveTabPath: () => null,
     restoreWorkspace: async () => {},
@@ -338,8 +334,7 @@ test('e2e: source-only session auto-restores without prompting', async () => {
   await second.restoreSession();
 
   assert.equal(confirmCalls, 0, 'source-only sessions never prompt');
-  assert.equal(restoredSource, 'int main() { return 0; }\n');
-  assert.equal(dirty, false);
+  assert.equal(restoredSource, null);
 });
 
 test('e2e: granted permission up front restores without prompting', async () => {

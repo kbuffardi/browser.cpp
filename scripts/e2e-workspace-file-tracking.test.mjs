@@ -1173,6 +1173,7 @@ test('e2e: setWorker disconnects the old worker and binds messages to the replac
 
 test('e2e: compile-and-run pending state is cleared when the worker is replaced', async () => {
   const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] }, [], null);
   ctx.document.getElementById('btn-compile-run').click();
   await tick();
   assert.equal(ctx.workerCalls[0].type, 'compile');
@@ -1214,6 +1215,7 @@ test('e2e: after worker replacement, stale run-result from the old worker cannot
 
 test('e2e: compile actions after worker replacement post to the replacement worker', async () => {
   const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] }, [], null);
   const replacementCalls = [];
   const replacementWorker = { postMessage(msg) { replacementCalls.push(msg); }, onmessage: null };
 

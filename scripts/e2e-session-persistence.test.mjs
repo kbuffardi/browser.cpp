@@ -472,7 +472,7 @@ test('e2e: reload chosen but browser denies permission still restores snapshot',
   });
 });
 
-test('e2e: restores source fallback when no workspace handle is available', async () => {
+test('e2e: ignores legacy source-only snapshots when no workspace handle is available', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
   let restoredSource = null;
@@ -522,8 +522,8 @@ test('e2e: restores source fallback when no workspace handle is available', asyn
 
   await secondSession.restoreSession();
 
-  assert.equal(restoredSource, 'int main() { return 0; }\n');
-  assert.equal(dirtyState, false);
+  assert.equal(restoredSource, null);
+  assert.equal(dirtyState, true);
 });
 
 test('e2e: formats the installed extension version from either extension namespace', () => {
@@ -538,12 +538,11 @@ test('e2e: formats the installed extension version from either extension namespa
   assert.equal(getExtensionVersionLabel({}), '');
 });
 
-test('e2e: default and restored no-workspace source use an unsaved C++ tab that saves to a real path', async () => {
+test('e2e: default no-workspace source uses an untitled tab that cannot compile', async () => {
   const originalDocument = global.document;
   global.document = createFakeDocument();
   try {
     let editorValue = '';
-    let suggestedName = null;
     initToolbar(
       { onmessage: null, postMessage() {} },
       {
@@ -556,28 +555,17 @@ test('e2e: default and restored no-workspace source use an unsaved C++ tab that 
       { setWorkspace: () => {}, clearTerminal: () => {} },
       {
         newFile: () => {},
-        saveFile: async (_content, name) => {
-          suggestedName = name;
-          return 'hello.cpp';
-        },
       },
       () => {}
     );
 
     resetToNewProject();
 
-    assert.deepEqual(getToolbarOpenTabPaths(), ['unsaved.cpp']);
-    assert.equal(getToolbarActiveTabPath(), 'unsaved.cpp');
+    assert.deepEqual(getToolbarOpenTabPaths(), ['untitled:default']);
+    assert.equal(getToolbarActiveTabPath(), 'untitled:default');
     assert.equal(global.document.getElementById('tab-bar').children[0].children[0].textContent, 'unsaved file');
 
-    const payload = await assembleCompilePayload({});
-    assert.equal(payload.primarySourcePath, 'unsaved.cpp');
-
-    global.document.getElementById('btn-save').click();
-    await waitFor(() => getToolbarActiveTabPath() === 'hello.cpp', 'saved tab should use its real file path');
-    assert.equal(suggestedName, 'main.cpp');
-    assert.deepEqual(getToolbarOpenTabPaths(), ['hello.cpp']);
-    assert.equal(global.document.getElementById('tab-bar').children[0].children[0].textContent, 'hello.cpp');
+    await assert.rejects(() => assembleCompilePayload({}), /Open a folder or save a file/);
   } finally {
     global.document = originalDocument;
   }
