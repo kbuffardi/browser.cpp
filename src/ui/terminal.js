@@ -741,6 +741,12 @@ async function executeCommand(cmdLine) {
 
   const [cmd, ...args] = parts;
 
+  if (!workspaceName && cmd !== 'help') {
+    term.write(`${C.red}Open a folder or save a file before using terminal commands.${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
   switch (cmd) {
     case 'g++':
     case 'clang++':

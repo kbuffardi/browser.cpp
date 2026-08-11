@@ -141,13 +141,10 @@ function createIndexedDBHandleStore() {
 
 export function createSessionPersistence({
   fsAPI,
-  editorAPI,
-  markDirty,
   getOpenTabPaths,
   getActiveTabPath,
   getOpenTabsSnapshot = () => null,
   restoreWorkspace,
-  restoreNoWorkspaceSource = (source) => editorAPI.setValue(source),
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
   confirmReload = () => true,
@@ -261,10 +258,8 @@ export function createSessionPersistence({
         return;
       }
 
-      if (session.source) {
-        restoreNoWorkspaceSource(session.source);
-        markDirty(false);
-      }
+      // Untitled buffers are deliberately ephemeral. Ignore legacy source-only
+      // snapshots rather than restoring content that was never saved to a folder.
     } catch (_) {
       // Storage not available – first run or non-extension context
     }
@@ -298,12 +293,7 @@ export function createSessionPersistence({
         });
       } else {
         await handleStore.clear();
-        await storageSet(storage, {
-          [STORAGE_KEY]: {
-            source: editorAPI.getValue(),
-            savedAt: Date.now(),
-          },
-        });
+        await storageSet(storage, { [STORAGE_KEY]: null });
       }
     } catch (err) {
       console.warn('Failed to persist browser.cpp session:', err);

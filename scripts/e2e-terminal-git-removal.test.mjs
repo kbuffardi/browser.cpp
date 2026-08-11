@@ -70,6 +70,7 @@ test('e2e: tab completion no longer suggests git', () => {
 
 test('e2e: git commands fall back to command not found', () => {
   const ctx = setupTerminalHarness();
+  setWorkspace({ name: 'project', entries: [], git: { isRepo: false, branch: null, remotes: [] } });
 
   typeText('git status');
   pressEnter();
