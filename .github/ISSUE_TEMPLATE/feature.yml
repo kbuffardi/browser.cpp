@@ -1,0 +1,78 @@
+name: Feature request
+description: Suggest a new feature or improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem or limitation does this feature address?
+      placeholder: |
+        Currently, users cannot...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or feature you would like to see.
+      placeholder: |
+        Add support for...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you considered any alternative approaches or workarounds?
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What should be true for this feature to be considered complete?
+      placeholder: |
+        - Users can ...
+        - The system should ...
+        - Tests cover ...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Suggested priority
+      description: How important is this feature?
+      options:
+        - Low
+        - Medium
+        - High
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, links, or other context.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find an existing request for this feature.
+          required: true

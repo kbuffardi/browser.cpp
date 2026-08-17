@@ -1,0 +1,78 @@
+name: Chore
+description: Track maintenance, cleanup, refactoring, or internal work.
+title: "chore: "
+labels:
+  - chore
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Chore type
+      options:
+        - Refactoring
+        - Documentation
+        - Dependencies
+        - CI/CD
+        - Testing
+        - Developer tooling
+        - Code cleanup
+        - Repository maintenance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the maintenance work that needs to be completed.
+      placeholder: |
+        Update...
+        Remove...
+        Refactor...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why should this work be done?
+      placeholder: |
+        This will reduce...
+        This is needed because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Tasks
+      description: Break the work into smaller tasks when possible.
+      placeholder: |
+        - [ ] Update ...
+        - [ ] Remove ...
+        - [ ] Add tests ...
+        - [ ] Update documentation ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Completion criteria
+      description: What needs to be true before this chore can be closed?
+      placeholder: |
+        - CI passes
+        - Old implementation is removed
+        - Documentation is updated
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add links, implementation notes, or related issues.
+    validations:
+      required: false
