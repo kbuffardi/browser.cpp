@@ -9,6 +9,7 @@ import {
   onRunStart,
   onRunResult,
   printInfo,
+  resetTerminalSession,
   showInitialPrompt,
   startRun,
   stopRun,
@@ -20,13 +21,14 @@ function setupTerminalHarness({
   onRun,
 } = {}) {
   const writes = [];
+  const clearCalls = [];
   const runStateChanges = [];
   const runPreparationChanges = [];
   const stopCalls = [];
   const runCalls = [];
   const stdinMessages = [];
   const fakeTerm = {
-    clear() {},
+    clear() { clearCalls.push(true); },
     write(text) { writes.push(text); },
   };
 
@@ -46,6 +48,7 @@ function setupTerminalHarness({
 
   return {
     writes,
+    clearCalls,
     runStateChanges,
     runPreparationChanges,
     stopCalls,
@@ -85,6 +88,27 @@ test('e2e: initial terminal prompt is only written once', () => {
 
   const output = ctx.writes.join('');
   assert.equal(output.match(/browser\.cpp/g)?.length, 1);
+});
+
+test('e2e: resetting a terminal session clears output and redraws one prompt', () => {
+  const ctx = setupTerminalHarness();
+  showInitialPrompt();
+  printInfo('stale output');
+
+  resetTerminalSession({ name: 'project', entries: [] });
+
+  assert.equal(ctx.clearCalls.length, 1);
+  assert.equal(ctx.writes.at(-1).match(/browser\.cpp/g)?.length, 1);
+  assert.match(ctx.writes.at(-1), /browser\.cpp.*:~\$ /);
+});
+
+test('e2e: resetting before compiler readiness does not print a prompt', () => {
+  const ctx = setupTerminalHarness();
+
+  resetTerminalSession();
+
+  assert.equal(ctx.clearCalls.length, 1);
+  assert.equal(ctx.writes.length, 0);
 });
 
 test('e2e: clearing during startup does not reveal the initial prompt early', () => {

@@ -46,6 +46,9 @@ const _openTabs = new Map();
 let _activeTabPath = null;
 /** When true, programmatic setValue calls do not trigger markDirty(true). */
 let _loadingFile = false;
+// Internal in-memory document identifier; never a workspace-relative path.
+const UNSAVED_TAB_PATH = 'untitled:default';
+const UNSAVED_TAB_LABEL = 'unsaved file';
 
 // ── Session persistence callback ──────────────────────────────────────────────
 /** Optional callback supplied by app.js to persist the session after state changes. */
@@ -117,7 +120,7 @@ export function getLastRunBinaryBytes() {
 
 export function setRunPreparing(preparing) {
   _runPreparationActive = preparing;
-  setButtonsEnabled(!preparing);
+  updateCompileButtons(!preparing);
   updateStatusBar(
     'compiler',
     preparing ? 'busy' : 'ready',
@@ -213,7 +216,7 @@ async function handleWorkerMessage(data) {
         }
       }
       updateStatusBar('compiler', 'ready', 'Compiler ready');
-      setButtonsEnabled(true);
+      updateCompileButtons();
       _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
       _terminalAPI.showInitialPrompt?.();
       break;
@@ -237,7 +240,7 @@ async function handleWorkerMessage(data) {
     case 'compile-result': {
       const shouldRunAfterCompile = _runAfterSuccessfulCompile;
       _runAfterSuccessfulCompile = false;
-      setButtonsEnabled(true);
+      updateCompileButtons();
       updateStatusBar('compiler', 'ready', 'Compiler ready');
 
       // Render inline editor markers, scoped to the active file. The terminal
@@ -281,7 +284,7 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'run-result': {
-      setButtonsEnabled(true);
+      updateCompileButtons();
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       _terminalAPI.onRunResult(data);
       // Write files created/modified by the program back to the workspace and
@@ -479,6 +482,7 @@ export function applyWorkspaceSnapshot(snapshot) {
   _terminalAPI.refreshWorkspace?.(snapshot);
   pruneExpandedWorkspaceDirectories(snapshot);
   renderWorkspaceSidebar(snapshot);
+  updateCompileButtons();
 }
 
 /** Reveal a path created through the Explorer's explicit New File action. */
@@ -581,17 +585,31 @@ async function reloadOverwrittenTabs(changedPaths) {
 }
 
 /**
- * Load the default new-project state (no workspace, a single `main.cpp` tab with
+ * Load the default new-project state (no workspace, a single unsaved tab with
  * `editorAPI.DEFAULT_SOURCE`). Unlike {@link actionNew} this skips the
  * unsaved-changes confirmation so it can drive the relaunch "Start new project"
  * path, where the prior session is being intentionally abandoned.
  */
 export function resetToNewProject() {
+  clearTransientProjectState();
+  restoreNoWorkspaceSource(_editorAPI.DEFAULT_SOURCE ?? '');
+}
+
+function clearTransientProjectState() {
+  _runAfterSuccessfulCompile = false;
+  _runPreparationActive = false;
+  _lastRunBinaryBytes = null;
+  _editorAPI.clearDiagnostics?.();
+}
+
+/** Restore a source-only session into the same no-workspace tab state as a new project. */
+export function restoreNoWorkspaceSource(source) {
   closeAllTabs();
   _fsAPI.newFile();
   clearWorkspaceMode();
-  const defaultContent = _editorAPI.DEFAULT_SOURCE ?? '';
-  openTabForFile('main.cpp', defaultContent);
+  _terminalAPI.resetTerminalSession?.(null);
+  openTabForFile(UNSAVED_TAB_PATH, source);
+  markDirty(false);
 }
 
 async function actionSave() {
@@ -609,21 +627,45 @@ async function actionSave() {
       return;
     }
 
-    const name = await _fsAPI.saveFile(_editorAPI.getValue(), _fileName);
-    if (name) {
-      setFileName(name);
-      markDirty(false);
-    }
+    await saveUntitledDocument();
   } catch (err) {
     alert(`Could not save file:\n${err.message}`);
   }
 }
 
+async function saveUntitledDocument() {
+  const workspace = await _fsAPI.openFolder();
+  if (!workspace) return;
+
+  const name = prompt('File name', 'main.cpp');
+  if (name === null) {
+    _fsAPI.resetWorkspace?.();
+    return;
+  }
+
+  const result = await _fsAPI.createWorkspaceFile(name, _editorAPI.getValue());
+  if (!result?.ok) {
+    _fsAPI.resetWorkspace?.();
+    throw new Error(inlineCreateErrorMessage(result?.error));
+  }
+
+  setWorkspaceMode(result.snapshot ?? workspace);
+  applyWorkspaceSnapshot(result.snapshot ?? workspace);
+  renameActiveTabPath(result.path);
+  markDirty(false);
+  _persistSession?.();
+}
+
 async function actionSaveAs() {
   try {
-    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), _fileName);
+    if (!_workspace && _activeTabPath === UNSAVED_TAB_PATH) {
+      await saveUntitledDocument();
+      return;
+    }
+    const suggestedName = _activeTabPath === UNSAVED_TAB_PATH ? 'main.cpp' : _fileName;
+    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), suggestedName);
     if (name) {
-      setFileName(name);
+      renameActiveTabPath(name);
       markDirty(false);
     }
   } catch (err) {
@@ -632,7 +674,7 @@ async function actionSaveAs() {
 }
 
 async function actionCompile() {
-  if (!_worker || _runPreparationActive) return;
+  if (!_worker || _runPreparationActive || !workspaceHasCppFile()) return;
   _runAfterSuccessfulCompile = false;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
@@ -643,7 +685,7 @@ async function actionRun() {
 }
 
 async function actionCompileRun() {
-  if (!_worker || _runPreparationActive) return;
+  if (!_worker || _runPreparationActive || !workspaceHasCppFile()) return;
   _runAfterSuccessfulCompile = true;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
@@ -657,7 +699,6 @@ async function actionCompileRun() {
  * on-disk workspace files, and choose the build target set:
  *   - explicit `sourcePaths` (terminal `g++ a.cpp b.cpp`)
  *   - otherwise every recursive `.cpp`/`.cxx` workspace file (toolbar project build)
- *   - otherwise, with no folder open, the single editor buffer (legacy behaviour)
  *
  * @param {{ sourcePaths?:string[], std?:string, flags?:string[], outputName?:(string|null) }} opts
  * @returns {Promise<object>} worker `compile` message payload
@@ -669,21 +710,8 @@ export async function assembleCompilePayload({ sourcePaths = null, std, flags = 
   }
 
   const resolvedStd = std || document.getElementById('cpp-standard')?.value || 'c++20';
-  const primarySourcePath = _activeTabPath || 'input.cpp';
-
-  // No folder open → preserve single-buffer compile for new unsaved files.
-  if (!_workspace) {
-    const buffer = _editorAPI.getValue();
-    const path = normalizeOverlayPath(primarySourcePath) || 'input.cpp';
-    return {
-      sourcePaths: [path],
-      files: [{ path, content: buffer }],
-      std: resolvedStd,
-      flags,
-      outputName,
-      primarySourcePath: path,
-    };
-  }
+  if (!_workspace) throw new Error('Open a folder or save a file before compiling.');
+  const primarySourcePath = _activeTabPath;
 
   const diskFiles = await _fsAPI.readAllWorkspaceFiles();
   const dirtyContentByPath = {};
@@ -702,7 +730,7 @@ export async function assembleCompilePayload({ sourcePaths = null, std, flags = 
     std: resolvedStd,
     flags,
     outputName,
-    primarySourcePath: normalizeOverlayPath(primarySourcePath),
+    primarySourcePath: primarySourcePath ? normalizeOverlayPath(primarySourcePath) : null,
   };
 }
 
@@ -740,16 +768,22 @@ function setButtonsEnabled(enabled) {
   });
 }
 
+function workspaceHasCppFile() {
+  return Boolean(_workspace?.entries?.some(
+    (entry) => entry.kind === 'file' && entry.path.toLowerCase().endsWith('.cpp')
+  ));
+}
+
+function updateCompileButtons(enabled = true) {
+  setButtonsEnabled(enabled && workspaceHasCppFile());
+}
+
 /** Update the filename shown in the status bar and sidebar. */
 function setFileName(name) {
-  _fileName = name;
+  _fileName = tabDisplayName(name);
   const statusFile = document.getElementById('status-file');
-  if (statusFile) statusFile.textContent = name;
-  if (_workspace) {
-    highlightWorkspaceFile(name);
-  } else {
-    updateSidebar(name);
-  }
+  if (statusFile) statusFile.textContent = _fileName;
+  if (_workspace) highlightWorkspaceFile(name);
 }
 
 /** Mark the current file as dirty (has unsaved changes). */
@@ -777,6 +811,10 @@ function inferLanguage(path) {
   return 'plaintext';
 }
 
+function tabDisplayName(path) {
+  return path === UNSAVED_TAB_PATH ? UNSAVED_TAB_LABEL : workspaceBaseName(path) || path;
+}
+
 /** Returns true if any open tab has unsaved changes. */
 function hasUnsavedChanges() {
   for (const tab of _openTabs.values()) {
@@ -796,17 +834,17 @@ function renderTabBar() {
     div.className = `tab${active ? ' active' : ''}${tab.dirty ? ' dirty' : ''}`;
     div.setAttribute('role', 'tab');
     div.setAttribute('aria-selected', String(active));
-    div.setAttribute('title', path);
+    div.setAttribute('title', tabDisplayName(path));
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'tab-name';
-    nameSpan.textContent = workspaceBaseName(path) || path;
+    nameSpan.textContent = tabDisplayName(path);
     div.appendChild(nameSpan);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
-    closeBtn.title = `Close ${workspaceBaseName(path) || path}`;
-    closeBtn.setAttribute('aria-label', `Close ${workspaceBaseName(path) || path}`);
+    closeBtn.title = `Close ${tabDisplayName(path)}`;
+    closeBtn.setAttribute('aria-label', `Close ${tabDisplayName(path)}`);
     closeBtn.textContent = '×';
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -837,15 +875,7 @@ function switchToTab(path) {
   _editorAPI.setLanguage(inferLanguage(path));
   _loadingFile = false;
 
-  _fileName = workspaceBaseName(path) || path;
-  const statusFile = document.getElementById('status-file');
-  if (statusFile) statusFile.textContent = _fileName;
-
-  if (_workspace) {
-    highlightWorkspaceFile(path);
-  } else {
-    updateSidebar(_fileName);
-  }
+  setFileName(path);
 
   renderTabBar();
   schedulePersist(); // debounced – tracks active tab changes
@@ -862,6 +892,19 @@ function openTabForFile(path, content) {
     _openTabs.set(path, { content, dirty: false });
   }
   switchToTab(path);
+}
+
+function renameActiveTabPath(nextPath) {
+  if (!_activeTabPath || !_openTabs.has(_activeTabPath) || !nextPath) return;
+  const previousPath = _activeTabPath;
+  const tab = _openTabs.get(previousPath);
+  tab.content = _editorAPI.getValue();
+  _openTabs.delete(previousPath);
+  _openTabs.set(nextPath, tab);
+  _activeTabPath = nextPath;
+  setFileName(nextPath);
+  renderTabBar();
+  schedulePersist();
 }
 
 /** Close the tab for the given path, prompting if it has unsaved changes. */
@@ -907,17 +950,6 @@ function closeAllTabs() {
   _openTabs.clear();
   _activeTabPath = null;
   renderTabBar();
-}
-
-function updateSidebar(name) {
-  const tree = document.getElementById('file-tree');
-  if (!tree) return;
-  tree.innerHTML = '';
-  const li = document.createElement('li');
-  li.className = 'active';
-  li.setAttribute('role', 'treeitem');
-  li.textContent = `📄 ${name}`;
-  tree.appendChild(li);
 }
 
 function renderWorkspaceSidebar(workspace) {
@@ -1065,14 +1097,17 @@ function showOpenError(err) {
 function setWorkspaceMode(workspace) {
   _workspace = workspace;
   _expandedWorkspaceDirectories.clear();
-  _terminalAPI.setWorkspace?.(workspace);
+  _terminalAPI.resetTerminalSession?.(workspace);
+  updateCompileButtons();
   startWorkspaceSyncPolling();
 }
 
 function clearWorkspaceMode() {
   _workspace = null;
   _expandedWorkspaceDirectories.clear();
-  _terminalAPI.setWorkspace?.(null);
+  const tree = document.getElementById('file-tree');
+  if (tree) tree.innerHTML = '';
+  updateCompileButtons(false);
   stopWorkspaceSyncPolling();
 }
 
@@ -1154,6 +1189,7 @@ function isMacPlatform() {
 async function openFolderWorkspace() {
   const workspace = await _fsAPI.openFolder();
   if (!workspace) return false;
+  clearTransientProjectState();
   closeAllTabs();
   setWorkspaceMode(workspace);
   await openWorkspaceInitialFile(workspace);

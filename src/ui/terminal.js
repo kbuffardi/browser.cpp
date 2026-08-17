@@ -362,6 +362,19 @@ export function clearTerminal() {
   writePrompt();
 }
 
+/**
+ * Start a clean terminal session for a workspace transition.
+ * Unlike clearTerminal(), this also resets the workspace prompt context and
+ * input line before drawing at most one prompt.
+ */
+export function resetTerminalSession(workspace = null) {
+  inputBuffer = '';
+  historyIdx = -1;
+  setWorkspace(workspace);
+  term?.clear();
+  if (initialPromptShown) writePrompt();
+}
+
 /** Write the first shell prompt after compiler startup has reached a terminal state. */
 export function showInitialPrompt() {
   if (initialPromptShown) return;
@@ -740,6 +753,12 @@ async function executeCommand(cmdLine) {
   if (!parts.length) { writePrompt(); return; }
 
   const [cmd, ...args] = parts;
+
+  if (!workspaceName && cmd !== 'help') {
+    term.write(`${C.red}Open a folder or save a file before using terminal commands.${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
 
   switch (cmd) {
     case 'g++':
