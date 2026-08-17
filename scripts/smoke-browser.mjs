@@ -287,6 +287,33 @@ async function evaluate(cdp, sessionId, expression, { awaitPromise = false } = {
   return result.result?.value;
 }
 
+async function replaceEditorText(cdp, sessionId, source) {
+  const focused = await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('.monaco-editor textarea.inputarea');
+      if (!input) return false;
+      input.focus();
+      return document.activeElement === input;
+    })()`
+  );
+  assert(focused, 'Could not focus the Monaco editor input area');
+  const selectAllModifier = await evaluate(
+    cdp,
+    sessionId,
+    `navigator.platform.includes('Mac') ? 4 : 2`
+  );
+
+  await cdp.send('Input.dispatchKeyEvent', {
+    type: 'keyDown', key: 'a', code: 'KeyA', modifiers: selectAllModifier,
+  }, sessionId);
+  await cdp.send('Input.dispatchKeyEvent', {
+    type: 'keyUp', key: 'a', code: 'KeyA', modifiers: selectAllModifier,
+  }, sessionId);
+  await cdp.send('Input.insertText', { text: source }, sessionId);
+}
+
 async function openExtensionPage(cdp, extensionId) {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
@@ -708,6 +735,10 @@ async function runHostedSmoke(cdp, { realRun = false } = {}) {
   await cdp.send('Runtime.enable', {}, sessionId);
   const runtimeProgram = `#include <fstream>
 #include <iostream>
+#include <string>
+
+int val() { return 5; }
+std::string label() { return "stream"; }
 
 int main() {
   std::fstream out;
@@ -718,7 +749,7 @@ int main() {
   }
   out << "hello from fstream\\n";
   out.close();
-  std::cout << "wrote output.txt\\n";
+  std::cout << val() << ' ' << label() << " wrote output.txt\\n";
   return 0;
 }
 `;
@@ -819,6 +850,7 @@ int main() {
 
   const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('output.txt')`);
   assert(createdFileText === 'hello from fstream\n', `Expected output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
+  assert(terminalText.includes('5 stream wrote output.txt'), `Expected stream-insertion output, got: ${JSON.stringify(terminalText)}`);
 
   const explorerPath = await waitFor(async () => {
     return evaluate(
@@ -954,13 +986,25 @@ async function runSmoke(cdp, sessionId) {
   const hasEditor = await evaluate(cdp, sessionId, `!!document.querySelector('.monaco-editor')`);
   assert(hasEditor, 'Monaco editor did not render');
 
+  await replaceEditorText(cdp, sessionId, `#include <iostream>
+#include <string>
+
+int val() { return 5; }
+std::string label() { return "stream"; }
+
+int main() {
+  std::cout << val() << ' ' << label() << std::endl;
+  return 0;
+}
+`);
+
   await evaluate(cdp, sessionId, `document.getElementById('btn-compile-run').click()`);
 
   try {
     await waitFor(async () => {
       const text = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
-      return text.includes('Compilation successful.') && text.includes('Hello, World!') ? text : null;
-    }, 'default C++ compile-and-run output', 120_000);
+      return text.includes('Compilation successful.') && text.includes('5 stream') ? text : null;
+    }, 'stream insertion compile-and-run output', 120_000);
   } catch (err) {
     const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
     const terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
