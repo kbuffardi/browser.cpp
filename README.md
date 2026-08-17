@@ -543,6 +543,10 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
   socket support.
 - **Standard library**: Only the subset of libc/libc++ compiled into the WASM
   sysroot is available.
+- **C++ exceptions**: `try`, `catch`, and `throw` are not supported. The bundled
+  WASI C++ runtime has no exception-unwinding support, so use return values,
+  error-state checks (such as `stream.fail()`), or other non-throwing error
+  handling instead.
 - **Execution time**: Long-running programs may trigger the browser's "unresponsive
   script" dialog.  The compiler runs in a dedicated Web Worker to avoid blocking
   the UI.
