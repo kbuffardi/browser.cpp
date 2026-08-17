@@ -379,8 +379,7 @@ async function compile(request) {
   // The bundled WASI libc++abi is built without C++ exception support. Clang
   // otherwise enables exceptions for C++ sources, producing unresolved
   // __cxa_* symbols when stream operations instantiate throwing paths.
-  // Keep user flags last so an explicit opt-in remains possible.
-  const userFlags = [`-std=${std}`, '-Wall', '-Wextra', '-fno-exceptions', ...flags];
+  const userFlags = [`-std=${std}`, '-Wall', '-Wextra', ...flags, '-fno-exceptions'];
 
   // ── Step 1: Build-plan discovery ─────────────────────────────────────────
   let plan;
