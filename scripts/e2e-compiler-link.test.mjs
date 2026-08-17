@@ -5,6 +5,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseCompilePlan } from '../src/workers/compile-plan.mjs';
+import { createWasiRuntime } from '../src/workers/wasi-shim.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const clangDir = path.join(repoRoot, 'dist', 'clang');
@@ -97,7 +98,32 @@ async function compileAndLink(source) {
   linker.FS.mkdirTree('/tmp');
   linker.FS.writeFile(plan.compileSteps[0].objectPath, compiler.FS.readFile(plan.compileSteps[0].objectPath));
 
-  return { status: callMain(linker, plan.linkStep.args), diagnostics: linkerOutput };
+  const status = callMain(linker, plan.linkStep.args);
+  return {
+    status,
+    diagnostics: linkerOutput,
+    output: status === 0 ? linker.FS.readFile(plan.linkStep.outputPath) : null,
+  };
+}
+
+async function run(binary) {
+  let stdout = '';
+  const runtime = createWasiRuntime({
+    stdin: { mode: 'none' },
+    onStdout: (text) => { stdout += text; },
+  });
+  runtime.initRunVfs();
+  const { instance } = await WebAssembly.instantiate(binary, {
+    wasi_snapshot_preview1: runtime.wasi,
+  });
+  runtime.setMemory(instance.exports.memory);
+  try {
+    instance.exports._start();
+  } catch (error) {
+    if (!error?.__wasi_exit__) throw error;
+    assert.equal(error.code, 0);
+  }
+  return stdout;
 }
 
 test('e2e: stream insertion of defined int and string return values links without C++ exception symbols', async () => {
@@ -114,6 +140,7 @@ int main() {
 
   assert.equal(result.status, 0, result.diagnostics);
   assert.doesNotMatch(result.diagnostics, /undefined symbol: __cxa_/);
+  assert.match(await run(result.output), /5 stream/);
 });
 
 test('e2e: an undefined streamed function reports the user symbol at link time', async () => {

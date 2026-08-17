@@ -23,6 +23,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Fetch Clang WASM artifacts
+        run: npm run fetch-clang
+
       - name: Verify manifest-driven version sync
         run: npm run version:check
 
@@ -37,6 +40,9 @@ jobs:
 
       - name: Run end-to-end session tests
         run: npm run test:e2e
+
+      - name: Run compiler linker end-to-end tests
+        run: npm run test:e2e:compiler
 
       - name: Run Firefox packaging smoke
         run: npm run test:browser:firefox
