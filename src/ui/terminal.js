@@ -60,6 +60,8 @@ const C = {
 };
 
 const CRLF   = '\r\n';
+const CLEAR_SCREEN = '\x1b[2J\x1b[H';
+const CSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
@@ -69,6 +71,8 @@ const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls',
 
 let term     = null;
 let fitAddon = null;
+let terminalLineHasContent = false;
+const trackedTerminals = new WeakSet();
 
 /** Current line being typed */
 let inputBuffer = '';
@@ -301,7 +305,7 @@ export function createTerminal(container, {
   initialPromptShown = false;
   busy = true;
 
-  term = new Terminal({
+  setTerminal(new Terminal({
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
     fontSize: 13,
     lineHeight: 1.4,
@@ -330,7 +334,7 @@ export function createTerminal(container, {
     cursorBlink: true,
     scrollback: 5000,
     convertEol: false,
-  });
+  }));
 
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
@@ -357,7 +361,9 @@ export function fitTerminal() {
 
 /** Clear the terminal screen. */
 export function clearTerminal() {
-  term?.clear();
+  inputBuffer = '';
+  historyIdx = -1;
+  clearScreen();
   if (!initialPromptShown) return;
   writePrompt();
 }
@@ -371,7 +377,7 @@ export function resetTerminalSession(workspace = null) {
   inputBuffer = '';
   historyIdx = -1;
   setWorkspace(workspace);
-  term?.clear();
+  clearScreen();
   if (initialPromptShown) writePrompt();
 }
 
@@ -685,7 +691,7 @@ function handleKey({ key, domEvent }) {
 
   // Ctrl+L – clear screen
   if (domEvent.ctrlKey && code === 'l') {
-    term.clear();
+    clearScreen();
     writePrompt();
     term.write(inputBuffer);
     return;
@@ -766,7 +772,7 @@ async function executeCommand(cmdLine) {
       cmdGxx(args);
       break;
     case 'clear':
-      term.clear();
+      clearScreen();
       writePrompt();
       break;
     case 'echo':
@@ -1072,7 +1078,45 @@ function cmdHelp() {
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function writePrompt() {
+  if (terminalLineHasContent) term?.write(CRLF);
   term?.write(`${C.green}${C.bold}browser.cpp${C.reset}${C.dim}:${promptPath()}$ ${C.reset}`);
+}
+
+/** Clear the terminal and place the next prompt at the top-left of the screen. */
+function clearScreen() {
+  term?.clear();
+  terminalLineHasContent = false;
+  if (initialPromptShown) term?.write(CLEAR_SCREEN);
+}
+
+/**
+ * Keep prompt placement independent of the many existing terminal write sites.
+ * xterm writes are asynchronous, so record the logical line state as output is queued.
+ */
+function setTerminal(nextTerm) {
+  term = nextTerm;
+  terminalLineHasContent = false;
+  if (!term || trackedTerminals.has(term)) return;
+
+  const terminalInstance = term;
+  const write = terminalInstance.write.bind(terminalInstance);
+  terminalInstance.write = (text, ...args) => {
+    if (term === terminalInstance) trackTerminalLine(text);
+    return write(text, ...args);
+  };
+  trackedTerminals.add(terminalInstance);
+}
+
+function trackTerminalLine(text) {
+  if (typeof text !== 'string') return;
+
+  const visibleText = text.replace(CSI_SEQUENCE, '');
+  const lastLineBreak = Math.max(visibleText.lastIndexOf('\n'), visibleText.lastIndexOf('\r'));
+  if (lastLineBreak >= 0) {
+    terminalLineHasContent = visibleText.slice(lastLineBreak + 1).length > 0;
+  } else if (visibleText.length > 0) {
+    terminalLineHasContent = true;
+  }
 }
 
 function setRunState(nextRunning) {
@@ -1105,7 +1149,7 @@ export function __setTerminalTestHarness({
   supportsMessageInteractiveStdin: supportsMessageInteractiveStdinForTest = () => false,
   createStdinSessionId: createStdinSessionIdForTest = () => 'stdin-session-test',
 } = {}) {
-  term = terminalInstance || null;
+  setTerminal(terminalInstance || null);
   fitAddon = null;
   _onCompile = onCompile;
   _onRun = onRun;

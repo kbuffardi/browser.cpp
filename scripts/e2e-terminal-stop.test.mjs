@@ -13,6 +13,7 @@ import {
   showInitialPrompt,
   startRun,
   stopRun,
+  writeStdout,
 } from '../src/ui/terminal.js';
 
 function setupTerminalHarness({
@@ -121,6 +122,31 @@ test('e2e: clearing during startup does not reveal the initial prompt early', ()
   const output = ctx.writes.join('');
   assert.equal(output.match(/browser\.cpp/g)?.length, 1);
   assert.ok(output.indexOf('Clang WASM compiler loaded') < output.indexOf('browser.cpp'));
+});
+
+test('e2e: clearing discards typed input and homes the fresh prompt', () => {
+  const ctx = setupTerminalHarness();
+
+  showInitialPrompt();
+  __handleTerminalKeyForTesting('c', { key: 'c', ctrlKey: false, altKey: false });
+  __handleTerminalKeyForTesting('a', { key: 'a', ctrlKey: false, altKey: false });
+  clearTerminal();
+
+  assert.equal(__getTerminalStateForTesting().inputBuffer, '');
+  assert.equal(ctx.clearCalls.length, 1);
+  assert.equal(ctx.writes.at(-2), '\x1b[2J\x1b[H');
+  assert.match(ctx.writes.at(-1), /browser\.cpp.*:~\$ /);
+});
+
+test('e2e: prompt restoration follows newline-less program output on a new line', () => {
+  const ctx = setupTerminalHarness();
+
+  showInitialPrompt();
+  onRunStart({ stdinMode: 'interactive' });
+  writeStdout('program output');
+  onRunResult({ exitCode: 0 });
+
+  assert.match(ctx.writes.join(''), /program output\r\n.*browser\.cpp.*:~\$ /);
 });
 
 test('e2e: Ctrl+C while running stops the program once and restores the prompt', async () => {
