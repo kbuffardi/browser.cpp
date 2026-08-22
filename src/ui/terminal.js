@@ -61,6 +61,7 @@ const C = {
 
 const CRLF   = '\r\n';
 const CLEAR_SCREEN = '\x1b[2J\x1b[H';
+const CSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
@@ -1108,7 +1109,7 @@ function setTerminal(nextTerm) {
 function trackTerminalLine(text) {
   if (typeof text !== 'string') return;
 
-  const visibleText = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+  const visibleText = text.replace(CSI_SEQUENCE, '');
   const lastLineBreak = Math.max(visibleText.lastIndexOf('\n'), visibleText.lastIndexOf('\r'));
   if (lastLineBreak >= 0) {
     terminalLineHasContent = visibleText.slice(lastLineBreak + 1).length > 0;
