@@ -1098,12 +1098,13 @@ function setTerminal(nextTerm) {
   terminalLineHasContent = false;
   if (!term || trackedTerminals.has(term)) return;
 
-  const write = term.write.bind(term);
-  term.write = (text, ...args) => {
-    trackTerminalLine(text);
+  const terminalInstance = term;
+  const write = terminalInstance.write.bind(terminalInstance);
+  terminalInstance.write = (text, ...args) => {
+    if (term === terminalInstance) trackTerminalLine(text);
     return write(text, ...args);
   };
-  trackedTerminals.add(term);
+  trackedTerminals.add(terminalInstance);
 }
 
 function trackTerminalLine(text) {
