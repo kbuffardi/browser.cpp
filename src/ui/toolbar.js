@@ -99,6 +99,12 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
   bindKeyboardShortcuts();
   bindWorkspaceSyncEvents();
   setWorker(worker);
+
+  return {
+    setWorker,
+    getLastRunBinaryBytes,
+    setRunPreparing,
+  };
 }
 
 export function setWorker(worker) {

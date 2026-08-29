@@ -830,8 +830,8 @@ async function setupToolbar(fsOverrides = {}) {
 
   const workerCalls = [];
   const worker = { postMessage(msg) { workerCalls.push(msg); }, onmessage: null };
-  toolbar.initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => {});
-  return { toolbar, document, worker, workerCalls, editorAPI, editorCalls, terminalAPI, terminalCalls, fsAPI, fsCalls };
+  const controller = toolbar.initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => {});
+  return { toolbar, controller, document, worker, workerCalls, editorAPI, editorCalls, terminalAPI, terminalCalls, fsAPI, fsCalls };
 }
 
 function inlineInput(document) {
@@ -1118,6 +1118,14 @@ test('e2e: shortcut hints and keyboard shortcuts follow non-Mac conventions', as
 
 // ── Run stop wiring + worker replacement ─────────────────────────────────────
 
+test('e2e: initToolbar returns the worker lifecycle controller used after STOP', async () => {
+  const ctx = await setupToolbar();
+
+  assert.equal(typeof ctx.controller?.setWorker, 'function');
+  assert.equal(typeof ctx.controller?.getLastRunBinaryBytes, 'function');
+  assert.equal(typeof ctx.controller?.setRunPreparing, 'function');
+});
+
 test('e2e: STOP button delegates to the terminal stop action', async () => {
   const ctx = await setupToolbar();
 
@@ -1141,9 +1149,9 @@ test('e2e: successful compile caches binary bytes for replacement-worker runs', 
   });
   await tick();
 
-  assert.deepEqual([...ctx.toolbar.getLastRunBinaryBytes()], [7, 8, 9]);
+  assert.deepEqual([...ctx.controller.getLastRunBinaryBytes()], [7, 8, 9]);
   bytes[0] = 99;
-  assert.deepEqual([...ctx.toolbar.getLastRunBinaryBytes()], [7, 8, 9], 'cached bytes are isolated from later mutation');
+  assert.deepEqual([...ctx.controller.getLastRunBinaryBytes()], [7, 8, 9], 'cached bytes are isolated from later mutation');
 });
 
 test('e2e: setWorker disconnects the old worker and binds messages to the replacement', async () => {
@@ -1152,7 +1160,7 @@ test('e2e: setWorker disconnects the old worker and binds messages to the replac
   const oldWorker = ctx.worker;
   const replacementWorker = { postMessage() {}, onmessage: null };
 
-  ctx.toolbar.setWorker(replacementWorker);
+  ctx.controller.setWorker(replacementWorker);
 
   assert.equal(oldWorker.onmessage, null, 'old worker handler removed');
   assert.equal(typeof replacementWorker.onmessage, 'function', 'replacement worker handler bound');
