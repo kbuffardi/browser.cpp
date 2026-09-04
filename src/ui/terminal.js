@@ -27,7 +27,6 @@ import {
   parseGxxArgs,
   resolveWorkspacePath,
   resolveRunTarget,
-  isRejectedSource,
   normalizeOverlayPath,
 } from './build-request.mjs';
 import { validateNewDirectoryPath, validateNewFilePath } from './workspace-fs.mjs';
@@ -825,17 +824,6 @@ async function executeCommand(cmdLine) {
 
 function cmdGxx(args) {
   const { std, outputName, flags, sourcePaths } = parseGxxArgs(args);
-
-  // MVP policy: reject `.c`/`.cc` explicit inputs rather than compiling silently.
-  const rejected = sourcePaths.filter(isRejectedSource);
-  if (rejected.length) {
-    term.write(
-      `${C.red}g++: ${rejected.join(', ')}: .c/.cc sources are not supported in this MVP ` +
-      `(only .cpp and .cxx).${C.reset}${CRLF}`
-    );
-    writePrompt();
-    return;
-  }
 
   // No explicit sources → compile the single editor buffer (works with or
   // without an open folder), preserving legacy behaviour.

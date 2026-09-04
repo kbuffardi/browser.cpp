@@ -15,16 +15,8 @@
 
 'use strict';
 
-/** Extensions that whole-project discovery compiles (MVP product constraint). */
-export const PROJECT_SOURCE_EXTENSIONS = ['cpp', 'cxx'];
-
-/**
- * Extensions that look like C/C++ sources but are intentionally rejected by this
- * MVP. `.cc` is commonly C++ elsewhere, but the spec deliberately excludes it so
- * discovery stays predictable; explicit terminal targets fail loudly instead of
- * compiling silently.
- */
-export const REJECTED_SOURCE_EXTENSIONS = ['c', 'cc'];
+/** Extensions accepted by the C++ compiler, matched case-insensitively. */
+export const PROJECT_SOURCE_EXTENSIONS = ['c', 'cc', 'cpp', 'cxx'];
 
 /** Lower-cased extension (without the dot) of a path, or '' if none. */
 export function fileExtension(path) {
@@ -33,14 +25,9 @@ export function fileExtension(path) {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
 }
 
-/** True when `path` is a project source file (`.cpp`/`.cxx`). */
+/** True when `path` is a project source file. */
 export function isProjectSource(path) {
   return PROJECT_SOURCE_EXTENSIONS.includes(fileExtension(path));
-}
-
-/** True when `path` is a rejected source kind (`.c`/`.cc`) under this MVP. */
-export function isRejectedSource(path) {
-  return REJECTED_SOURCE_EXTENSIONS.includes(fileExtension(path));
 }
 
 /** Strip leading "./" and "/" so overlay/source paths are workspace-relative. */
@@ -49,8 +36,9 @@ export function normalizeOverlayPath(path) {
 }
 
 /**
- * Pick every recursive `.cpp`/`.cxx` file from workspace snapshot entries,
- * ignoring `.c`/`.cc`. Result is de-duplicated and sorted for determinism.
+ * Pick root-level C/C++ sources from workspace snapshot entries. Nested source
+ * files require an explicit terminal command. Result is de-duplicated and
+ * sorted for determinism.
  *
  * @param {Array<{path:string, kind:string}>} entries
  * @returns {string[]} workspace-relative source paths
@@ -59,7 +47,8 @@ export function selectWorkspaceSources(entries = []) {
   const out = new Set();
   for (const entry of entries || []) {
     if (!entry || entry.kind !== 'file' || !entry.path) continue;
-    if (isProjectSource(entry.path)) out.add(normalizeOverlayPath(entry.path));
+    const path = normalizeOverlayPath(entry.path);
+    if (!path.includes('/') && isProjectSource(path)) out.add(path);
   }
   return [...out].sort();
 }

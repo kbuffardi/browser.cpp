@@ -107,6 +107,23 @@ button:active {
   filter: brightness(0.9);
 }
 
+button:disabled,
+button:disabled:hover,
+button:disabled:active {
+  cursor: not-allowed;
+  opacity: 0.5;
+  background: var(--surface0);
+  border-color: transparent;
+  filter: none;
+}
+
+.btn-primary:disabled,
+.btn-primary:disabled:hover,
+.btn-primary:disabled:active {
+  background: var(--surface0);
+  color: var(--subtext0);
+}
+
 .btn-primary {
   background: var(--green);
   color: var(--crust);
