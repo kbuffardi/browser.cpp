@@ -149,6 +149,7 @@ export function createSessionPersistence({
   handleStore = createIndexedDBHandleStore(),
   confirmReload = () => true,
   startNewProject = () => {},
+  setExplorerLoading = () => {},
 }) {
   function filterTabContentSnapshot(session) {
     const entries = session?.openTabContentsByPath;
@@ -214,7 +215,14 @@ export function createSessionPersistence({
         }
 
         if (permission === 'granted') {
-          const workspace = await fsAPI.openFolderFromHandle(handle);
+          let workspace;
+          try {
+            workspace = await fsAPI.openFolderFromHandle(handle, {
+              onScanStart: () => setExplorerLoading(true),
+            });
+          } finally {
+            setExplorerLoading(false);
+          }
           if (workspace) {
             await restoreWorkspace(
               workspace,

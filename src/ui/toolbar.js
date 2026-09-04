@@ -39,6 +39,7 @@ let _workspaceSyncRunning = false;
 let _workspaceSyncQueued = false;
 let _workspaceSyncEventsBound = false;
 let _lastCompatibilityMessage = null;
+let _explorerLoading = false;
 
 // ── Multi-tab state ───────────────────────────────────────────────────────────
 // Map<path, { content: string, dirty: boolean }>
@@ -104,6 +105,7 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
     setWorker,
     getLastRunBinaryBytes,
     setRunPreparing,
+    setExplorerLoading,
   };
 }
 
@@ -355,6 +357,7 @@ async function handleWorkerMessage(data) {
  * Explorer rather than resetting the editor.
  */
 async function actionNewFile() {
+  if (_explorerLoading) return;
   if (!_workspace) {
     let opened = false;
     try {
@@ -962,10 +965,32 @@ function renderWorkspaceSidebar(workspace) {
   const tree = document.getElementById('file-tree');
   if (!tree) return;
   tree.innerHTML = '';
+  tree.setAttribute('aria-busy', String(_explorerLoading));
 
-  const childrenByParent = buildWorkspaceChildrenMap(workspace.entries);
+  const childrenByParent = buildWorkspaceChildrenMap(workspace?.entries || []);
   renderWorkspaceChildren(tree, childrenByParent, '', 0);
+  if (_explorerLoading) renderExplorerLoading(tree);
   highlightWorkspaceFile(_fileName);
+}
+
+function renderExplorerLoading(tree) {
+  const row = document.createElement('li');
+  row.className = 'explorer-loading';
+  row.setAttribute('role', 'presentation');
+
+  const spinner = document.createElement('span');
+  spinner.className = 'explorer-loading-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+
+  const text = document.createElement('span');
+  text.className = 'explorer-loading-text';
+  text.setAttribute('role', 'status');
+  text.setAttribute('aria-live', 'polite');
+  text.textContent = 'Loading folder…';
+
+  row.appendChild(spinner);
+  row.appendChild(text);
+  tree.appendChild(row);
 }
 
 function buildWorkspaceChildrenMap(entries) {
@@ -999,12 +1024,17 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
     li.setAttribute('aria-level', String(depth + 1));
     li.dataset.path = entry.path;
     li.style.paddingLeft = `${16 + depth * 14}px`;
+    if (_explorerLoading) {
+      li.setAttribute('aria-disabled', 'true');
+      li.classList.add('workspace-loading');
+    }
 
     if (entry.kind === 'directory') {
       const isExpanded = _expandedWorkspaceDirectories.has(entry.path);
       li.setAttribute('aria-expanded', String(isExpanded));
       li.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
       li.addEventListener('click', (event) => {
+        if (_explorerLoading) return;
         event.stopPropagation();
         if (_expandedWorkspaceDirectories.has(entry.path)) {
           _expandedWorkspaceDirectories.delete(entry.path);
@@ -1023,6 +1053,7 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
 
     li.textContent = `📄 ${workspaceBaseName(entry.path)}`;
     li.addEventListener('click', (event) => {
+      if (_explorerLoading) return;
       event.stopPropagation();
       void openWorkspaceFile(entry.path);
     });
@@ -1193,24 +1224,38 @@ function isMacPlatform() {
 }
 
 async function openFolderWorkspace() {
-  const workspace = await _fsAPI.openFolder();
-  if (!workspace) return false;
-  clearTransientProjectState();
-  closeAllTabs();
-  setWorkspaceMode(workspace);
-  await openWorkspaceInitialFile(workspace);
-  renderWorkspaceSidebar(workspace);
-  _persistSession?.(); // persist immediately so the new workspace survives unload
-  return true;
+  try {
+    const workspace = await _fsAPI.openFolder({
+      onScanStart: () => setExplorerLoading(true),
+    });
+    if (!workspace) return false;
+    clearTransientProjectState();
+    closeAllTabs();
+    setWorkspaceMode(workspace);
+    await openWorkspaceInitialFile(workspace);
+    renderWorkspaceSidebar(workspace);
+    _persistSession?.(); // persist immediately so the new workspace survives unload
+    return true;
+  } finally {
+    setExplorerLoading(false);
+  }
 }
 
 async function actionOpen() {
+  if (_explorerLoading) return;
   if (hasUnsavedChanges() && !confirm('Discard unsaved changes?')) return;
   try {
     await openFolderWorkspace();
   } catch (err) {
     showOpenError(err);
   }
+}
+
+function setExplorerLoading(loading) {
+  _explorerLoading = Boolean(loading);
+  document.getElementById('btn-new').disabled = _explorerLoading;
+  document.getElementById('btn-open').disabled = _explorerLoading;
+  renderWorkspaceSidebar(_workspace);
 }
 
 // ── Session persistence helpers ───────────────────────────────────────────────

@@ -258,6 +258,51 @@ async function importFreshFilesystem() {
   return import(`../src/ui/filesystem.js?fs=${Math.random()}`);
 }
 
+test('e2e: folder scanning signals progress before committing a replacement workspace', async () => {
+  const fs = await importFreshFilesystem();
+  const oldRoot = new FakeDirHandle('old-project');
+  oldRoot.children.set('old.cpp', new FakeFileHandle('old.cpp'));
+  await fs.openFolderFromHandle(oldRoot);
+
+  let releaseScan;
+  const newRoot = new FakeDirHandle('new-project');
+  newRoot.entries = async function* entries() {
+    await new Promise((resolve) => { releaseScan = resolve; });
+    yield ['new.cpp', new FakeFileHandle('new.cpp')];
+  };
+
+  let scanStarted = false;
+  const opening = fs.openFolderFromHandle(newRoot, {
+    onScanStart() { scanStarted = true; },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(scanStarted, true, 'the UI can enter its loading state before scan completion');
+  assert.equal(fs.getWorkspaceSnapshot().name, 'old-project', 'existing workspace stays available');
+
+  releaseScan();
+  const result = await opening;
+  assert.equal(result.name, 'new-project');
+  assert.deepEqual(result.entries, [{ path: 'new.cpp', kind: 'file' }]);
+});
+
+test('e2e: failed replacement folder scan leaves the previous workspace intact', async () => {
+  const fs = await importFreshFilesystem();
+  const oldRoot = new FakeDirHandle('old-project');
+  oldRoot.children.set('old.cpp', new FakeFileHandle('old.cpp'));
+  await fs.openFolderFromHandle(oldRoot);
+
+  const brokenRoot = new FakeDirHandle('broken-project');
+  brokenRoot.entries = async function* entries() {
+    yield* [];
+    throw new Error('scan failed');
+  };
+
+  await assert.rejects(() => fs.openFolderFromHandle(brokenRoot), /scan failed/);
+  assert.deepEqual(fs.getWorkspaceSnapshot().entries, [{ path: 'old.cpp', kind: 'file' }]);
+  assert.equal(fs.getDirectoryHandle(), oldRoot);
+});
+
 test('e2e: createWorkspaceFile writes a root file and refreshes the snapshot', async () => {
   const fs = await importFreshFilesystem();
   const root = new FakeDirHandle('project');
@@ -796,7 +841,11 @@ async function setupToolbar(fsOverrides = {}) {
       if (fsOverrides.readWorkspaceFile) return fsOverrides.readWorkspaceFile(path);
       return '';
     },
-    openFolder: async () => { fsCalls.openFolder += 1; return fsOverrides.openFolderResult ?? null; },
+    openFolder: async (options) => {
+      fsCalls.openFolder += 1;
+      if (fsOverrides.openFolder) return fsOverrides.openFolder(options);
+      return fsOverrides.openFolderResult ?? null;
+    },
     createWorkspaceFile: async (path, content) => {
       fsCalls.create.push({ path, content });
       if (fsOverrides.createWorkspaceFile) return fsOverrides.createWorkspaceFile(path, content);
@@ -959,6 +1008,66 @@ test('e2e: restored nested directories start collapsed until the user expands ea
 
   renderedTreeItem(ctx.document, 'src/lib').click();
   assert.deepEqual(renderedTreePaths(ctx.document), ['src', 'src/lib', 'src/lib/util.hpp']);
+});
+
+test('e2e: Explorer shows an accessible animated loading indicator while indexing', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({
+    name: 'old-project',
+    entries: [{ path: 'old.cpp', kind: 'file' }],
+  }, [], null);
+
+  ctx.controller.setExplorerLoading(true);
+
+  const tree = ctx.document.getElementById('file-tree');
+  const loadingRow = tree.children.find((child) => child.className === 'explorer-loading');
+  assert.ok(loadingRow, 'loading row is rendered in the Explorer');
+  assert.equal(loadingRow.getAttribute('role'), 'presentation');
+  const loadingText = loadingRow.children.find((child) => child.className === 'explorer-loading-text');
+  assert.equal(loadingText.getAttribute('role'), 'status');
+  assert.equal(loadingText.getAttribute('aria-live'), 'polite');
+  assert.ok(
+    loadingRow.children.some((child) => child.className === 'explorer-loading-spinner'),
+    'loading row includes the animated spinner'
+  );
+  assert.deepEqual(renderedTreePaths(ctx.document), ['old.cpp'], 'old tree remains visible');
+  assert.equal(ctx.document.getElementById('btn-new').disabled, true);
+  assert.equal(ctx.document.getElementById('btn-open').disabled, true);
+
+  ctx.controller.setExplorerLoading(false);
+  assert.equal(tree.children.some((child) => child.className === 'explorer-loading'), false);
+  assert.equal(ctx.document.getElementById('btn-new').disabled, false);
+  assert.equal(ctx.document.getElementById('btn-open').disabled, false);
+});
+
+test('e2e: opening a folder keeps the old Explorer tree visible while it indexes', async () => {
+  let finishOpen;
+  const ctx = await setupToolbar({
+    openFolder: ({ onScanStart }) => {
+      onScanStart();
+      return new Promise((resolve) => { finishOpen = resolve; });
+    },
+  });
+  await ctx.toolbar.restoreWorkspace({
+    name: 'old-project',
+    entries: [{ path: 'old.cpp', kind: 'file' }],
+  }, [], null);
+
+  ctx.document.getElementById('btn-open').click();
+  await tick();
+  assert.ok(
+    ctx.document.getElementById('file-tree').children.some((child) => child.className === 'explorer-loading')
+  );
+  assert.deepEqual(renderedTreePaths(ctx.document), ['old.cpp']);
+
+  finishOpen({ name: 'new-project', entries: [{ path: 'new.cpp', kind: 'file' }] });
+  await tick();
+  await tick();
+  assert.equal(
+    ctx.document.getElementById('file-tree').children.some((child) => child.className === 'explorer-loading'),
+    false
+  );
+  assert.deepEqual(renderedTreePaths(ctx.document), ['new.cpp']);
 });
 
 test('e2e: refresh keeps expanded directories but prunes directories that no longer exist', async () => {

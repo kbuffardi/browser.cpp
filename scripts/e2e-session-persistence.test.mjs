@@ -271,6 +271,7 @@ test('e2e: prompts to reload and re-requests readwrite, restoring live workspace
   const handleStore = createHandleStore();
   const permissionModes = [];
   const restored = [];
+  const loadingStates = [];
   let confirmCalls = 0;
 
   const directoryHandle = {
@@ -302,8 +303,9 @@ test('e2e: prompts to reload and re-requests readwrite, restoring live workspace
   const secondSession = createSessionPersistence({
     fsAPI: {
       getDirectoryHandle: () => null,
-      openFolderFromHandle: async (handle) => {
+      openFolderFromHandle: async (handle, { onScanStart }) => {
         assert.equal(handle, directoryHandle);
+        onScanStart();
         return { name: 'project', entries: [] };
       },
     },
@@ -320,6 +322,7 @@ test('e2e: prompts to reload and re-requests readwrite, restoring live workspace
       confirmCalls += 1;
       return true; // user chooses to reload the previous project
     },
+    setExplorerLoading: (loading) => loadingStates.push(loading),
   });
 
   await secondSession.restoreSession();
@@ -329,6 +332,7 @@ test('e2e: prompts to reload and re-requests readwrite, restoring live workspace
   assert.equal(restored.length, 1);
   assert.deepEqual(restored[0].openTabPaths, ['bitmap.h', 'bitmap.cpp']);
   assert.equal(restored[0].activeTabPath, 'bitmap.cpp');
+  assert.deepEqual(loadingStates, [true, false]);
 });
 
 test('e2e: choosing start-new abandons previous state and clears persisted session', async () => {

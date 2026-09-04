@@ -114,6 +114,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     restoreNoWorkspaceSource,
     confirmReload: promptReloadPreviousProject,
     startNewProject: resetToNewProject,
+    setExplorerLoading: (loading) => toolbarController?.setExplorerLoading(loading),
   });
   const persistenceGate = createPersistenceGate(persistSession);
   toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
