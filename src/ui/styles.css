@@ -221,6 +221,35 @@ select:focus {
   color: var(--blue);
 }
 
+#file-tree li.workspace-loading {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+#file-tree li.explorer-loading {
+  color: var(--subtext0);
+  cursor: progress;
+  font-size: 12px;
+}
+
+#file-tree li.explorer-loading:hover {
+  background: transparent;
+}
+
+.explorer-loading-spinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--surface1);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: explorer-loading-spin 0.8s linear infinite;
+}
+
+@keyframes explorer-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Inline VS Code-style new-file naming row */
 #file-tree li.file-tree-new {
   flex-direction: column;
