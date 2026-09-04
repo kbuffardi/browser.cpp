@@ -258,6 +258,50 @@ async function importFreshFilesystem() {
   return import(`../src/ui/filesystem.js?fs=${Math.random()}`);
 }
 
+test('e2e: folder scanning signals progress before committing a replacement workspace', async () => {
+  const fs = await importFreshFilesystem();
+  const oldRoot = new FakeDirHandle('old-project');
+  oldRoot.children.set('old.cpp', new FakeFileHandle('old.cpp'));
+  await fs.openFolderFromHandle(oldRoot);
+
+  let releaseScan;
+  const newRoot = new FakeDirHandle('new-project');
+  newRoot.entries = async function* entries() {
+    await new Promise((resolve) => { releaseScan = resolve; });
+    yield ['new.cpp', new FakeFileHandle('new.cpp')];
+  };
+
+  let scanStarted = false;
+  const opening = fs.openFolderFromHandle(newRoot, {
+    onScanStart() { scanStarted = true; },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(scanStarted, true, 'the UI can enter its loading state before scan completion');
+  assert.equal(fs.getWorkspaceSnapshot().name, 'old-project', 'existing workspace stays available');
+
+  releaseScan();
+  const result = await opening;
+  assert.equal(result.name, 'new-project');
+  assert.deepEqual(result.entries, [{ path: 'new.cpp', kind: 'file' }]);
+});
+
+test('e2e: failed replacement folder scan leaves the previous workspace intact', async () => {
+  const fs = await importFreshFilesystem();
+  const oldRoot = new FakeDirHandle('old-project');
+  oldRoot.children.set('old.cpp', new FakeFileHandle('old.cpp'));
+  await fs.openFolderFromHandle(oldRoot);
+
+  const brokenRoot = new FakeDirHandle('broken-project');
+  brokenRoot.entries = async function* entries() {
+    throw new Error('scan failed');
+  };
+
+  await assert.rejects(() => fs.openFolderFromHandle(brokenRoot), /scan failed/);
+  assert.deepEqual(fs.getWorkspaceSnapshot().entries, [{ path: 'old.cpp', kind: 'file' }]);
+  assert.equal(fs.getDirectoryHandle(), oldRoot);
+});
+
 test('e2e: createWorkspaceFile writes a root file and refreshes the snapshot', async () => {
   const fs = await importFreshFilesystem();
   const root = new FakeDirHandle('project');

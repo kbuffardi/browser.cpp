@@ -21,6 +21,8 @@ import {
 
 /** Milliseconds before a blob URL created for download is revoked. */
 const BLOB_URL_REVOKE_DELAY_MS = 2_000;
+/** Number of indexed entries between browser task yields. */
+const SCAN_YIELD_INTERVAL = 64;
 
 /** @type {FileSystemFileHandle|null} */
 let currentHandle = null;
@@ -31,6 +33,7 @@ const workspaceEntries = [];
 const workspaceFiles = new Map();
 const workspaceFileFingerprints = new Map();
 let workspaceGit = { isRepo: false, branch: null, remotes: [] };
+let workspaceScanRequestId = 0;
 
 const CPP_TYPES = [
   {
@@ -82,11 +85,9 @@ export async function openFile() {
  * Open a local folder and index its files/subdirectories.
  * @returns {Promise<{ name: string, entries: Array<{path:string, kind:'file'|'directory'}>, git: {isRepo:boolean, branch:string|null, remotes:string[]} }|null>}
  */
-export async function openFolder() {
-  clearWorkspace();
-
+export async function openFolder(options = {}) {
   if (!supportsDirectoryAccess()) {
-    return openFolderFallback();
+    return openFolderFallback(options);
   }
 
   let handle;
@@ -97,16 +98,7 @@ export async function openFolder() {
     throw err;
   }
 
-  currentDirectoryHandle = handle;
-  workspaceName = handle.name;
-  replaceWorkspaceIndex(await scanDirectoryHandle(handle));
-  workspaceGit = await detectGitMetadata();
-
-  return {
-    name: workspaceName,
-    entries: [...workspaceEntries],
-    git: workspaceGit,
-  };
+  return openFolderFromHandle(handle, options);
 }
 
 /**
@@ -207,12 +199,23 @@ export function getWorkspaceSnapshot() {
  * @param {FileSystemDirectoryHandle} handle
  * @returns {Promise<{name:string, entries:Array, git:object}>}
  */
-export async function openFolderFromHandle(handle) {
-  clearWorkspace();
+export async function openFolderFromHandle(handle, { onScanStart = null } = {}) {
+  const requestId = ++workspaceScanRequestId;
+  onScanStart?.();
+
+  // Allow a loading state rendered by the caller to paint before traversing a
+  // potentially large directory tree.
+  await yieldToBrowser();
+  const scanned = await scanDirectoryHandle(handle);
+  const git = await detectGitMetadata(scanned.entries, scanned.files);
+
+  // A newer open request owns the workspace. Ignore stale scan completions.
+  if (requestId !== workspaceScanRequestId) return null;
+
   currentDirectoryHandle = handle;
   workspaceName = handle.name;
-  replaceWorkspaceIndex(await scanDirectoryHandle(handle));
-  workspaceGit = await detectGitMetadata();
+  replaceWorkspaceIndex(scanned);
+  workspaceGit = git;
   return {
     name: workspaceName,
     entries: [...workspaceEntries],
@@ -222,8 +225,12 @@ export async function openFolderFromHandle(handle) {
 
 /** Read a file from the currently opened workspace folder. */
 export async function readWorkspaceFile(path) {
+  return readWorkspaceFileFromMap(path, workspaceFiles);
+}
+
+async function readWorkspaceFileFromMap(path, files) {
   const key = normalizeWorkspacePath(path);
-  const item = workspaceFiles.get(key);
+  const item = files.get(key);
   if (!item) return null;
   if (item.handle) {
     const file = await item.handle.getFile();
@@ -698,7 +705,7 @@ function openFileFallback() {
   });
 }
 
-function openFolderFallback() {
+function openFolderFallback({ onScanStart = null } = {}) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -711,22 +718,28 @@ function openFolderFallback() {
         return;
       }
 
+      onScanStart?.();
+
+      const nextEntries = [];
+      const nextFiles = new Map();
+      const nextFingerprints = new Map();
+
       const firstParts = (files[0].webkitRelativePath || '').split('/');
-      workspaceName = firstParts.length > 1 && firstParts[0]
+      const nextName = firstParts.length > 1 && firstParts[0]
         ? firstParts[0]
         : 'workspace';
 
       const dirSet = new Set();
       for (const file of files) {
         const full = file.webkitRelativePath || file.name;
-        const withoutRoot = full.startsWith(`${workspaceName}/`)
-          ? full.slice(workspaceName.length + 1)
+        const withoutRoot = full.startsWith(`${nextName}/`)
+          ? full.slice(nextName.length + 1)
           : full;
         const path = normalizeWorkspacePath(withoutRoot);
-        workspaceFiles.set(path, { file });
+        nextFiles.set(path, { file });
         const fingerprint = fingerprintForFile(file);
-        if (fingerprint) workspaceFileFingerprints.set(path, fingerprint);
-        workspaceEntries.push({ path, kind: 'file' });
+        if (fingerprint) nextFingerprints.set(path, fingerprint);
+        nextEntries.push({ path, kind: 'file' });
 
         const segments = path.split('/');
         segments.pop();
@@ -738,11 +751,18 @@ function openFolderFallback() {
       }
 
       for (const dir of dirSet) {
-        workspaceEntries.push({ path: dir, kind: 'directory' });
+        nextEntries.push({ path: dir, kind: 'directory' });
       }
 
-      workspaceEntries.sort((a, b) => a.path.localeCompare(b.path));
-      detectGitMetadata().then((git) => {
+      nextEntries.sort((a, b) => a.path.localeCompare(b.path));
+      detectGitMetadata(nextEntries, nextFiles).then((git) => {
+        currentDirectoryHandle = null;
+        workspaceName = nextName;
+        replaceWorkspaceIndex({
+          entries: nextEntries,
+          files: nextFiles,
+          fingerprints: nextFingerprints,
+        });
         workspaceGit = git;
         resolve({
           name: workspaceName,
@@ -779,11 +799,16 @@ function clearWorkspace() {
   currentDirectoryHandle = null;
 }
 
+function yieldToBrowser() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function scanDirectoryHandle(dirHandle, prefix = '', scan = null) {
   const result = scan || {
     entries: [],
     files: new Map(),
     fingerprints: new Map(),
+    scannedEntries: 0,
   };
 
   for await (const [name, entry] of dirHandle.entries()) {
@@ -796,6 +821,11 @@ async function scanDirectoryHandle(dirHandle, prefix = '', scan = null) {
       result.files.set(relPath, { handle: entry });
       const fingerprint = await fingerprintForFileHandle(entry);
       if (fingerprint) result.fingerprints.set(relPath, fingerprint);
+    }
+
+    result.scannedEntries += 1;
+    if (result.scannedEntries % SCAN_YIELD_INTERVAL === 0) {
+      await yieldToBrowser();
     }
   }
 
@@ -832,23 +862,23 @@ function fingerprintForFile(file) {
   return { size, lastModified };
 }
 
-async function detectGitMetadata() {
-  const hasGitDir = workspaceEntries.some(
+async function detectGitMetadata(entries = workspaceEntries, files = workspaceFiles) {
+  const hasGitDir = entries.some(
     (entry) => entry.kind === 'directory' && entry.path === '.git'
   );
-  if (!hasGitDir && !workspaceFiles.has('.git/HEAD')) {
+  if (!hasGitDir && !files.has('.git/HEAD')) {
     return { isRepo: false, branch: null, remotes: [] };
   }
 
   let branch = null;
-  const head = await readWorkspaceFile('.git/HEAD');
+  const head = await readWorkspaceFileFromMap('.git/HEAD', files);
   if (head?.startsWith('ref:')) {
     const ref = head.slice(5).trim();
     branch = ref.split('/').pop() || null;
   }
 
   const remotes = [];
-  const config = await readWorkspaceFile('.git/config');
+  const config = await readWorkspaceFileFromMap('.git/config', files);
   if (config) {
     const lines = config.split('\n');
     let inRemote = false;
