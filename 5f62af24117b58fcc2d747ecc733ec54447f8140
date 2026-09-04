@@ -1,0 +1,15 @@
+## AI Agent Reasoning
+
+### Context
+Issue #82 makes large-folder indexing observable without replacing a usable workspace before a scan succeeds.
+
+### Decisions Made
+- Commit candidate scans atomically so cancellation and failures preserve the live workspace.
+- Yield before and during indexing so the Explorer spinner can paint and animate.
+- Use a request ID to prevent stale scans from replacing newer workspace state.
+
+### Trade-offs
+- The full tree and file fingerprints remain eagerly indexed for compatibility; lazy expansion is explicitly out of scope for this issue.
+
+### References
+- Issue: #82
