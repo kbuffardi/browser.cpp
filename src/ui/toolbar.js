@@ -976,14 +976,16 @@ function renderWorkspaceSidebar(workspace) {
 function renderExplorerLoading(tree) {
   const row = document.createElement('li');
   row.className = 'explorer-loading';
-  row.setAttribute('role', 'status');
-  row.setAttribute('aria-live', 'polite');
+  row.setAttribute('role', 'presentation');
 
   const spinner = document.createElement('span');
   spinner.className = 'explorer-loading-spinner';
   spinner.setAttribute('aria-hidden', 'true');
 
   const text = document.createElement('span');
+  text.className = 'explorer-loading-text';
+  text.setAttribute('role', 'status');
+  text.setAttribute('aria-live', 'polite');
   text.textContent = 'Loading folder…';
 
   row.appendChild(spinner);

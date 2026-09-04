@@ -1022,8 +1022,10 @@ test('e2e: Explorer shows an accessible animated loading indicator while indexin
   const tree = ctx.document.getElementById('file-tree');
   const loadingRow = tree.children.find((child) => child.className === 'explorer-loading');
   assert.ok(loadingRow, 'loading row is rendered in the Explorer');
-  assert.equal(loadingRow.getAttribute('role'), 'status');
-  assert.equal(loadingRow.getAttribute('aria-live'), 'polite');
+  assert.equal(loadingRow.getAttribute('role'), 'presentation');
+  const loadingText = loadingRow.children.find((child) => child.className === 'explorer-loading-text');
+  assert.equal(loadingText.getAttribute('role'), 'status');
+  assert.equal(loadingText.getAttribute('aria-live'), 'polite');
   assert.ok(
     loadingRow.children.some((child) => child.className === 'explorer-loading-spinner'),
     'loading row includes the animated spinner'

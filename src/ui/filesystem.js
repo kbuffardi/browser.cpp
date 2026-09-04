@@ -718,6 +718,7 @@ function openFolderFallback({ onScanStart = null } = {}) {
         return;
       }
 
+      const requestId = ++workspaceScanRequestId;
       onScanStart?.();
 
       const nextEntries = [];
@@ -756,6 +757,10 @@ function openFolderFallback({ onScanStart = null } = {}) {
 
       nextEntries.sort((a, b) => a.path.localeCompare(b.path));
       detectGitMetadata(nextEntries, nextFiles).then((git) => {
+        if (requestId !== workspaceScanRequestId) {
+          resolve(null);
+          return;
+        }
         currentDirectoryHandle = null;
         workspaceName = nextName;
         replaceWorkspaceIndex({
