@@ -915,6 +915,43 @@ function shortcutEvent(key, { metaKey = false, ctrlKey = false, shiftKey = false
   };
 }
 
+test('e2e: toolbar compilation requires a ready compiler and root-level C/C++ sources', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({
+    name: 'nested-only',
+    entries: [
+      { path: 'src/main.CPP', kind: 'file' },
+      { path: 'lib/helper.cc', kind: 'file' },
+    ],
+  }, [], null);
+
+  assert.equal(ctx.document.getElementById('btn-compile').disabled, true);
+  assert.equal(ctx.document.getElementById('btn-compile-run').disabled, true);
+  ctx.document.dispatch('keydown', shortcutEvent('B', { ctrlKey: true, shiftKey: true }).event);
+  ctx.document.dispatch('keydown', shortcutEvent('F5').event);
+  await tick();
+  assert.deepEqual(ctx.workerCalls, [], 'shortcuts cannot bypass ineligible toolbar state');
+
+  await ctx.toolbar.restoreWorkspace({
+    name: 'root-sources',
+    entries: [
+      { path: 'main.CPP', kind: 'file' },
+      { path: 'legacy.c', kind: 'file' },
+      { path: 'module.cc', kind: 'file' },
+      { path: 'src/ignored.cxx', kind: 'file' },
+    ],
+  }, [], null);
+
+  assert.equal(ctx.document.getElementById('btn-compile').disabled, true, 'worker is still loading');
+  ctx.worker.onmessage({ data: { type: 'compiler-ready', capabilities: {} } });
+  assert.equal(ctx.document.getElementById('btn-compile').disabled, false);
+  assert.equal(ctx.document.getElementById('btn-compile-run').disabled, false);
+
+  ctx.document.getElementById('btn-compile').click();
+  await tick();
+  assert.deepEqual(ctx.workerCalls[0].sourcePaths, ['legacy.c', 'main.CPP', 'module.cc']);
+});
+
 test('e2e: New file with no workspace opens the folder picker; cancel leaves state unchanged', async () => {
   const ctx = await setupToolbar({ openFolderResult: null });
   ctx.toolbar.resetToNewProject(); // no workspace, single main.cpp tab
@@ -1291,6 +1328,7 @@ test('e2e: setWorker disconnects the old worker and binds messages to the replac
 test('e2e: compile-and-run pending state is cleared when the worker is replaced', async () => {
   const ctx = await setupToolbar();
   await ctx.toolbar.restoreWorkspace({ name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] }, [], null);
+  ctx.worker.onmessage({ data: { type: 'compiler-ready', capabilities: {} } });
   ctx.document.getElementById('btn-compile-run').click();
   await tick();
   assert.equal(ctx.workerCalls[0].type, 'compile');
@@ -1337,6 +1375,7 @@ test('e2e: compile actions after worker replacement post to the replacement work
   const replacementWorker = { postMessage(msg) { replacementCalls.push(msg); }, onmessage: null };
 
   ctx.toolbar.setWorker(replacementWorker);
+  replacementWorker.onmessage({ data: { type: 'compiler-ready', capabilities: {} } });
   ctx.document.getElementById('btn-compile').click();
   await tick();
 

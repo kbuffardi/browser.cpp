@@ -8,7 +8,6 @@ import {
   selectWorkspaceSources,
   buildCompileOverlay,
   isProjectSource,
-  isRejectedSource,
   normalizeOverlayPath,
 } from '../src/ui/build-request.mjs';
 import { parseCompilePlan } from '../src/workers/compile-plan.mjs';
@@ -24,12 +23,15 @@ import { parseDiagnostics, diagnosticsForPath } from '../src/ui/diagnostics.mjs'
 
 // ── Toolbar project-source discovery ──────────────────────────────────────────
 
-test('e2e: toolbar build selects every recursive .cpp/.cxx and ignores .c/.cc', () => {
+test('e2e: toolbar build selects every root C/C++ source and ignores nested sources', () => {
   const entries = [
-    { path: 'main.cpp', kind: 'file' },
-    { path: 'src/util.cxx', kind: 'file' },
-    { path: 'src', kind: 'directory' },
+    { path: 'MAIN.CPP', kind: 'file' },
     { path: 'legacy.c', kind: 'file' },
+    { path: 'module.cc', kind: 'file' },
+    { path: 'utility.CxX', kind: 'file' },
+    { path: 'src/util.cxx', kind: 'file' },
+    { path: 'src/compat.C', kind: 'file' },
+    { path: 'src', kind: 'directory' },
     { path: 'vendor/old.cc', kind: 'file' },
     { path: 'include/app.hpp', kind: 'file' },
     { path: 'README.md', kind: 'file' },
@@ -37,9 +39,9 @@ test('e2e: toolbar build selects every recursive .cpp/.cxx and ignores .c/.cc', 
 
   const sources = selectWorkspaceSources(entries);
 
-  assert.deepEqual(sources, ['main.cpp', 'src/util.cxx']);
+  assert.deepEqual(sources, ['MAIN.CPP', 'legacy.c', 'module.cc', 'utility.CxX']);
+  assert.ok(isProjectSource('a.c') && isProjectSource('a.cc'));
   assert.ok(isProjectSource('a.cpp') && isProjectSource('a.cxx'));
-  assert.ok(isRejectedSource('a.c') && isRejectedSource('a.cc'));
   assert.equal(isProjectSource('a.hpp'), false);
 });
 

@@ -31,6 +31,8 @@ let _fileName    = 'main.cpp';
 let _workspace   = null;
 let _runAfterSuccessfulCompile = false;
 let _runPreparationActive = false;
+let _compilerReady = false;
+let _compilerBusy = false;
 let _lastRunBinaryBytes = null;
 const _expandedWorkspaceDirectories = new Set();
 const WORKSPACE_SYNC_INTERVAL_MS = 2_000;
@@ -116,10 +118,12 @@ export function setWorker(worker) {
   _worker = worker;
   _runAfterSuccessfulCompile = false;
   _runPreparationActive = false;
+  _compilerReady = false;
+  _compilerBusy = false;
   _terminalAPI?.setWorkerCapabilities?.({ jspi: false });
   handleWorkerMessages();
   updateStatusBar('compiler', 'loading', 'Compiler loading…');
-  setButtonsEnabled(false);
+  updateCompileButtons();
 }
 
 export function getLastRunBinaryBytes() {
@@ -128,7 +132,7 @@ export function getLastRunBinaryBytes() {
 
 export function setRunPreparing(preparing) {
   _runPreparationActive = preparing;
-  updateCompileButtons(!preparing);
+  updateCompileButtons();
   updateStatusBar(
     'compiler',
     preparing ? 'busy' : 'ready',
@@ -205,14 +209,18 @@ function handleWorkerMessages() {
 async function handleWorkerMessage(data) {
   switch (data.type) {
     case 'compiler-loading':
+      _compilerReady = false;
+      _compilerBusy = false;
       updateStatusBar(
         'compiler', 'loading',
         `Loading compiler… ${data.progress}%`
       );
-      setButtonsEnabled(false);
+      updateCompileButtons();
       break;
 
     case 'compiler-ready':
+      _compilerReady = true;
+      _compilerBusy = false;
       _terminalAPI.setWorkerCapabilities?.(data.capabilities);
       {
         const report = createBrowserCompatibilityReport(globalThis, data.capabilities);
@@ -230,8 +238,10 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'compiler-error':
+      _compilerReady = false;
+      _compilerBusy = false;
       updateStatusBar('compiler', 'error', 'Compiler unavailable');
-      setButtonsEnabled(false);
+      updateCompileButtons();
       _terminalAPI.printInfo(
         `⚠ Compiler not available:\n${data.message}\n\n` +
         'Run:  npm run fetch-clang  then reload the extension.'
@@ -240,12 +250,14 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'compile-start':
+      _compilerBusy = true;
       updateStatusBar('compiler', 'busy', 'Compiling…');
-      setButtonsEnabled(false);
+      updateCompileButtons();
       _editorAPI.clearDiagnostics();
       break;
 
     case 'compile-result': {
+      _compilerBusy = false;
       const shouldRunAfterCompile = _runAfterSuccessfulCompile;
       _runAfterSuccessfulCompile = false;
       updateCompileButtons();
@@ -278,9 +290,10 @@ async function handleWorkerMessage(data) {
     }
 
     case 'run-start':
+      _compilerBusy = true;
       _terminalAPI.onRunStart?.(data);
       updateStatusBar('compiler', 'busy', 'Running…');
-      setButtonsEnabled(false);
+      updateCompileButtons();
       break;
 
     case 'stdout':
@@ -292,6 +305,7 @@ async function handleWorkerMessage(data) {
       break;
 
     case 'run-result': {
+      _compilerBusy = false;
       updateCompileButtons();
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       _terminalAPI.onRunResult(data);
@@ -683,7 +697,7 @@ async function actionSaveAs() {
 }
 
 async function actionCompile() {
-  if (!_worker || _runPreparationActive || !workspaceHasCppFile()) return;
+  if (!canCompileFromToolbar()) return;
   _runAfterSuccessfulCompile = false;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
@@ -694,7 +708,7 @@ async function actionRun() {
 }
 
 async function actionCompileRun() {
-  if (!_worker || _runPreparationActive || !workspaceHasCppFile()) return;
+  if (!canCompileFromToolbar()) return;
   _runAfterSuccessfulCompile = true;
   const payload = await assembleCompilePayload({});
   _worker.postMessage({ type: 'compile', ...payload });
@@ -707,7 +721,7 @@ async function actionCompileRun() {
  * the active editor buffer into its tab, layer all dirty tab content over the
  * on-disk workspace files, and choose the build target set:
  *   - explicit `sourcePaths` (terminal `g++ a.cpp b.cpp`)
- *   - otherwise every recursive `.cpp`/`.cxx` workspace file (toolbar project build)
+ *   - otherwise every root-level C/C++ workspace file (toolbar project build)
  *
  * @param {{ sourcePaths?:string[], std?:string, flags?:string[], outputName?:(string|null) }} opts
  * @returns {Promise<object>} worker `compile` message payload
@@ -777,14 +791,17 @@ function setButtonsEnabled(enabled) {
   });
 }
 
-function workspaceHasCppFile() {
-  return Boolean(_workspace?.entries?.some(
-    (entry) => entry.kind === 'file' && entry.path.toLowerCase().endsWith('.cpp')
-  ));
+function canCompileFromToolbar() {
+  return Boolean(_worker) && _compilerReady && !_compilerBusy &&
+    !_runPreparationActive && workspaceHasToolbarSource();
 }
 
-function updateCompileButtons(enabled = true) {
-  setButtonsEnabled(enabled && workspaceHasCppFile());
+function workspaceHasToolbarSource() {
+  return selectWorkspaceSources(_workspace?.entries).length > 0;
+}
+
+function updateCompileButtons() {
+  setButtonsEnabled(canCompileFromToolbar());
 }
 
 /** Update the filename shown in the status bar and sidebar. */
@@ -1144,7 +1161,7 @@ function clearWorkspaceMode() {
   _expandedWorkspaceDirectories.clear();
   const tree = document.getElementById('file-tree');
   if (tree) tree.innerHTML = '';
-  updateCompileButtons(false);
+  updateCompileButtons();
   stopWorkspaceSyncPolling();
 }
 
