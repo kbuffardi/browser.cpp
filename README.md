@@ -6,8 +6,8 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 |---------|--------|
 | Editor | Monaco Editor (the engine behind VS Code) |
 | Compiler | WASM-native Clang (runs entirely in the browser, offline) |
-| Terminal | xterm.js with a bash-like shell and live line input on Chromium and Firefox 153+ |
-| File access | File System Access API on Chromium, fallback open/save/folder flows on Firefox |
+| Terminal | xterm.js with a bash-like shell and live line input on Chromium; Firefox support is deprecated |
+| File access | File System Access API on Chromium; Firefox fallback flows are deprecated |
 | File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
 
@@ -239,7 +239,9 @@ Full feature parity is supported for desktop Chrome, Edge, Brave, and Chromium
 when the browser is based on Chromium 105 or newer. Latest stable is recommended
 for release testing.
 
-Firefox desktop can load the extension, but support remains experimental:
+Firefox desktop support is deprecated. Existing Firefox users may still load the
+extension while migrating to a Chromium-family browser, but Firefox is not a
+supported release or deployment target:
 
 - compile/run, Monaco, and extension-runtime flows are supported
 - Firefox 153+ uses WebAssembly JSPI for live, line-buffered `std::cin`,
@@ -249,8 +251,7 @@ Firefox desktop can load the extension, but support remains experimental:
   Chromium File System Access APIs
 - persistent folder write-back and directory-handle session restore may be
   reduced compared with Chromium-family builds
-- public AMO publication is manual; the protected release workflow generates the
-  Mozilla-signed unlisted XPI for self-distribution
+- Firefox deployment, AMO publication, and automated XPI signing are disabled
 
 Full parity requires:
 
@@ -290,7 +291,7 @@ npm run test:browser:brave
 npm run test:browser:chromium
 ```
 
-Run the Firefox packaging smoke separately:
+Firefox smoke validation is manual-only during the deprecation period:
 
 ```bash
 npm run test:browser:firefox
@@ -370,18 +371,17 @@ npm run package:release
 This writes:
 
 - `release/browser-cpp-chromium-family-v<version>.zip` for Chrome, Edge, Brave, and Chromium
-- `release/firefox-unlisted/*.xpi` after the protected release workflow signs the Firefox unlisted build
 - `release/SHA256SUMS-v<version>.txt`
 - `release/release-manifest-v<version>.json`
 
 The release manifest tracks the browser package matrix:
 
 - Chrome, Edge, Brave, and Chromium map to the same Chromium-family ZIP
-- Firefox has its own manifest, background entry, smoke-tested temporary package, and signing metadata
+- Firefox remains in release metadata as a deprecated, non-publishable target
 
 Chrome, Edge, Brave, and Chromium still share the same MV3 payload. Firefox is
-built from `dist-firefox/` as a separate payload because its manifest and
-background model differ from Chromium; release distribution uses the signed XPI.
+still built from `dist-firefox/` for transition testing because its manifest and
+background model differ from Chromium, but no Firefox artifact is deployed.
 
 Store submission notes should state:
 
@@ -402,16 +402,13 @@ Use `.github/workflows/release.yml` to publish one GitHub Release per
 4. Cleans `dist/` and `release/`
 5. Fetches the Clang toolchain
 6. Runs lint, build, release validation, and E2E checks
-7. Runs Firefox packaging smoke validation
-8. Produces one Chromium-family ZIP plus checksums and release metadata
-9. Signs the Firefox unlisted XPI with protected AMO credentials
-10. Creates or updates GitHub Release `v<version>` and uploads all files under `release/`
+7. Produces one Chromium-family ZIP plus checksums and release metadata
+8. Creates or updates GitHub Release `v<version>` and uploads the maintained artifacts under `release/`
 
 Use `workflow_dispatch` with `force=true` to rebuild and re-upload assets for an
 existing release. The workflow does **not** publish directly to browser stores.
 Store publication and Chromium distribution remain human-owned steps.
-Public AMO publication also remains human-owned even though the unlisted Firefox
-XPI is signed automatically during release.
+Firefox deployment is deprecated and is not part of this workflow.
 
 ### Human-owned deployment instructions
 
@@ -471,19 +468,13 @@ Store compatibility plus Brave-specific validation.
 There is no official Chromium extension store in this workflow; Chromium is a
 manual/GitHub-distributed channel.
 
-#### Firefox
+#### Firefox (deprecated)
 
-1. Run `npm run test:browser:firefox`.
-2. Review `amo/metadata/listed.json` and update it if the release changes
-   Firefox-facing product behavior or listing copy.
-3. For public AMO publication, build the Firefox package from `dist-firefox/`, then upload it with the metadata manually
-   through the owner-managed listing workflow.
-4. For self-distribution, verify that the protected release workflow produced a
-   signed artifact under `release/firefox-unlisted/`.
-5. Install the signed XPI in Firefox and complete the manual QA checklist
-   in `docs/firefox-stdin-runtime-acceptance.md`, paying special attention to
-   JSPI live stdin and the documented
-   workspace-persistence limitations.
+Firefox deployment is suspended. Do not publish to AMO, configure AMO signing
+secrets for normal releases, or distribute a Firefox XPI. If migration or
+removal work requires a final compatibility check, run
+`npm run test:browser:firefox` manually and use `dist-firefox/`; this is not a
+release gate.
 
 ### Manual release QA checklist
 

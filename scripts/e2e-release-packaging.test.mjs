@@ -34,6 +34,20 @@ const releaseWorkflowPath = path.join(
   'workflows',
   'release.yml'
 );
+const ciWorkflowPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '.github',
+  'workflows',
+  'ci.yml'
+);
+const releaseCandidateWorkflowPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '.github',
+  'workflows',
+  'release-on-version-change.yml'
+);
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -122,6 +136,17 @@ test('e2e: release workflow uploads files from nested release directories', () =
 
   assert.match(workflow, /find release -type f -print0/);
   assert.doesNotMatch(workflow, /gh release (?:upload|create)[\s\S]*release\/\*/);
+});
+
+test('e2e: deprecated Firefox is excluded from automated release workflows', () => {
+  const releaseWorkflow = fs.readFileSync(releaseWorkflowPath, 'utf8');
+  const releaseCandidateWorkflow = fs.readFileSync(releaseCandidateWorkflowPath, 'utf8');
+  const ciWorkflow = fs.readFileSync(ciWorkflowPath, 'utf8');
+
+  assert.doesNotMatch(releaseWorkflow, /AMO_JWT_|sign:firefox|test:browser:firefox/);
+  assert.doesNotMatch(releaseCandidateWorkflow, /test:browser:firefox/);
+  assert.match(ciWorkflow, /on:\n {2}workflow_dispatch:/);
+  assert.doesNotMatch(ciWorkflow, /pull_request:|test:browser:firefox/);
 });
 
 test('e2e: release version sync fails on source manifest mismatch', () => {
@@ -255,14 +280,15 @@ test('e2e: release packaging creates one Chromium-family artifact and target map
 
   const firefoxTarget = manifest.targets.find((target) => target.target === 'firefox');
   assert.equal(firefoxTarget.publishable, false);
+  assert.equal(firefoxTarget.deprecated, true);
   assert.equal(firefoxTarget.packageStrategy, 'distinct');
   assert.equal(firefoxTarget.fileName, null);
   assert.equal(
     firefoxTarget.blockReason,
-    'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.'
+    'Firefox support and deployment are deprecated; no release artifact is generated.'
   );
-  assert.equal(firefoxTarget.signing.listed, 'manual-owner-submission');
-  assert.equal(firefoxTarget.signing.unlisted, 'required-release-artifact');
+  assert.equal(firefoxTarget.signing.listed, 'deprecated');
+  assert.equal(firefoxTarget.signing.unlisted, 'deprecated');
 
   const chromiumTargets = ['chrome', 'edge', 'brave', 'chromium'];
   for (const targetKey of chromiumTargets) {

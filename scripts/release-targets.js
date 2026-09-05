@@ -24,18 +24,19 @@ const TARGETS = Object.freeze([
   {
     key: 'firefox',
     label: 'Firefox',
-    channel: 'Firefox Add-ons / signed XPI',
+    channel: 'Deprecated Firefox support',
     packageStrategy: 'distinct',
     artifactKey: null,
     payloadGroup: 'firefox-webext',
     publishable: false,
-    blockReason: 'Firefox unsigned ZIP generation is disabled; use the signed unlisted XPI.',
+    deprecated: true,
+    blockReason: 'Firefox support and deployment are deprecated; no release artifact is generated.',
     signing: {
-      listed: 'manual-owner-submission',
-      unlisted: 'required-release-artifact',
+      listed: 'deprecated',
+      unlisted: 'deprecated',
     },
     notes:
-      'Firefox uses a browser-specific manifest, background script entry, and a separate packaging/signing flow.',
+      'Firefox code and local validation remain temporarily for migration and possible future removal.',
   },
   {
     key: 'brave',
