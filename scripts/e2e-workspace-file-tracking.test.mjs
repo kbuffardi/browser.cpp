@@ -1107,6 +1107,48 @@ test('e2e: opening a folder keeps the old Explorer tree visible while it indexes
   assert.deepEqual(renderedTreePaths(ctx.document), ['new.cpp']);
 });
 
+test('e2e: Explorer preview keeps folders collapsed and shows subtree progress while scanning', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace({
+    name: 'old-project',
+    entries: [{ path: 'old.cpp', kind: 'file' }],
+  }, [], null);
+
+  ctx.controller.setExplorerLoading(true);
+  ctx.controller.setExplorerScanProgress({
+    workspace: {
+      name: 'new-project',
+      entries: [{ path: 'src', kind: 'directory' }],
+    },
+    loadingDirectoryPaths: ['src'],
+  });
+
+  assert.deepEqual(renderedTreePaths(ctx.document), ['src']);
+  let src = renderedTreeItem(ctx.document, 'src');
+  assert.equal(src.getAttribute('aria-expanded'), 'false');
+  assert.equal(src.getAttribute('aria-busy'), 'true');
+  assert.ok(src.children.some((child) => child.className.includes('workspace-folder-progress')));
+
+  ctx.controller.setExplorerScanProgress({
+    workspace: {
+      name: 'new-project',
+      entries: [
+        { path: 'src', kind: 'directory' },
+        { path: 'src/lib', kind: 'directory' },
+      ],
+    },
+    loadingDirectoryPaths: ['src', 'src/lib'],
+  });
+  src = renderedTreeItem(ctx.document, 'src');
+  src.click();
+  await tick();
+
+  const lib = renderedTreeItem(ctx.document, 'src/lib');
+  assert.ok(lib, 'expanding during scan reveals the next depth');
+  assert.equal(lib.getAttribute('aria-busy'), 'true');
+  assert.ok(lib.children.some((child) => child.className.includes('workspace-folder-progress')));
+});
+
 test('e2e: refresh keeps expanded directories but prunes directories that no longer exist', async () => {
   const ctx = await setupToolbar();
   const initial = {

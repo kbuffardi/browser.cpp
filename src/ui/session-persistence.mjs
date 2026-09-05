@@ -150,6 +150,7 @@ export function createSessionPersistence({
   confirmReload = () => true,
   startNewProject = () => {},
   setExplorerLoading = () => {},
+  setExplorerScanProgress = () => {},
 }) {
   function filterTabContentSnapshot(session) {
     const entries = session?.openTabContentsByPath;
@@ -219,6 +220,7 @@ export function createSessionPersistence({
           try {
             workspace = await fsAPI.openFolderFromHandle(handle, {
               onScanStart: () => setExplorerLoading(true),
+              onScanProgress: (update) => setExplorerScanProgress(update),
             });
           } finally {
             setExplorerLoading(false);

@@ -42,6 +42,10 @@ let _workspaceSyncQueued = false;
 let _workspaceSyncEventsBound = false;
 let _lastCompatibilityMessage = null;
 let _explorerLoading = false;
+let _explorerScanPreview = null;
+let _loadingDirectoryPaths = new Set();
+let _explorerScanCompletedDepth = null;
+let _explorerScanPendingDirectoryCount = 0;
 
 // ── Multi-tab state ───────────────────────────────────────────────────────────
 // Map<path, { content: string, dirty: boolean }>
@@ -108,6 +112,7 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSessio
     getLastRunBinaryBytes,
     setRunPreparing,
     setExplorerLoading,
+    setExplorerScanProgress,
   };
 }
 
@@ -1003,11 +1008,20 @@ function renderExplorerLoading(tree) {
   text.className = 'explorer-loading-text';
   text.setAttribute('role', 'status');
   text.setAttribute('aria-live', 'polite');
-  text.textContent = 'Loading folder…';
+  text.textContent = explorerLoadingMessage();
 
   row.appendChild(spinner);
   row.appendChild(text);
   tree.appendChild(row);
+}
+
+function explorerLoadingMessage() {
+  if (_explorerScanCompletedDepth == null) return 'Loading folder…';
+  const level = _explorerScanCompletedDepth === 0 ? 'root' : `depth ${_explorerScanCompletedDepth}`;
+  const count = _explorerScanPendingDirectoryCount;
+  return count
+    ? `Loaded ${level}; scanning ${count} folder${count === 1 ? '' : 's'}…`
+    : `Loaded ${level}; finalizing folder…`;
 }
 
 function buildWorkspaceChildrenMap(entries) {
@@ -1041,7 +1055,7 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
     li.setAttribute('aria-level', String(depth + 1));
     li.dataset.path = entry.path;
     li.style.paddingLeft = `${16 + depth * 14}px`;
-    if (_explorerLoading) {
+    if (_explorerLoading && entry.kind === 'file') {
       li.setAttribute('aria-disabled', 'true');
       li.classList.add('workspace-loading');
     }
@@ -1049,16 +1063,26 @@ function renderWorkspaceChildren(tree, childrenByParent, parentPath, depth) {
     if (entry.kind === 'directory') {
       const isExpanded = _expandedWorkspaceDirectories.has(entry.path);
       li.setAttribute('aria-expanded', String(isExpanded));
-      li.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
+      const label = document.createElement('span');
+      label.className = 'workspace-folder-label';
+      label.textContent = `${isExpanded ? '📂' : '📁'} ${workspaceBaseName(entry.path)}`;
+      li.appendChild(label);
+      if (_explorerLoading && _loadingDirectoryPaths.has(entry.path)) {
+        li.setAttribute('aria-busy', 'true');
+        li.setAttribute('aria-label', `${workspaceBaseName(entry.path)}, loading subfolders`);
+        const spinner = document.createElement('span');
+        spinner.className = 'explorer-loading-spinner workspace-folder-progress';
+        spinner.setAttribute('aria-hidden', 'true');
+        li.appendChild(spinner);
+      }
       li.addEventListener('click', (event) => {
-        if (_explorerLoading) return;
         event.stopPropagation();
         if (_expandedWorkspaceDirectories.has(entry.path)) {
           _expandedWorkspaceDirectories.delete(entry.path);
         } else {
           _expandedWorkspaceDirectories.add(entry.path);
         }
-        renderWorkspaceSidebar(_workspace);
+        renderWorkspaceSidebar(_explorerScanPreview ?? _workspace);
       });
       tree.appendChild(li);
 
@@ -1244,6 +1268,7 @@ async function openFolderWorkspace() {
   try {
     const workspace = await _fsAPI.openFolder({
       onScanStart: () => setExplorerLoading(true),
+      onScanProgress: (update) => setExplorerScanProgress(update),
     });
     if (!workspace) return false;
     clearTransientProjectState();
@@ -1270,9 +1295,27 @@ async function actionOpen() {
 
 function setExplorerLoading(loading) {
   _explorerLoading = Boolean(loading);
+  if (!_explorerLoading) {
+    _explorerScanPreview = null;
+    _loadingDirectoryPaths = new Set();
+    _explorerScanCompletedDepth = null;
+    _explorerScanPendingDirectoryCount = 0;
+  }
   document.getElementById('btn-new').disabled = _explorerLoading;
   document.getElementById('btn-open').disabled = _explorerLoading;
-  renderWorkspaceSidebar(_workspace);
+  renderWorkspaceSidebar(_explorerScanPreview ?? _workspace);
+}
+
+function setExplorerScanProgress(update) {
+  if (!_explorerLoading || !update?.workspace) return;
+  if (_explorerScanPreview?.name !== update.workspace.name) {
+    _expandedWorkspaceDirectories.clear();
+  }
+  _explorerScanPreview = update.workspace;
+  _loadingDirectoryPaths = new Set(update.loadingDirectoryPaths || []);
+  _explorerScanCompletedDepth = update.completedDepth ?? null;
+  _explorerScanPendingDirectoryCount = _loadingDirectoryPaths.size;
+  renderWorkspaceSidebar(_explorerScanPreview);
 }
 
 // ── Session persistence helpers ───────────────────────────────────────────────

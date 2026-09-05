@@ -199,14 +199,26 @@ export function getWorkspaceSnapshot() {
  * @param {FileSystemDirectoryHandle} handle
  * @returns {Promise<{name:string, entries:Array, git:object}>}
  */
-export async function openFolderFromHandle(handle, { onScanStart = null } = {}) {
+export async function openFolderFromHandle(handle, {
+  onScanStart = null,
+  onScanProgress = null,
+} = {}) {
   const requestId = ++workspaceScanRequestId;
   onScanStart?.();
 
   // Allow a loading state rendered by the caller to paint before traversing a
   // potentially large directory tree.
   await yieldToBrowser();
-  const scanned = await scanDirectoryHandle(handle);
+  const scanned = await scanDirectoryHandle(handle, {
+    onDepthComplete(update) {
+      if (requestId !== workspaceScanRequestId) return;
+      onScanProgress?.({
+        workspace: { name: handle.name, entries: update.entries },
+        completedDepth: update.completedDepth,
+        loadingDirectoryPaths: update.loadingDirectoryPaths,
+      });
+    },
+  });
   const git = await detectGitMetadata(scanned.entries, scanned.files);
 
   // A newer open request owns the workspace. Ignore stale scan completions.
@@ -808,36 +820,69 @@ function yieldToBrowser() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function scanDirectoryHandle(dirHandle, prefix = '', scan = null) {
-  const result = scan || {
+async function scanDirectoryHandle(dirHandle, { onDepthComplete = null } = {}) {
+  const result = {
     entries: [],
     files: new Map(),
     fingerprints: new Map(),
     scannedEntries: 0,
   };
+  let directoriesAtDepth = [{ handle: dirHandle, prefix: '' }];
+  let completedDepth = 0;
 
-  for await (const [name, entry] of dirHandle.entries()) {
-    const relPath = prefix ? `${prefix}/${name}` : name;
-    if (entry.kind === 'directory') {
-      result.entries.push({ path: relPath, kind: 'directory' });
-      await scanDirectoryHandle(entry, relPath, result);
-    } else if (entry.kind === 'file') {
-      result.entries.push({ path: relPath, kind: 'file' });
-      result.files.set(relPath, { handle: entry });
-      const fingerprint = await fingerprintForFileHandle(entry);
-      if (fingerprint) result.fingerprints.set(relPath, fingerprint);
+  while (directoriesAtDepth.length) {
+    const nextDepth = [];
+    for (const directory of directoriesAtDepth) {
+      for await (const [name, entry] of directory.handle.entries()) {
+        const relPath = directory.prefix ? `${directory.prefix}/${name}` : name;
+        if (entry.kind === 'directory') {
+          result.entries.push({ path: relPath, kind: 'directory' });
+          nextDepth.push({ handle: entry, prefix: relPath });
+        } else if (entry.kind === 'file') {
+          result.entries.push({ path: relPath, kind: 'file' });
+          result.files.set(relPath, { handle: entry });
+          const fingerprint = await fingerprintForFileHandle(entry);
+          if (fingerprint) result.fingerprints.set(relPath, fingerprint);
+        }
+
+        result.scannedEntries += 1;
+        if (result.scannedEntries % SCAN_YIELD_INTERVAL === 0) {
+          await yieldToBrowser();
+        }
+      }
     }
 
-    result.scannedEntries += 1;
-    if (result.scannedEntries % SCAN_YIELD_INTERVAL === 0) {
-      await yieldToBrowser();
-    }
-  }
-
-  if (!scan) {
     result.entries.sort((a, b) => a.path.localeCompare(b.path));
+    onDepthComplete?.({
+      entries: [...result.entries],
+      completedDepth,
+      loadingDirectoryPaths: loadingDirectoryPaths(result.entries, nextDepth),
+    });
+    directoriesAtDepth = nextDepth;
+    completedDepth += 1;
   }
   return result;
+}
+
+function loadingDirectoryPaths(entries, queuedDirectories) {
+  const indexedDirectories = new Set(
+    entries.filter((entry) => entry.kind === 'directory').map((entry) => entry.path)
+  );
+  const loading = new Set();
+
+  for (const { prefix } of queuedDirectories) {
+    let path = prefix;
+    while (path) {
+      if (indexedDirectories.has(path)) loading.add(path);
+      path = parentWorkspacePath(path);
+    }
+  }
+  return [...loading].sort((a, b) => a.localeCompare(b));
+}
+
+function parentWorkspacePath(path) {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? '' : path.slice(0, index);
 }
 
 function replaceWorkspaceIndex({ entries, files, fingerprints }) {
