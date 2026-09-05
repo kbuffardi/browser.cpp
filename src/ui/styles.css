@@ -263,6 +263,16 @@ select:focus {
   animation: explorer-loading-spin 0.8s linear infinite;
 }
 
+.workspace-folder-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-folder-progress {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
 @keyframes explorer-loading-spin {
   to { transform: rotate(360deg); }
 }

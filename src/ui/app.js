@@ -115,6 +115,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     confirmReload: promptReloadPreviousProject,
     startNewProject: resetToNewProject,
     setExplorerLoading: (loading) => toolbarController?.setExplorerLoading(loading),
+    setExplorerScanProgress: (update) => toolbarController?.setExplorerScanProgress(update),
   });
   const persistenceGate = createPersistenceGate(persistSession);
   toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
