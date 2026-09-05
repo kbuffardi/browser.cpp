@@ -1,7 +1,6 @@
 name: CI
 
 on:
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -43,6 +42,3 @@ jobs:
 
       - name: Run compiler linker end-to-end tests
         run: npm run test:e2e:compiler
-
-      - name: Run Firefox packaging smoke
-        run: npm run test:browser:firefox

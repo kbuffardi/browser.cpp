@@ -293,6 +293,7 @@ function createReleaseArtifacts(options = {}) {
       artifactKey: target.artifactKey,
       payloadGroup: target.payloadGroup,
       publishable: target.publishable,
+      deprecated: target.deprecated || false,
       blockReason: target.blockReason || null,
       notes: target.notes,
       signing: target.signing || null,

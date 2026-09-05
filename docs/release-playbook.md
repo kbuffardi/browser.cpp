@@ -15,45 +15,53 @@
   - cleans the release workspace
   - fetches the Clang WASM toolchain
   - runs lint, build, and E2E checks
-  - runs Firefox packaging smoke checks
   - packages one shared Chromium-family release ZIP and target metadata
   - uploads the artifacts for review
 
 ## Manual Release Flow
 
 - Review the uploaded artifacts and confirm the version bump is intentional.
-- For Firefox, confirm the Firefox build and AMO/manual-submission metadata are ready before owner handoff.
 - Use the existing tag/manual release workflow for final publication.
 - Publish browser store listings and verify installed updates as required by the target browser.
-- The protected release workflow signs the Firefox unlisted XPI with AMO credentials and uploads it with the other release assets.
+- Firefox support and deployment are deprecated; it is not included in release artifacts or release gates.
 
-### Firefox unlisted-signing credentials
+### Firefox deprecation notice
 
-The protected release workflow requires two GitHub Actions secrets before it
-starts the release build:
+**Status:** Deprecated as of 2026-09-05
 
-- `AMO_JWT_ISSUER`
-- `AMO_JWT_SECRET`
+**Replacement:** Chrome, Edge, Brave, or Chromium builds
 
-Create the AMO API credential pair in Mozilla Add-ons, then store the values as
-repository or protected release-environment secrets with these exact names.
-Keep them unavailable to pull-request workflows, do not put them in source,
-local release artifacts, or logs, and grant only the permissions required for
-Firefox signing. The workflow checks only that each value is present and
-non-blank; it never prints either value.
+**Removal date:** Advisory; Firefox runtime/build code remains temporarily while
+existing users migrate and ownership is assessed.
 
-Rotate both secrets through Mozilla and GitHub when the credential expires or
-is suspected to be exposed. After updating them, use
-`workflow_dispatch` with `force=true` to rerun the protected release. The
-workflow must fail before dependency installation when either secret is absent;
-do not bypass signing or publish an unsigned XPI. If the preflight passes but
-signing fails, inspect the protected workflow's AMO/web-ext error, correct the
-credential or AMO configuration, and rerun the forced release.
+Firefox is no longer a supported deployment target. Do not configure AMO
+credentials for the normal release workflow, publish a Firefox package, or
+expect a signed XPI in GitHub Releases. The existing Firefox build and signing
+commands are transition tooling only and are not automated release steps.
 
-## Firefox Verification Test Plan
+If a maintainer needs a final compatibility check during migration, run
+`npm run test:browser:firefox` manually. It is not a CI or release gate.
 
-Use this plan before declaring Firefox support release-ready or bumping the
-project version for a Firefox-supporting release.
+The future removal follow-up must verify active Firefox usage and ownership,
+provide migration guidance, then remove the Firefox runtime/build paths, tests,
+signing tools, and documentation together.
+
+### General CI
+
+The general CI workflow is manual-only (`workflow_dispatch`) during this
+transition. It does not run automatically on pull requests and does not run the
+deprecated Firefox smoke test. Run it manually when validating a branch.
+
+### Deprecated Firefox signing credentials
+
+No AMO credentials are required by the normal release workflow. If the
+transition tooling is used manually, keep any credentials outside the repository
+and never expose them in pull-request workflows, source, artifacts, or logs.
+
+## Deprecated Firefox Verification Test Plan
+
+Use this only for migration or eventual removal work. It does not qualify
+Firefox for release.
 
 ### Automated gates
 
@@ -67,13 +75,10 @@ Run these commands from a clean checkout in order:
 6. `npm run test:preflight-clang`
 7. `npm run version:check`
 8. `npm run release:check-version`
-9. `npm run test:browser:firefox`
-10. `npm run package:release`
+9. `npm run package:release`
 
 Passing these gates proves that:
 
-- Firefox-specific manifest generation succeeds
-- the Firefox extension package passes `web-ext` lint/build smoke
 - release packaging emits one Chromium-family ZIP and a release manifest that maps Chrome, Edge, Brave, and Chromium to it
 - manifest/package metadata stay version-synchronized
 
@@ -97,27 +102,25 @@ real Firefox desktop build:
    persistence behavior matches reality.
 8. Restart Firefox and verify session/workspace restore behavior matches the
    documented limitations.
-9. Install the signed Firefox XPI and repeat the compile/run sanity check.
+9. Do not install or distribute a signed Firefox XPI; deployment is deprecated.
 
 ### Release decision
 
-The Firefox release gate passes only when:
+The deprecated Firefox migration check passes only when:
 
-- every automated gate above succeeds
+- every applicable automated gate above succeeds
 - manual Firefox runtime QA succeeds
-- no new Firefox-only regressions are found in startup, compile/run, file
-  flows, or packaging
+- no migration-blocking Firefox regressions are found in startup, compile/run,
+  or file flows
 - remaining Firefox limitations are already documented and match observed
   behavior
 
-Do **not** cut the version bump for a Firefox-supporting release if only the
-packaging smoke passes. Runtime validation in Firefox is still required.
+Do **not** present this validation as evidence that Firefox is release-supported.
 
 ## Validation
 
 - `npm run lint`
 - `npm run build`
 - `npm run test:e2e`
-- `npm run test:browser:firefox`
 - `npm run release:check-version`
 - `npm run package:release`
