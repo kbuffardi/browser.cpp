@@ -1,0 +1,12 @@
+## AI Agent Reasoning
+
+### Context
+Issue #90 removes the misleading Hello World document shown on first launch.
+
+### Decisions Made
+- Represent a fresh project as no tabs and an empty editor, rather than an unsaved synthetic document.
+- Keep Open as a folder picker and do not auto-open README after selection.
+- Keep New File folder-first and retain the selected folder if filename entry is cancelled.
+
+### Trade-offs
+- Saving from the empty state now explicitly creates and opens a real workspace file, preserving the former default-tab save workflow without showing a starter source.
