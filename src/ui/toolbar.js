@@ -53,10 +53,6 @@ const _openTabs = new Map();
 let _activeTabPath = null;
 /** When true, programmatic setValue calls do not trigger markDirty(true). */
 let _loadingFile = false;
-// Internal in-memory document identifier; never a workspace-relative path.
-const UNSAVED_TAB_PATH = 'untitled:default';
-const UNSAVED_TAB_LABEL = 'unsaved file';
-
 // ── Session persistence callback ──────────────────────────────────────────────
 /** Optional callback supplied by app.js to persist the session after state changes. */
 let _persistSession = null;
@@ -613,14 +609,23 @@ async function reloadOverwrittenTabs(changedPaths) {
 }
 
 /**
- * Load the default new-project state (no workspace, a single unsaved tab with
- * `editorAPI.DEFAULT_SOURCE`). Unlike {@link actionNew} this skips the
+ * Load the empty new-project state. Unlike {@link actionNew} this skips the
  * unsaved-changes confirmation so it can drive the relaunch "Start new project"
  * path, where the prior session is being intentionally abandoned.
  */
 export function resetToNewProject() {
   clearTransientProjectState();
-  restoreNoWorkspaceSource(_editorAPI.DEFAULT_SOURCE ?? '');
+  closeAllTabs();
+  _fsAPI.newFile();
+  clearWorkspaceMode();
+  _terminalAPI.resetTerminalSession?.(null);
+  _fileName = '';
+  _loadingFile = true;
+  _editorAPI.setValue('');
+  _editorAPI.clearDiagnostics();
+  _loadingFile = false;
+  const statusFile = document.getElementById('status-file');
+  if (statusFile) statusFile.textContent = '';
 }
 
 function clearTransientProjectState() {
@@ -628,16 +633,6 @@ function clearTransientProjectState() {
   _runPreparationActive = false;
   _lastRunBinaryBytes = null;
   _editorAPI.clearDiagnostics?.();
-}
-
-/** Restore a source-only session into the same no-workspace tab state as a new project. */
-export function restoreNoWorkspaceSource(source) {
-  closeAllTabs();
-  _fsAPI.newFile();
-  clearWorkspaceMode();
-  _terminalAPI.resetTerminalSession?.(null);
-  openTabForFile(UNSAVED_TAB_PATH, source);
-  markDirty(false);
 }
 
 async function actionSave() {
@@ -679,19 +674,18 @@ async function saveUntitledDocument() {
 
   setWorkspaceMode(result.snapshot ?? workspace);
   applyWorkspaceSnapshot(result.snapshot ?? workspace);
-  renameActiveTabPath(result.path);
+  openTabForFile(result.path, _editorAPI.getValue());
   markDirty(false);
   _persistSession?.();
 }
 
 async function actionSaveAs() {
   try {
-    if (!_workspace && _activeTabPath === UNSAVED_TAB_PATH) {
+    if (!_workspace && !_activeTabPath) {
       await saveUntitledDocument();
       return;
     }
-    const suggestedName = _activeTabPath === UNSAVED_TAB_PATH ? 'main.cpp' : _fileName;
-    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), suggestedName);
+    const name = await _fsAPI.saveFileAs(_editorAPI.getValue(), _fileName || 'main.cpp');
     if (name) {
       renameActiveTabPath(name);
       markDirty(false);
@@ -843,7 +837,7 @@ function inferLanguage(path) {
 }
 
 function tabDisplayName(path) {
-  return path === UNSAVED_TAB_PATH ? UNSAVED_TAB_LABEL : workspaceBaseName(path) || path;
+  return workspaceBaseName(path) || path;
 }
 
 /** Returns true if any open tab has unsaved changes. */
@@ -1114,19 +1108,6 @@ function highlightWorkspaceFile(path) {
   if (active) active.classList.add('active');
 }
 
-async function openWorkspaceInitialFile(workspace) {
-  const file = pickInitialWorkspaceFile(workspace.entries);
-  if (!file) {
-    // No README.md at root – clear editor but open no tab automatically
-    _loadingFile = true;
-    _editorAPI.setValue('');
-    _editorAPI.clearDiagnostics();
-    _loadingFile = false;
-    return;
-  }
-  await openWorkspaceFile(file.path);
-}
-
 async function openWorkspaceFile(path) {
   if (_openTabs.has(path)) {
     switchToTab(path);
@@ -1158,13 +1139,6 @@ async function openWorkspaceFile(path) {
   }
   if (content == null) return;
   openTabForFile(path, content);
-}
-
-function pickInitialWorkspaceFile(entries) {
-  // Only auto-open README.md if it exists at the workspace root
-  return entries.find(
-    (entry) => entry.kind === 'file' && entry.path.toLowerCase() === 'readme.md'
-  ) || null;
 }
 
 function showOpenError(err) {
@@ -1274,7 +1248,13 @@ async function openFolderWorkspace() {
     clearTransientProjectState();
     closeAllTabs();
     setWorkspaceMode(workspace);
-    await openWorkspaceInitialFile(workspace);
+    _fileName = '';
+    _loadingFile = true;
+    _editorAPI.setValue('');
+    _editorAPI.clearDiagnostics();
+    _loadingFile = false;
+    const statusFile = document.getElementById('status-file');
+    if (statusFile) statusFile.textContent = '';
     renderWorkspaceSidebar(workspace);
     _persistSession?.(); // persist immediately so the new workspace survives unload
     return true;

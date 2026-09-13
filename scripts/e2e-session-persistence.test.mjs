@@ -542,7 +542,7 @@ test('e2e: formats the installed extension version from either extension namespa
   assert.equal(getExtensionVersionLabel({}), '');
 });
 
-test('e2e: default no-workspace source uses an untitled tab that cannot compile', async () => {
+test('e2e: fresh no-workspace state has no open file and cannot compile', async () => {
   const originalDocument = global.document;
   global.document = createFakeDocument();
   try {
@@ -565,9 +565,11 @@ test('e2e: default no-workspace source uses an untitled tab that cannot compile'
 
     resetToNewProject();
 
-    assert.deepEqual(getToolbarOpenTabPaths(), ['untitled:default']);
-    assert.equal(getToolbarActiveTabPath(), 'untitled:default');
-    assert.equal(global.document.getElementById('tab-bar').children[0].children[0].textContent, 'unsaved file');
+    assert.deepEqual(getToolbarOpenTabPaths(), []);
+    assert.equal(getToolbarActiveTabPath(), null);
+    assert.equal(editorValue, '');
+    assert.equal(global.document.getElementById('tab-bar').children.length, 0);
+    assert.equal(global.document.getElementById('status-file').textContent, '');
 
     await assert.rejects(() => assembleCompilePayload({}), /Open a folder or save a file/);
   } finally {

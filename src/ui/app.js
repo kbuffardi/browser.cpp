@@ -26,7 +26,6 @@ import {
   getOpenTabsSnapshot,
   restoreWorkspace,
   resetToNewProject,
-  restoreNoWorkspaceSource,
   assembleCompilePayload,
   applyWorkspaceSnapshot,
 } from './toolbar.js';
@@ -111,7 +110,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     getActiveTabPath,
     getOpenTabsSnapshot,
     restoreWorkspace,
-    restoreNoWorkspaceSource,
     confirmReload: promptReloadPreviousProject,
     startNewProject: resetToNewProject,
     setExplorerLoading: (loading) => toolbarController?.setExplorerLoading(loading),
