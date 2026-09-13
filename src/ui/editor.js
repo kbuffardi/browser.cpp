@@ -28,15 +28,6 @@ self.MonacoEnvironment = {
   },
 };
 
-// ── Default C++ starter source ────────────────────────────────────────────────
-export const DEFAULT_SOURCE = `#include <iostream>
-
-int main() {
-    std::cout << "Hello, World!" << std::endl;
-    return 0;
-}
-`;
-
 // ── Internal state ────────────────────────────────────────────────────────────
 let _editor = null;
 
@@ -78,7 +69,7 @@ export function createEditor(container) {
   });
 
   _editor = monaco.editor.create(container, {
-    value: DEFAULT_SOURCE,
+    value: '',
     language: 'cpp',
     theme: 'browser-cpp-dark',
     fontSize: 14,

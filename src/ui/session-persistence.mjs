@@ -178,8 +178,7 @@ export function createSessionPersistence({
     if (typeof fsAPI.resetWorkspace === 'function') fsAPI.resetWorkspace();
   }
 
-  // Abandon the saved session and load the default new-project state
-  // (no workspace, a `main.cpp` tab with editorAPI.DEFAULT_SOURCE).
+  // Abandon the saved session and return to the empty no-workspace state.
   async function abandonForNewProject() {
     await clearPersistedSession();
     await startNewProject();

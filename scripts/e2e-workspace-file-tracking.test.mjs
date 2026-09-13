@@ -954,7 +954,7 @@ test('e2e: toolbar compilation requires a ready compiler and root-level C/C++ so
 
 test('e2e: New file with no workspace opens the folder picker; cancel leaves state unchanged', async () => {
   const ctx = await setupToolbar({ openFolderResult: null });
-  ctx.toolbar.resetToNewProject(); // no workspace, single main.cpp tab
+  ctx.toolbar.resetToNewProject();
 
   ctx.document.getElementById('btn-new').click();
   await tick();
@@ -962,6 +962,41 @@ test('e2e: New file with no workspace opens the folder picker; cancel leaves sta
   assert.equal(ctx.fsCalls.openFolder, 1, 'folder picker invoked');
   assert.equal(inlineInput(ctx.document), null, 'no inline input after cancel');
   assert.equal(ctx.fsCalls.create.length, 0, 'no file created');
+  assert.deepEqual(ctx.toolbar.getOpenTabPaths(), [], 'no synthetic tab created');
+});
+
+test('e2e: Open Folder renders README in Explorer without opening it', async () => {
+  const ctx = await setupToolbar({
+    openFolderResult: { name: 'project', entries: [{ path: 'README.md', kind: 'file' }] },
+  });
+  ctx.toolbar.resetToNewProject();
+
+  ctx.document.getElementById('btn-open').click();
+  await tick();
+
+  assert.deepEqual(renderedTreePaths(ctx.document), ['README.md']);
+  assert.deepEqual(ctx.toolbar.getOpenTabPaths(), []);
+  assert.equal(ctx.toolbar.getActiveTabPath(), null);
+  assert.deepEqual(ctx.editorCalls.setValue.slice(-1), ['']);
+});
+
+test('e2e: saving from the empty state creates and opens a workspace file', async () => {
+  const originalPrompt = global.prompt;
+  global.prompt = () => 'main.cpp';
+  try {
+    const ctx = await setupToolbar({ openFolderResult: { name: 'project', entries: [] } });
+    ctx.toolbar.resetToNewProject();
+
+    ctx.document.getElementById('btn-save').click();
+    await tick();
+    await tick();
+
+    assert.deepEqual(ctx.fsCalls.create.map((file) => file.path), ['main.cpp']);
+    assert.deepEqual(ctx.toolbar.getOpenTabPaths(), ['main.cpp']);
+    assert.equal(ctx.toolbar.getActiveTabPath(), 'main.cpp');
+  } finally {
+    global.prompt = originalPrompt;
+  }
 });
 
 test('e2e: New file with a workspace shows an inline Explorer naming input', async () => {
