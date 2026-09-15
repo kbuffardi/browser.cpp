@@ -1,0 +1,16 @@
+## AI Agent Reasoning
+
+### Context
+Issue #92 crashes Chrome when a tab with an opened directory is closed. Disabling IndexedDB open in DevTools prevents the crash.
+
+### Decisions Made
+- Split serializable state saves from directory-handle saves so normal session updates cannot serialize a live handle.
+- Keep handle persistence available only through an explicit workspace operation.
+- Capture the active editor value directly because unload persistence will be removed in the next increment.
+
+### Trade-offs
+- Retain the original persistSession alias temporarily so this intermediate commit remains compatible while call sites migrate.
+
+### References
+- Issue #92
+- Plan: specs/issue-92-indexeddb-unload-persistence-20260915.md
