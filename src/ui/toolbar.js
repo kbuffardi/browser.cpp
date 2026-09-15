@@ -1316,6 +1316,9 @@ export function getOpenTabsSnapshot() {
   for (const [path, tab] of _openTabs.entries()) {
     snapshot[path] = tab.content;
   }
+  if (_activeTabPath && _openTabs.has(_activeTabPath) && _editorAPI?.getValue) {
+    snapshot[_activeTabPath] = _editorAPI.getValue();
+  }
   return snapshot;
 }
 

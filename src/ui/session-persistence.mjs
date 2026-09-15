@@ -144,6 +144,11 @@ export function createSessionPersistence({
   getOpenTabPaths,
   getActiveTabPath,
   getOpenTabsSnapshot = () => null,
+  getWorkspaceSnapshot = () => (
+    typeof fsAPI.getWorkspaceSnapshot === 'function'
+      ? fsAPI.getWorkspaceSnapshot()
+      : null
+  ),
   restoreWorkspace,
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
@@ -274,34 +279,23 @@ export function createSessionPersistence({
     }
   }
 
-  async function persistSession() {
+  async function persistSessionState() {
     try {
       if (!storage) return;
 
-      const dirHandle = fsAPI.getDirectoryHandle();
-      if (dirHandle) {
-        try {
-          await handleStore.save(dirHandle);
-        } catch (err) {
-          // Keep persisting serializable workspace/tab state even if handle storage fails.
-          console.warn(
-            'Failed to persist workspace directory handle (workspace state will still be saved):',
-            err
-          );
-        }
+      const workspace = getWorkspaceSnapshot();
+      const hasWorkspace = Boolean(workspace || fsAPI.getDirectoryHandle?.());
+      if (hasWorkspace) {
         await storageSet(storage, {
           [STORAGE_KEY]: {
             openTabPaths: getOpenTabPaths(),
             activeTabPath: getActiveTabPath(),
             openTabContentsByPath: getOpenTabsSnapshot(),
-            workspace: typeof fsAPI.getWorkspaceSnapshot === 'function'
-              ? fsAPI.getWorkspaceSnapshot()
-              : null,
+            workspace,
             savedAt: Date.now(),
           },
         });
       } else {
-        await handleStore.clear();
         await storageSet(storage, { [STORAGE_KEY]: null });
       }
     } catch (err) {
@@ -309,7 +303,30 @@ export function createSessionPersistence({
     }
   }
 
-  return { restoreSession, persistSession };
+  async function persistWorkspaceSession() {
+    const dirHandle = fsAPI.getDirectoryHandle();
+    if (dirHandle) {
+      try {
+        await handleStore.save(dirHandle);
+      } catch (err) {
+        // Keep persisting serializable workspace/tab state even if handle storage fails.
+        console.warn(
+          'Failed to persist workspace directory handle (workspace state will still be saved):',
+          err
+        );
+      }
+    }
+    await persistSessionState();
+  }
+
+  return {
+    restoreSession,
+    persistSessionState,
+    persistWorkspaceSession,
+    clearPersistedSession,
+    // Keep the original API available while call sites migrate to explicit intent.
+    persistSession: persistWorkspaceSession,
+  };
 }
 
 export function createPersistenceGate(persistSession) {
