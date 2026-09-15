@@ -466,17 +466,11 @@ export function onRunStart({ stdinMode = 'none', stdinSessionId = null } = {}) {
  * CPU-bound WASM cannot observe stdin EOF, so the main thread terminates the
  * worker via _onStopRun after terminal state has been reset.
  *
- * @param {{ echoCtrlC?: boolean }} [options]
  * @returns {boolean} true when a running program was stopped
  */
-export function stopRun({ echoCtrlC = false } = {}) {
+export function stopRun() {
   if (!running) return false;
 
-  if (echoCtrlC) {
-    term?.write('^C' + CRLF);
-  } else {
-    term?.write(CRLF);
-  }
   inputBuffer = '';
   _clearSAB();
   setRunPreparationState(false);
@@ -486,7 +480,7 @@ export function stopRun({ echoCtrlC = false } = {}) {
   busy = false;
   runDone?.();
   runDone = null;
-  term?.write(`${C.yellow}Process interrupted.${C.reset}${CRLF}`);
+  clearScreen();
   writePrompt();
   _onStopRun?.();
   return true;
@@ -496,6 +490,7 @@ export function stopRun({ echoCtrlC = false } = {}) {
 
 /** Write stdout text from the running program. */
 export function writeStdout(text) {
+  if (!running) return;
   term?.write(text.replace(/\n/g, CRLF));
 }
 
@@ -531,6 +526,7 @@ export function onCompileResult({ success, diagnostics, outputPath }) {
  * @param {{ exitCode:number }} result
  */
 export function onRunResult({ exitCode }) {
+  if (!running && !preparingRun) return;
   const shouldRestorePrompt = running || preparingRun;
   if (exitCode !== 0) {
     term?.write(`${CRLF}${C.yellow}Process exited with code ${exitCode}.${C.reset}${CRLF}`);
@@ -609,7 +605,7 @@ function handleKey({ key, domEvent }) {
     if (activeStdinMode === 'interactive' || activeStdinMode === 'interactive-message') {
       handleStdinKey(key, domEvent);
     } else if (domEvent.ctrlKey && domEvent.key === 'c') {
-      stopRun({ echoCtrlC: true });
+      stopRun();
     }
     return;
   }
@@ -740,7 +736,7 @@ function handleStdinKey(key, domEvent) {
 
   // Ctrl+C – interrupt the running program
   if (domEvent.ctrlKey && code === 'c') {
-    stopRun({ echoCtrlC: true });
+    stopRun();
     return;
   }
 

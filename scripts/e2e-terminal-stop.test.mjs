@@ -149,20 +149,55 @@ test('e2e: prompt restoration follows newline-less program output on a new line'
   assert.match(ctx.writes.join(''), /program output\r\n.*browser\.cpp.*:~\$ /);
 });
 
-test('e2e: Ctrl+C while running stops the program once and restores the prompt', async () => {
+test('e2e: Ctrl+C while running resets to one pristine prompt', async () => {
   const ctx = setupTerminalHarness();
 
   assert.equal(await startRun(), true);
   onRunStart({ stdinMode: 'interactive' });
-  __handleTerminalKeyForTesting('', ctrlCEvent());
+  writeStdout('runaway output');
+  const writesBeforeStop = ctx.writes.length;
   __handleTerminalKeyForTesting('', ctrlCEvent());
 
   assert.equal(ctx.runCalls.length, 1);
   assert.deepEqual(ctx.stopCalls, ['stop']);
   assert.deepEqual(ctx.runStateChanges, [true, false]);
   assert.equal(__getTerminalStateForTesting().running, false);
-  assert.ok(ctx.writes.join('').includes('^C'));
-  assert.ok(ctx.writes.join('').includes('Process interrupted.'));
+  const resetWrites = ctx.writes.slice(writesBeforeStop).join('');
+  assert.ok(resetWrites.includes('browser.cpp'));
+  assert.equal(resetWrites.match(/browser\.cpp/g)?.length, 1);
+  assert.ok(!resetWrites.includes('^C'));
+  assert.ok(!resetWrites.includes('Process interrupted.'));
+  assert.equal(ctx.clearCalls.length, 1);
+});
+
+test('e2e: STOP discards stdout queued after a stopped run', async () => {
+  const ctx = setupTerminalHarness();
+
+  showInitialPrompt();
+  assert.equal(await startRun(), true);
+  onRunStart({ stdinMode: 'interactive' });
+  writeStdout('runaway output');
+  assert.equal(stopRun(), true);
+  const writesAfterStop = ctx.writes.length;
+
+  writeStdout('late output');
+
+  assert.equal(ctx.writes.length, writesAfterStop);
+  assert.ok(!ctx.writes.join('').includes('Process interrupted.'));
+});
+
+test('e2e: STOP ignores a late nonzero run result', async () => {
+  const ctx = setupTerminalHarness();
+
+  showInitialPrompt();
+  assert.equal(await startRun(), true);
+  onRunStart({ stdinMode: 'interactive' });
+  assert.equal(stopRun(), true);
+  const writesAfterStop = ctx.writes.length;
+
+  onRunResult({ exitCode: 1 });
+
+  assert.equal(ctx.writes.length, writesAfterStop);
 });
 
 test('e2e: stopRun is idempotent for repeated button presses during one run', async () => {
