@@ -56,6 +56,8 @@ let _loadingFile = false;
 // ── Session persistence callback ──────────────────────────────────────────────
 /** Optional callback supplied by app.js to persist the session after state changes. */
 let _persistSession = null;
+let _persistWorkspaceSession = null;
+let _schedulePersistSession = null;
 let _persistTimer = null;
 
 function describeRuntimeWritebackIssue(reason) {
@@ -75,6 +77,10 @@ function describeRuntimeWritebackIssue(reason) {
 
 /** Schedule a debounced session persist (e.g. after active-tab switches). */
 function schedulePersist() {
+  if (_schedulePersistSession) {
+    _schedulePersistSession();
+    return;
+  }
   if (!_persistSession) return;
   clearTimeout(_persistTimer);
   _persistTimer = setTimeout(() => _persistSession(), 300);
@@ -89,14 +95,24 @@ function schedulePersist() {
  * @param {object}  editorAPI      – module exports from editor.js
  * @param {object}  terminalAPI    – module exports from terminal.js
  * @param {object}  fsAPI          – module exports from filesystem.js
- * @param {Function} [persistSession] – optional callback to persist session state
+ * @param {Function|object} [persistence] – session persistence callbacks
  */
-export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistSession) {
+export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistence) {
   _worker      = null;
   _editorAPI   = editorAPI;
   _terminalAPI = terminalAPI;
   _fsAPI       = fsAPI;
-  _persistSession = persistSession ?? null;
+  clearTimeout(_persistTimer);
+  _persistTimer = null;
+  if (typeof persistence === 'function') {
+    _persistSession = persistence;
+    _persistWorkspaceSession = persistence;
+    _schedulePersistSession = null;
+  } else {
+    _persistSession = persistence?.persistState ?? null;
+    _persistWorkspaceSession = persistence?.persistWorkspace ?? _persistSession;
+    _schedulePersistSession = persistence?.scheduleState ?? null;
+  }
 
   bindButtons();
   bindKeyboardShortcuts();
@@ -676,7 +692,7 @@ async function saveUntitledDocument() {
   applyWorkspaceSnapshot(result.snapshot ?? workspace);
   openTabForFile(result.path, _editorAPI.getValue());
   markDirty(false);
-  _persistSession?.();
+  await _persistWorkspaceSession?.();
 }
 
 async function actionSaveAs() {
@@ -1130,7 +1146,7 @@ async function openWorkspaceFile(path) {
     if (!reconnectedWorkspace) return;
     setWorkspaceMode(reconnectedWorkspace);
     renderWorkspaceSidebar(reconnectedWorkspace);
-    _persistSession?.();
+    await _persistWorkspaceSession?.();
     try {
       content = await _fsAPI.readWorkspaceFile(path);
     } catch {
@@ -1256,7 +1272,7 @@ async function openFolderWorkspace() {
     const statusFile = document.getElementById('status-file');
     if (statusFile) statusFile.textContent = '';
     renderWorkspaceSidebar(workspace);
-    _persistSession?.(); // persist immediately so the new workspace survives unload
+    await _persistWorkspaceSession?.();
     return true;
   } finally {
     setExplorerLoading(false);
@@ -1320,6 +1336,11 @@ export function getOpenTabsSnapshot() {
     snapshot[_activeTabPath] = _editorAPI.getValue();
   }
   return snapshot;
+}
+
+/** Return the current serializable workspace snapshot, including fallback restores. */
+export function getWorkspaceSnapshot() {
+  return _workspace;
 }
 
 /**

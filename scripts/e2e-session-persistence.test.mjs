@@ -311,6 +311,78 @@ test('e2e: active tab snapshots include edits made without switching tabs', asyn
   }
 });
 
+test('e2e: persistence gate preserves workspace intent while restore is pending', async () => {
+  const events = [];
+  const gate = createPersistenceGate({
+    persistSessionState: async () => events.push('state'),
+    persistWorkspaceSession: async () => events.push('workspace'),
+  });
+
+  await gate.persistState();
+  await gate.persistWorkspace();
+  assert.deepEqual(events, []);
+
+  await gate.enable();
+
+  assert.deepEqual(events, ['workspace']);
+});
+
+test('e2e: scheduled state persistence coalesces rapid changes', async () => {
+  let stateSaves = 0;
+  const gate = createPersistenceGate({
+    persistSessionState: async () => { stateSaves += 1; },
+    persistWorkspaceSession: async () => {},
+  }, { debounceMs: 5 });
+  await gate.enable();
+
+  gate.scheduleState();
+  gate.scheduleState();
+  gate.scheduleState();
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.equal(stateSaves, 1);
+});
+
+test('e2e: opening a folder uses explicit workspace persistence', async () => {
+  const originalDocument = global.document;
+  global.document = createFakeDocument();
+  try {
+    const persistenceEvents = [];
+    initToolbar(
+      { onmessage: null, postMessage() {} },
+      {
+        getValue: () => '',
+        setValue: () => {},
+        clearDiagnostics: () => {},
+        setLanguage: () => {},
+      },
+      {
+        setWorkspace: () => {},
+        resetTerminalSession: () => {},
+        clearTerminal: () => {},
+      },
+      {
+        openFolder: async () => ({ name: 'empty', entries: [] }),
+      },
+      {
+        persistState: async () => persistenceEvents.push('state'),
+        persistWorkspace: async () => persistenceEvents.push('workspace'),
+        scheduleState: () => persistenceEvents.push('scheduled'),
+      }
+    );
+
+    global.document.getElementById('btn-open').click();
+    await waitFor(
+      () => persistenceEvents.length > 0,
+      'workspace persistence after folder open'
+    );
+
+    assert.deepEqual(persistenceEvents, ['workspace']);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
 test('e2e: does not fall back to read-only permission when readwrite is denied', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();
@@ -350,7 +422,7 @@ test('e2e: does not fall back to read-only permission when readwrite is denied',
     handleStore,
   });
 
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -412,7 +484,7 @@ test('e2e: prompts to reload and re-requests readwrite, restoring live workspace
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -485,7 +557,7 @@ test('e2e: choosing start-new abandons previous state and clears persisted sessi
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -559,7 +631,7 @@ test('e2e: reload chosen but browser denies permission still restores snapshot',
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -613,7 +685,7 @@ test('e2e: ignores legacy source-only snapshots when no workspace handle is avai
     handleStore,
   });
 
-  await firstSession.persistSession();
+  await firstSession.persistSessionState();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -721,7 +793,7 @@ test('e2e: startup gate prevents pre-restore persistence from wiping workspace s
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -742,8 +814,11 @@ test('e2e: startup gate prevents pre-restore persistence from wiping workspace s
     handleStore,
   });
 
-  const gate = createPersistenceGate(secondSession.persistSession);
-  await gate.persist(); // startup timer fires before restore; must be ignored
+  const gate = createPersistenceGate({
+    persistSessionState: secondSession.persistSessionState,
+    persistWorkspaceSession: secondSession.persistWorkspaceSession,
+  });
+  await gate.persistState(); // startup timer fires before restore; must be ignored
   await secondSession.restoreSession();
   await gate.enable();
 
@@ -785,7 +860,7 @@ test('e2e: restores workspace tabs across reopen with callback-style storage', a
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -847,7 +922,7 @@ test('e2e: relaunch requests readwrite permission before restoring workspace', a
     storage,
     handleStore,
   });
-  await firstSession.persistSession();
+  await firstSession.persistWorkspaceSession();
 
   const secondSession = createSessionPersistence({
     fsAPI: {
@@ -923,7 +998,10 @@ test('e2e: launch/open-files/close/relaunch restores explorer folder and tabs', 
     storage,
     handleStore,
   });
-  const launchOneGate = createPersistenceGate(launchOne.persistSession);
+  const launchOneGate = createPersistenceGate({
+    persistSessionState: launchOne.persistSessionState,
+    persistWorkspaceSession: launchOne.persistWorkspaceSession,
+  });
   const launchOneRestore = launchOne.restoreSession();
 
   // Simulate user flow before startup restore completes:
@@ -931,13 +1009,13 @@ test('e2e: launch/open-files/close/relaunch restores explorer folder and tabs', 
   launchOneState.directoryHandle = directoryHandle;
   launchOneState.openTabPaths = ['README.md'];
   launchOneState.activeTabPath = 'README.md';
-  await launchOneGate.persist(); // folder open + initial tab
+  await launchOneGate.persistWorkspace(); // folder open + initial tab
   launchOneState.openTabPaths = ['README.md', 'bitmap.h', 'bitmap.cpp', 'test_runner.sh'];
   launchOneState.activeTabPath = 'test_runner.sh';
-  await launchOneGate.persist(); // multiple file tabs open
+  await launchOneGate.persistState(); // multiple file tabs open
   launchOneState.openTabPaths = ['bitmap.h', 'bitmap.cpp', 'test_runner.sh'];
   launchOneState.activeTabPath = 'test_runner.sh';
-  await launchOneGate.persist(); // README closed
+  await launchOneGate.persistState(); // README closed
 
   // Closing and relaunching the extension tab:
   resolveGet();
@@ -1018,7 +1096,7 @@ test('e2e: restores explorer folder and tabs when handle reload is unavailable',
     warnings.push(args);
   };
   try {
-    await firstSession.persistSession();
+    await firstSession.persistWorkspaceSession();
   } finally {
     console.warn = originalWarn;
   }

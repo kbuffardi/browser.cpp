@@ -60,7 +60,7 @@ async function seedWorkspaceSession({ storage, handleStore, handle, snapshot, op
     storage,
     handleStore,
   });
-  await first.persistSession();
+  await first.persistWorkspaceSession();
 }
 
 test('e2e: reload choice re-requests readwrite and restores the live workspace', async () => {
@@ -232,7 +232,7 @@ test('e2e: after start-new, the next persist leaves the untitled state unpersist
   });
 
   await persistence.restoreSession();
-  await persistence.persistSession();
+  await persistence.persistSessionState();
 
   const saved = (await storage.get('browser_cpp_session')).browser_cpp_session;
   assert.equal(saved, null, 'the untitled buffer is not persisted');
@@ -306,7 +306,7 @@ test('e2e: untitled source is neither persisted nor restored', async () => {
     storage,
     handleStore,
   });
-  await first.persistSession();
+  await first.persistSessionState();
   assert.equal((await storage.get('browser_cpp_session')).browser_cpp_session, null);
 
   let restoredSource = null;

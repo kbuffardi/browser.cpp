@@ -324,27 +324,65 @@ export function createSessionPersistence({
     persistSessionState,
     persistWorkspaceSession,
     clearPersistedSession,
-    // Keep the original API available while call sites migrate to explicit intent.
-    persistSession: persistWorkspaceSession,
   };
 }
 
-export function createPersistenceGate(persistSession) {
+export function createPersistenceGate(persistence, { debounceMs = 300 } = {}) {
+  const { persistSessionState, persistWorkspaceSession } = persistence;
   let enabled = false;
-  let pending = false;
+  let pendingIntent = null;
+  let stateTimer = null;
+
+  function queueIntent(intent) {
+    if (intent === 'workspace' || pendingIntent === null) pendingIntent = intent;
+  }
+
+  function clearStateTimer() {
+    if (stateTimer === null) return;
+    clearTimeout(stateTimer);
+    stateTimer = null;
+  }
+
+  function persistState() {
+    if (!enabled) {
+      queueIntent('state');
+      return;
+    }
+    clearStateTimer();
+    return persistSessionState();
+  }
+
+  function persistWorkspace() {
+    if (!enabled) {
+      queueIntent('workspace');
+      return;
+    }
+    clearStateTimer();
+    return persistWorkspaceSession();
+  }
+
+  function scheduleState() {
+    if (!enabled) {
+      queueIntent('state');
+      return;
+    }
+    clearStateTimer();
+    stateTimer = setTimeout(() => {
+      stateTimer = null;
+      void persistSessionState();
+    }, debounceMs);
+  }
+
   return {
-    persist() {
-      if (!enabled) {
-        pending = true;
-        return;
-      }
-      return persistSession();
-    },
+    persistState,
+    persistWorkspace,
+    scheduleState,
     enable() {
       enabled = true;
-      if (!pending) return;
-      pending = false;
-      return persistSession();
+      const intent = pendingIntent;
+      pendingIntent = null;
+      if (intent === 'workspace') return persistWorkspaceSession();
+      if (intent === 'state') return persistSessionState();
     },
   };
 }
