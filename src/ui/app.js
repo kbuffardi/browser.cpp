@@ -139,8 +139,12 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (terminalPanel) resizeObserver.observe(terminalPanel);
   initPanelResizers();
 
-  // 9. Persist session on unload
-  window.addEventListener('beforeunload', () => persistenceGate.persist());
+  // 9. Persist session on unload. Worker teardown is synchronous: browser
+  // unload handlers cannot safely wait for terminal or worker cleanup.
+  window.addEventListener('beforeunload', () => {
+    worker.terminate();
+    persistenceGate.persist();
+  });
 
   editorAPI.focus();
 });
