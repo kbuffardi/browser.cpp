@@ -1,0 +1,18 @@
+## AI Agent Reasoning
+
+### Context
+The issue #92 diagnostic showed that disabling IndexedDB open after selecting a folder prevents Chrome from crashing when the tab closes.
+
+### Decisions Made
+- Persist handles immediately at folder open, reconnect, and save-to-folder boundaries.
+- Use a startup gate that preserves workspace intent and coalesces edit state.
+- Remove all asynchronous storage from beforeunload while retaining synchronous worker termination.
+- Add a small lifecycle helper so the unload contract is directly testable.
+
+### Trade-offs
+- Very recent edits depend on a 300 ms proactive debounce instead of an unreliable unload write.
+- Native FileSystemDirectoryHandle crash verification still requires manual testing in the affected Chrome profile.
+
+### References
+- Issue #92
+- Crash ID 6001a887f0400000
