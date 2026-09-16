@@ -144,6 +144,11 @@ export function createSessionPersistence({
   getOpenTabPaths,
   getActiveTabPath,
   getOpenTabsSnapshot = () => null,
+  getWorkspaceSnapshot = () => (
+    typeof fsAPI.getWorkspaceSnapshot === 'function'
+      ? fsAPI.getWorkspaceSnapshot()
+      : null
+  ),
   restoreWorkspace,
   storage = getStorageArea(),
   handleStore = createIndexedDBHandleStore(),
@@ -274,34 +279,23 @@ export function createSessionPersistence({
     }
   }
 
-  async function persistSession() {
+  async function persistSessionState() {
     try {
       if (!storage) return;
 
-      const dirHandle = fsAPI.getDirectoryHandle();
-      if (dirHandle) {
-        try {
-          await handleStore.save(dirHandle);
-        } catch (err) {
-          // Keep persisting serializable workspace/tab state even if handle storage fails.
-          console.warn(
-            'Failed to persist workspace directory handle (workspace state will still be saved):',
-            err
-          );
-        }
+      const workspace = getWorkspaceSnapshot();
+      const hasWorkspace = Boolean(workspace || fsAPI.getDirectoryHandle?.());
+      if (hasWorkspace) {
         await storageSet(storage, {
           [STORAGE_KEY]: {
             openTabPaths: getOpenTabPaths(),
             activeTabPath: getActiveTabPath(),
             openTabContentsByPath: getOpenTabsSnapshot(),
-            workspace: typeof fsAPI.getWorkspaceSnapshot === 'function'
-              ? fsAPI.getWorkspaceSnapshot()
-              : null,
+            workspace,
             savedAt: Date.now(),
           },
         });
       } else {
-        await handleStore.clear();
         await storageSet(storage, { [STORAGE_KEY]: null });
       }
     } catch (err) {
@@ -309,25 +303,86 @@ export function createSessionPersistence({
     }
   }
 
-  return { restoreSession, persistSession };
+  async function persistWorkspaceSession() {
+    const dirHandle = fsAPI.getDirectoryHandle();
+    if (dirHandle) {
+      try {
+        await handleStore.save(dirHandle);
+      } catch (err) {
+        // Keep persisting serializable workspace/tab state even if handle storage fails.
+        console.warn(
+          'Failed to persist workspace directory handle (workspace state will still be saved):',
+          err
+        );
+      }
+    }
+    await persistSessionState();
+  }
+
+  return {
+    restoreSession,
+    persistSessionState,
+    persistWorkspaceSession,
+    clearPersistedSession,
+  };
 }
 
-export function createPersistenceGate(persistSession) {
+export function createPersistenceGate(persistence, { debounceMs = 300 } = {}) {
+  const { persistSessionState, persistWorkspaceSession } = persistence;
   let enabled = false;
-  let pending = false;
+  let pendingIntent = null;
+  let stateTimer = null;
+
+  function queueIntent(intent) {
+    if (intent === 'workspace' || pendingIntent === null) pendingIntent = intent;
+  }
+
+  function clearStateTimer() {
+    if (stateTimer === null) return;
+    clearTimeout(stateTimer);
+    stateTimer = null;
+  }
+
+  function persistState() {
+    if (!enabled) {
+      queueIntent('state');
+      return;
+    }
+    clearStateTimer();
+    return persistSessionState();
+  }
+
+  function persistWorkspace() {
+    if (!enabled) {
+      queueIntent('workspace');
+      return;
+    }
+    clearStateTimer();
+    return persistWorkspaceSession();
+  }
+
+  function scheduleState() {
+    if (!enabled) {
+      queueIntent('state');
+      return;
+    }
+    clearStateTimer();
+    stateTimer = setTimeout(() => {
+      stateTimer = null;
+      void persistSessionState();
+    }, debounceMs);
+  }
+
   return {
-    persist() {
-      if (!enabled) {
-        pending = true;
-        return;
-      }
-      return persistSession();
-    },
+    persistState,
+    persistWorkspace,
+    scheduleState,
     enable() {
       enabled = true;
-      if (!pending) return;
-      pending = false;
-      return persistSession();
+      const intent = pendingIntent;
+      pendingIntent = null;
+      if (intent === 'workspace') return persistWorkspaceSession();
+      if (intent === 'state') return persistSessionState();
     },
   };
 }

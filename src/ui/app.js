@@ -24,12 +24,14 @@ import {
   getOpenTabPaths,
   getActiveTabPath,
   getOpenTabsSnapshot,
+  getWorkspaceSnapshot,
   restoreWorkspace,
   resetToNewProject,
   assembleCompilePayload,
   applyWorkspaceSnapshot,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
+import { registerPageUnload } from './page-lifecycle.mjs';
 import { getExtensionVersionLabel } from '../extension-api.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -85,7 +87,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       const result = await fsAPI.createWorkspaceDirectory(path, { parents });
       if (result?.ok) {
         applyWorkspaceSnapshot(result.snapshot, [result.path]);
-        await persistenceGate.persist();
+        await persistenceGate.persistState();
       }
       return result;
     },
@@ -93,7 +95,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       const result = await fsAPI.touchWorkspaceFile(path);
       if (result?.ok) {
         applyWorkspaceSnapshot(result.snapshot, [result.path]);
-        await persistenceGate.persist();
+        await persistenceGate.persistState();
       }
       return result;
     },
@@ -102,25 +104,40 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 4. Toolbar (wires buttons + worker messages + keyboard shortcuts)
-  const { restoreSession, persistSession } = createSessionPersistence({
+  const {
+    restoreSession,
+    persistSessionState,
+    persistWorkspaceSession,
+  } = createSessionPersistence({
     fsAPI,
     editorAPI,
     markDirty,
     getOpenTabPaths,
     getActiveTabPath,
     getOpenTabsSnapshot,
+    getWorkspaceSnapshot,
     restoreWorkspace,
     confirmReload: promptReloadPreviousProject,
     startNewProject: resetToNewProject,
     setExplorerLoading: (loading) => toolbarController?.setExplorerLoading(loading),
     setExplorerScanProgress: (update) => toolbarController?.setExplorerScanProgress(update),
   });
-  const persistenceGate = createPersistenceGate(persistSession);
-  toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, () => persistenceGate.persist());
+  const persistenceGate = createPersistenceGate({
+    persistSessionState,
+    persistWorkspaceSession,
+  });
+  toolbarController = initToolbar(worker, editorAPI, terminalAPI, fsAPI, {
+    persistState: () => persistenceGate.persistState(),
+    persistWorkspace: () => persistenceGate.persistWorkspace(),
+    scheduleState: () => persistenceGate.scheduleState(),
+  });
   resetToNewProject();
 
   // 5. Track unsaved changes
-  editorAPI.onDidChangeContent(() => markDirty(true));
+  editorAPI.onDidChangeContent(() => {
+    markDirty(true);
+    persistenceGate.scheduleState();
+  });
 
   // 6. Cursor position → status bar
   editorAPI.onDidChangeCursorPosition((e) => {
@@ -139,12 +156,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (terminalPanel) resizeObserver.observe(terminalPanel);
   initPanelResizers();
 
-  // 9. Persist session on unload. Worker teardown is synchronous: browser
-  // unload handlers cannot safely wait for terminal or worker cleanup.
-  window.addEventListener('beforeunload', () => {
-    worker.terminate();
-    persistenceGate.persist();
-  });
+  // 9. Session state is persisted proactively. Do not start asynchronous
+  // storage work while the page is unloading.
+  registerPageUnload(window, worker);
 
   editorAPI.focus();
 });
