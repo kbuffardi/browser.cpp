@@ -1,1 +1,12 @@
-## AI Agent Reasoning\n\n### Context\nIssue #98 required running persisted binaries after restoring a workspace.\n\n### Decisions Made\n- Explicit terminal targets use exact workspace bytes to avoid stale cached binaries.\n- Toolbar/default runs retain cached current-session bytes, preserving memory-only fallback behavior.\n- Any matching workspace file is attempted; the runtime reports invalid binary content.\n\n### References\n- Closes #98
+## AI Agent Reasoning
+
+### Context
+Issue #98 required running persisted binaries after restoring a workspace.
+
+### Decisions Made
+- Explicit terminal targets use exact workspace bytes to avoid stale cached binaries.
+- Toolbar/default runs retain cached current-session bytes, preserving memory-only fallback behavior.
+- Any matching workspace file is attempted; the runtime reports invalid binary content.
+
+### References
+- Closes #98
