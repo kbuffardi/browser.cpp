@@ -404,10 +404,10 @@ export function setWorkerCapabilities(capabilities = {}) {
  *
  * @returns {Promise<boolean>} whether a valid worker run request was posted
  */
-export async function startRun() {
+export async function startRun({ artifactPath = null } = {}) {
   if (!term || running || preparingRun) return false;
 
-  if (!lastBuiltArtifactPath) {
+  if (!artifactPath && !lastBuiltArtifactPath) {
     term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
     writePrompt();
     return false;
@@ -438,7 +438,7 @@ export async function startRun() {
 
     if (!_onRun) throw new Error('Run callback is unavailable.');
     term.write(CRLF);
-    await _onRun(request);
+    await _onRun(artifactPath ? { ...request, artifactPath } : request);
     return true;
   } catch (error) {
     setRunPreparationState(false);
@@ -852,7 +852,12 @@ function cmdGxx(args) {
 }
 
 async function cmdRun(cmd) {
-  const { ok, error } = resolveRunTarget(cmd, lastBuiltArtifactPath);
+  const requestedPath = resolveWorkspacePath(workspaceCwd, cmd);
+  const { ok, path: artifactPath, source, error } = resolveRunTarget(
+    requestedPath,
+    lastBuiltArtifactPath,
+    [...workspaceFiles].map(normalizePath)
+  );
   if (!ok) {
     if (error === 'no-binary') {
       term.write(`${C.red}No binary found. Compile first with:  g++ main.cpp${C.reset}${CRLF}`);
@@ -862,7 +867,7 @@ async function cmdRun(cmd) {
     writePrompt();
     return;
   }
-  await startRun();
+  await startRun({ artifactPath: source === 'workspace' ? artifactPath : null });
 }
 
 function cmdLs(args = []) {

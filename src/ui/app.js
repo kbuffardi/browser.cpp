@@ -33,6 +33,7 @@ import {
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 import { registerPageUnload } from './page-lifecycle.mjs';
 import { getExtensionVersionLabel } from '../extension-api.mjs';
+import { selectRunBinaryBytes } from './build-request.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     },
     onRun: async (runRequest) => {
       const vfsFiles = await fsAPI.readAllWorkspaceFiles();
-      const binaryBytes = toolbarController?.getLastRunBinaryBytes?.() || null;
+      const cachedBinaryBytes = toolbarController?.getLastRunBinaryBytes?.() || null;
+      const binaryBytes = selectRunBinaryBytes(runRequest, vfsFiles, cachedBinaryBytes);
+      if (runRequest.artifactPath) {
+        if (!binaryBytes) {
+          throw new Error(`Could not read binary: ${runRequest.artifactPath}`);
+        }
+      }
       worker.postMessage({ type: 'run', ...runRequest, vfsFiles, binaryBytes });
     },
     onStdinData: (message) => worker.postMessage(message),
