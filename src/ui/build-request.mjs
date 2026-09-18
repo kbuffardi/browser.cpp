@@ -139,17 +139,45 @@ export function parseGxxArgs(args = []) {
  *
  * @param {string} command               – e.g. './a.out' or './custom-name'
  * @param {string|null} lastBuiltArtifactPath
- * @returns {{ ok:boolean, error?:string }}
+ * @param {string[]} workspaceFilePaths
+ * @returns {{ ok:boolean, path?:string, source?:string, error?:string }}
  */
-export function resolveRunTarget(command, lastBuiltArtifactPath) {
-  if (!lastBuiltArtifactPath) {
-    return { ok: false, error: 'no-binary' };
-  }
+export function resolveRunTarget(command, lastBuiltArtifactPath, workspaceFilePaths = []) {
   const requested = normalizeOverlayPath(String(command || '').replace(/^\.\//, ''));
+  const workspaceFiles = new Set(
+    workspaceFilePaths.map((path) => normalizeOverlayPath(path)).filter(Boolean)
+  );
+
+  if (workspaceFiles.has(requested)) {
+    return { ok: true, path: requested, source: 'workspace' };
+  }
+
+  if (!lastBuiltArtifactPath) {
+    return workspaceFiles.size > 0
+      ? { ok: false, error: 'not-found' }
+      : { ok: false, error: 'no-binary' };
+  }
+
   const artifact = normalizeOverlayPath(lastBuiltArtifactPath);
   const artifactBase = artifact.split('/').pop();
   if (requested === artifact || requested === artifactBase) {
-    return { ok: true };
+    return { ok: true, path: artifact, source: 'last-built' };
   }
   return { ok: false, error: 'not-found' };
+}
+
+/**
+ * Select bytes for a worker run request. Explicit terminal targets always use
+ * their matching workspace file so an earlier in-memory compile cannot run by
+ * mistake. Toolbar runs have no target and retain the cached artifact path.
+ *
+ * @param {{artifactPath?:string}} request
+ * @param {Array<{path:string, bytes:Uint8Array}>} workspaceFiles
+ * @param {Uint8Array|null} cachedBinaryBytes
+ * @returns {Uint8Array|null}
+ */
+export function selectRunBinaryBytes(request, workspaceFiles = [], cachedBinaryBytes = null) {
+  if (!request?.artifactPath) return cachedBinaryBytes;
+  const artifact = workspaceFiles.find((file) => file.path === request.artifactPath);
+  return artifact ? new Uint8Array(artifact.bytes) : null;
 }

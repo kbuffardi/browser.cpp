@@ -5,6 +5,7 @@ import {
   parseGxxArgs,
   resolveWorkspacePath,
   resolveRunTarget,
+  selectRunBinaryBytes,
   selectWorkspaceSources,
   buildCompileOverlay,
   isProjectSource,
@@ -135,6 +136,33 @@ test('e2e: a failed build does not overwrite the last runnable artifact', () => 
 
 test('e2e: ./name before any successful build reports no binary', () => {
   assert.deepEqual(resolveRunTarget('./a.out', null), { ok: false, error: 'no-binary' });
+});
+
+test('e2e: a restored workspace binary is runnable without build-session state', () => {
+  assert.deepEqual(
+    resolveRunTarget('build/app', null, ['a.out', 'build/app']),
+    { ok: true, path: 'build/app', source: 'workspace' }
+  );
+  assert.deepEqual(
+    resolveRunTarget('missing', null, ['a.out', 'build/app']),
+    { ok: false, error: 'not-found' }
+  );
+});
+
+test('e2e: explicit restored target bytes override a stale cached binary', () => {
+  const restored = new Uint8Array([0, 97, 115, 109]);
+  const stale = new Uint8Array([1, 2, 3]);
+  const selected = selectRunBinaryBytes(
+    { artifactPath: 'build/app' },
+    [{ path: 'build/app', bytes: restored }],
+    stale
+  );
+
+  assert.deepEqual(selected, restored);
+  assert.equal(
+    selectRunBinaryBytes({ artifactPath: 'missing' }, [{ path: 'build/app', bytes: restored }], stale),
+    null
+  );
 });
 
 // ── Compile & Run uses the worker-reported output path ────────────────────────

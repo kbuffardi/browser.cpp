@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  __executeTerminalCommandForTesting,
   __handleTerminalKeyForTesting,
   __setTerminalTestHarness,
   setWorkspace,
@@ -98,4 +99,21 @@ test('e2e: folders containing .git remain ordinary workspace content', () => {
   const output = ctx.writes.join('');
   assert.ok(output.includes('.git/'));
   assert.ok(output.includes('main.cpp'));
+});
+
+test('e2e: terminal runs a binary restored from the workspace', async () => {
+  const writes = [];
+  const runCalls = [];
+  __setTerminalTestHarness({
+    term: { clear() {}, write(text) { writes.push(text); } },
+    onRun: (request) => runCalls.push(request),
+  });
+  setWorkspace({ name: 'project', entries: [{ path: 'build/app', kind: 'file' }] });
+
+  await __executeTerminalCommandForTesting('cd build');
+  await __executeTerminalCommandForTesting('./app');
+
+  assert.equal(runCalls.length, 1);
+  assert.equal(runCalls[0].artifactPath, 'build/app');
+  assert.ok(!writes.join('').includes('No binary found'));
 });
