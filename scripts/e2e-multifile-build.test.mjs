@@ -8,6 +8,8 @@ import {
   selectRunBinaryBytes,
   selectWorkspaceSources,
   buildCompileOverlay,
+  expandGxxGlobArgs,
+  globPatternToRegExp,
   isProjectSource,
   normalizeOverlayPath,
 } from '../src/ui/build-request.mjs';
@@ -63,6 +65,48 @@ test('e2e: terminal relative source paths resolve from the workspace cwd', () =>
   assert.equal(resolveWorkspacePath('/src', '/abs/main.cpp'), 'abs/main.cpp');
   // Mirrors `g++ ./src/main.cpp ./lib/other.cpp` from a non-root cwd
   assert.equal(resolveWorkspacePath('/', './src/main.cpp'), 'src/main.cpp');
+});
+
+test('e2e: g++ glob expansion supports direct paths and deterministic ordering', () => {
+  const expanded = expandGxxGlobArgs(
+    ['src/*.cpp'],
+    ['src/zeta.cpp', 'src/lib/nested.cpp', 'src/alpha.cpp', 'main.cpp'],
+    '/'
+  );
+
+  assert.deepEqual(expanded, ['src/alpha.cpp', 'src/zeta.cpp']);
+});
+
+test('e2e: g++ glob expansion supports question-mark and bracket expressions', () => {
+  const files = ['test_a.cpp', 'test_b.cpp', 'test_c.cpp', 'test_aa.cpp'];
+
+  assert.deepEqual(expandGxxGlobArgs(['test_?.cpp'], files), [
+    'test_a.cpp', 'test_b.cpp', 'test_c.cpp',
+  ]);
+  assert.deepEqual(expandGxxGlobArgs(['test_[ab].cpp'], files), [
+    'test_a.cpp', 'test_b.cpp',
+  ]);
+  assert.deepEqual(expandGxxGlobArgs(['test_[!ab].cpp'], files), ['test_c.cpp']);
+  assert.deepEqual(expandGxxGlobArgs(['test_[^a].cpp'], files), [
+    'test_b.cpp', 'test_c.cpp',
+  ]);
+});
+
+test('e2e: g++ glob expansion resolves from cwd and preserves unmatched literals', () => {
+  const files = ['src/main.cpp', 'src/util.cpp', 'main.cpp'];
+
+  assert.deepEqual(expandGxxGlobArgs(['*.cpp'], files, '/src'), [
+    'src/main.cpp', 'src/util.cpp',
+  ]);
+  assert.deepEqual(expandGxxGlobArgs(['missing*.cpp'], files, '/src'), [
+    'src/missing*.cpp',
+  ]);
+});
+
+test('e2e: g++ glob expansion treats regex syntax literally and tolerates malformed classes', () => {
+  assert.deepEqual(expandGxxGlobArgs(['main+*.cpp'], ['main+one.cpp']), ['main+one.cpp']);
+  assert.deepEqual(expandGxxGlobArgs(['broken[.cpp'], ['brokenX.cpp']), ['broken[.cpp']);
+  assert.doesNotThrow(() => globPatternToRegExp('file[\\].cpp'));
 });
 
 // ── Dirty-tab overlay assembly ────────────────────────────────────────────────

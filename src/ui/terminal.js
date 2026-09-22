@@ -24,6 +24,7 @@ import * as fitAddonPkg from '@xterm/addon-fit';
 import * as webLinksAddonPkg from '@xterm/addon-web-links';
 
 import {
+  expandGxxGlobArgs,
   parseGxxArgs,
   resolveWorkspacePath,
   resolveRunTarget,
@@ -764,7 +765,7 @@ async function executeCommand(cmdLine) {
   switch (cmd) {
     case 'g++':
     case 'clang++':
-      cmdGxx(args);
+      cmdGxx(cmd, args);
       break;
     case 'clear':
       clearScreen();
@@ -818,7 +819,7 @@ async function executeCommand(cmdLine) {
 
 // ── Individual command handlers ───────────────────────────────────────────────
 
-function cmdGxx(args) {
+function cmdGxx(command, args) {
   const { std, outputName, flags, sourcePaths } = parseGxxArgs(args);
 
   // No explicit sources → compile the single editor buffer (works with or
@@ -845,7 +846,9 @@ function cmdGxx(args) {
     return;
   }
 
-  const resolved = sourcePaths.map((p) => resolveWorkspacePath(workspaceCwd, p));
+  const resolved = command === 'g++'
+    ? expandGxxGlobArgs(sourcePaths, [...workspaceFiles].map(normalizePath), workspaceCwd)
+    : sourcePaths.map((path) => resolveWorkspacePath(workspaceCwd, path));
   term.write(`${C.dim}Compiling ${resolved.join(' ')} with -std=${std}…${C.reset}${CRLF}`);
   busy = true;
   _onCompile?.({ sourcePaths: resolved, flags, std, outputName, cwd: workspaceCwd });

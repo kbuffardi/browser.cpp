@@ -98,6 +98,72 @@ export function resolveWorkspacePath(cwd, input) {
   return parts.join('/');
 }
 
+/** True when a path contains a supported wildcard expression. */
+export function hasGlobPattern(path) {
+  const value = String(path || '');
+  return /[*?]/.test(value) || /\[(?:!|\^)?[^\]/]+\]/.test(value);
+}
+
+function escapeRegExpCharacter(character) {
+  return /[|\\{}()[\]^$+*?.]/.test(character) ? `\\${character}` : character;
+}
+
+/**
+ * Convert a supported workspace glob to a regular expression. Wildcards never
+ * cross a path separator, which keeps matching non-recursive.
+ */
+export function globPatternToRegExp(pattern) {
+  const value = String(pattern || '');
+  let expression = '^';
+
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === '*') {
+      expression += '[^/]*';
+    } else if (character === '?') {
+      expression += '[^/]';
+    } else if (character === '[') {
+      const closingIndex = value.indexOf(']', index + 1);
+      const content = value.slice(index + 1, closingIndex);
+      if (closingIndex === -1 || !content || content.includes('/')) {
+        expression += '\\[';
+      } else {
+        const negated = content[0] === '!' || content[0] === '^';
+        const classContent = negated ? content.slice(1) : content;
+        if (!classContent) {
+          expression += '\\[';
+        } else {
+          const escapedClassContent = classContent.replace(/\\/g, '\\\\');
+          expression += `(?=[^/])[${negated ? '^' : ''}${escapedClassContent}]`;
+          index = closingIndex;
+        }
+      }
+    } else {
+      expression += escapeRegExpCharacter(character);
+    }
+  }
+
+  return new RegExp(`${expression}$`);
+}
+
+/**
+ * Expand globbed `g++` source arguments against workspace files. Inputs and
+ * outputs are workspace-relative paths. Patterns without matches stay literal
+ * so the compiler can report its native missing-file diagnostic.
+ */
+export function expandGxxGlobArgs(sourcePaths = [], workspaceFilePaths = [], cwd = '/') {
+  const files = workspaceFilePaths.map(normalizeOverlayPath);
+
+  return sourcePaths.flatMap((sourcePath) => {
+    const resolved = resolveWorkspacePath(cwd, sourcePath);
+    if (!hasGlobPattern(resolved)) return [resolved];
+
+    const matcher = globPatternToRegExp(resolved);
+    const matches = files.filter((path) => matcher.test(path)).sort();
+    return matches.length ? matches : [resolved];
+  });
+}
+
 /**
  * Parse `g++`/`clang++` arguments, preserving positional source files and the
  * `-o` output name (both previously discarded). Recognised flags are split out;
