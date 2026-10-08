@@ -326,7 +326,7 @@ async function openExtensionPage(cdp, extensionId) {
   await cdp.send('Page.enable', {}, sessionId);
   await cdp.send('Runtime.enable', {}, sessionId);
   const navigateResult = await cdp.send('Page.navigate', {
-    url: `chrome-extension://${extensionId}/index.html`,
+    url: `chrome-extension://${extensionId}/index.html?smoke-test=1`,
   }, sessionId);
   await cdp.waitForEvent(
     'Page.loadEventFired',
@@ -621,6 +621,7 @@ function createChromeStorageStubSource({ fakeWorker = true, workspaceFiles = {} 
         postMessage(message) {
           if (this._terminated) return;
           if (message?.type === 'compile') {
+            globalThis.__lastCompilerMessage = message;
             this._emit({ type: 'compile-start' });
             this._emit({
               type: 'compile-result',
@@ -772,7 +773,7 @@ int main() {
     },
   ]));
 
-  await cdp.send('Page.navigate', { url: `${baseUrl}index.html` }, sessionId);
+  await cdp.send('Page.navigate', { url: `${baseUrl}index.html?smoke-test=1` }, sessionId);
   await cdp.waitForEvent('Page.loadEventFired', (event) => event.sessionId === sessionId, 60_000);
   await waitFor(async () => {
     const href = await evaluate(cdp, sessionId, 'location.href');
@@ -799,6 +800,69 @@ int main() {
   assert(hasEditor, 'Monaco editor did not render');
 
   if (!realRun) {
+    const settingsDefault = await evaluate(cdp, sessionId, `(() => {
+      const button = document.getElementById('btn-settings');
+      const panel = document.getElementById('settings-panel');
+      const toggle = document.getElementById('setting-memory-debug');
+      const help = document.querySelector('.settings-help-link');
+      return {
+        buttonText: button?.textContent?.replace(/\\s+/g, ' ').trim(),
+        expanded: button?.getAttribute('aria-expanded'),
+        panelHidden: panel?.hidden,
+        toggleChecked: toggle?.checked,
+        helpHref: help?.href,
+        helpTarget: help?.target,
+        helpRel: help?.rel,
+      };
+    })()`);
+    assert(settingsDefault.buttonText?.includes('Settings'), 'Settings button label did not render');
+    assert(settingsDefault.expanded === 'false', 'Settings button should initially be collapsed');
+    assert(settingsDefault.panelHidden === true, 'Settings panel should initially be hidden');
+    assert(settingsDefault.toggleChecked === false, 'Memory Debug Mode should default to off');
+    assert(
+      settingsDefault.helpHref === 'https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html',
+      `Unexpected UBSan help URL: ${settingsDefault.helpHref}`
+    );
+    assert(settingsDefault.helpTarget === '_blank', 'UBSan help should open in a new tab');
+    assert(settingsDefault.helpRel.split(/\\s+/).includes('noopener'), 'UBSan help should protect window.opener');
+
+    const openPanel = await evaluate(cdp, sessionId, `(() => {
+      document.getElementById('btn-settings').click();
+      const panel = document.getElementById('settings-panel');
+      const style = getComputedStyle(panel);
+      return {
+        hidden: panel.hidden,
+        ariaHidden: panel.getAttribute('aria-hidden'),
+        position: style.position,
+        right: style.right,
+      };
+    })()`);
+    assert(openPanel.hidden === false && openPanel.ariaHidden === 'false', 'Settings panel did not open');
+    assert(openPanel.position === 'fixed' && openPanel.right === '0px', 'Settings panel is not a right-side drawer');
+
+    await evaluate(cdp, sessionId, `document.getElementById('setting-memory-debug').click()`);
+    const storedSettings = await waitFor(async () => evaluate(
+      cdp,
+      sessionId,
+      `chrome.storage.local.get('browser_cpp_settings').then((result) => result.browser_cpp_settings || null)`
+    ), 'Memory Debug Mode persistence', 10_000);
+    assert(storedSettings.memoryDebugMode === true, 'Memory Debug Mode did not save automatically');
+
+    await evaluate(cdp, sessionId, `document.getElementById('btn-compile').click()`);
+    const compileMessage = await waitFor(async () => evaluate(
+      cdp,
+      sessionId,
+      `globalThis.__lastCompilerMessage || null`
+    ), 'Memory Debug Mode compile propagation', 10_000);
+    assert(compileMessage.memoryDebugMode === true, 'Compile request did not include Memory Debug Mode');
+
+    const closedWithEscape = await evaluate(cdp, sessionId, `(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const panel = document.getElementById('settings-panel');
+      return panel.hidden && document.activeElement?.id === 'btn-settings';
+    })()`);
+    assert(closedWithEscape, 'Escape did not close Settings and restore button focus');
+
     await evaluate(cdp, sessionId, `(() => {
       const status = document.getElementById('status-compiler');
       if (status) status.textContent = 'Compiler ready';
@@ -838,7 +902,11 @@ int main() {
     await waitFor(async () => {
       return evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.exists('output.txt')`);
     }, 'hosted runtime-created file', 180_000);
-    terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    terminalText = await evaluate(
+      cdp,
+      sessionId,
+      `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`
+    );
   } catch (err) {
     const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
     const terminal = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
@@ -1002,7 +1070,11 @@ int main() {
 
   try {
     await waitFor(async () => {
-      const text = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+      const text = await evaluate(
+        cdp,
+        sessionId,
+        `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`
+      );
       return text.includes('Compilation successful.') && text.includes('5 stream') ? text : null;
     }, 'stream insertion compile-and-run output', 120_000);
   } catch (err) {
