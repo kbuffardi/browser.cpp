@@ -49,6 +49,12 @@
 import { parseCompilePlan } from './compile-plan.mjs';
 import { parseDiagnostics } from '../ui/diagnostics.mjs';
 import { createWasiRuntime } from './wasi-shim.mjs';
+import {
+  createMemoryDebugImports,
+  isMemoryDebugRuntimeError,
+  memoryDebugFlags,
+  unsupportedMemoryDebugImports,
+} from './memory-debug.mjs';
 import { validateRunRequest, validateStdinMessage } from './run-request.mjs';
 import {
   createStdinSessionRouter,
@@ -357,6 +363,7 @@ function populateCompileFs(moduleFs, files) {
  *   files: Array<{path:string, content:string|Uint8Array}>,
  *   std?: string, flags?: string[],
  *   primarySourcePath?: string, outputName?: string|null,
+ *   memoryDebugMode?: boolean,
  * }} request
  * @returns {Promise<{success:boolean, diagnostics:string, outputPath:(string|null),
  *                    diagnosticsByPath:object}>}
@@ -379,7 +386,15 @@ async function compile(request) {
   // The bundled WASI libc++abi is built without C++ exception support. Clang
   // otherwise enables exceptions for C++ sources, producing unresolved
   // __cxa_* symbols when stream operations instantiate throwing paths.
-  const userFlags = [`-std=${std}`, '-Wall', '-Wextra', ...flags, '-fno-exceptions'];
+  const memoryDebugMode = request.memoryDebugMode === true;
+  const userFlags = [
+    `-std=${std}`,
+    '-Wall',
+    '-Wextra',
+    ...flags,
+    ...memoryDebugFlags(memoryDebugMode),
+    '-fno-exceptions',
+  ];
 
   // ── Step 1: Build-plan discovery ─────────────────────────────────────────
   let plan;
@@ -467,6 +482,21 @@ async function compile(request) {
     return { success: false, diagnostics: allOutput.trim() || 'Linker produced no output binary.', outputPath: null, diagnosticsByPath: diagnosticsByPath() };
   }
 
+  if (memoryDebugMode) {
+    try {
+      const module = await WebAssembly.compile(compiledBinary);
+      const unsupported = unsupportedMemoryDebugImports(module);
+      if (unsupported.length > 0) {
+        compiledBinary = null;
+        const names = unsupported.map(({ module: namespace, name }) => `${namespace}.${name}`);
+        return fail(`Linker error: undefined symbol${names.length === 1 ? '' : 's'}: ${names.join(', ')}`);
+      }
+    } catch (err) {
+      compiledBinary = null;
+      return fail(`Memory Debug Mode validation failed: ${err.message}`);
+    }
+  }
+
   const outputPath = normalizeCompilePath(outputName || plan.linkStep.outputPath);
   return {
     success: true,
@@ -512,10 +542,14 @@ async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
     return;
   }
 
+  let memoryDebugReportSeen = false;
   const wasiRuntime = createWasiRuntime({
     stdin,
     onStdout: (text) => send({ type: 'stdout', data: text }),
-    onStderr: (text) => send({ type: 'stderr', data: text }),
+    onStderr: (text) => {
+      if (/assertion .* failed:/.test(text)) memoryDebugReportSeen = true;
+      send({ type: 'stderr', data: text });
+    },
   });
   wasiRuntime.initRunVfs(vfsFiles);
   const useJspi = stdin.mode === 'interactive-message';
@@ -528,8 +562,23 @@ async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
     const wasiImports = useJspi
       ? createWasiImports(wasiRuntime.wasi)
       : wasiRuntime.wasi;
-    const { instance } = await WebAssembly.instantiate(compiledBinary, {
+    const module = await WebAssembly.compile(compiledBinary);
+    const unsupported = unsupportedMemoryDebugImports(module);
+    if (unsupported.length > 0) {
+      throw new Error(`Unsupported WebAssembly import: ${unsupported[0].module}.${unsupported[0].name}`);
+    }
+    let instance = null;
+    const memoryDebugImports = createMemoryDebugImports({
+      module,
+      getMemory: () => instance?.exports.memory,
+      onStderr: (text) => {
+        memoryDebugReportSeen = true;
+        send({ type: 'stderr', data: text });
+      },
+    });
+    instance = await WebAssembly.instantiate(module, {
       wasi_snapshot_preview1: wasiImports,
+      ...memoryDebugImports,
     });
 
     // Give the WASI shim access to the module's memory
@@ -541,8 +590,12 @@ async function run({ stdin, vfsFiles = [], binaryBytes = null }) {
   } catch (e) {
     if (e && e.__wasi_exit__) {
       exitCode = e.code;
+    } else if (isMemoryDebugRuntimeError(e)) {
+      exitCode = e.exitCode;
     } else if (e instanceof WebAssembly.RuntimeError) {
-      send({ type: 'stderr', data: `Runtime error: ${e.message}\n` });
+      if (!memoryDebugReportSeen) {
+        send({ type: 'stderr', data: `Runtime error: ${e.message}\n` });
+      }
       exitCode = 134; // SIGABRT equivalent
     } else {
       send({ type: 'stderr', data: `Unexpected error: ${String(e)}\n` });
@@ -585,6 +638,7 @@ self.onmessage = async ({ data }) => {
           files:             data.files || [],
           std:               data.std || 'c++20',
           flags:             data.flags || [],
+          memoryDebugMode:   data.memoryDebugMode === true,
           primarySourcePath: data.primarySourcePath || null,
           outputName:        data.outputName || null,
         });
