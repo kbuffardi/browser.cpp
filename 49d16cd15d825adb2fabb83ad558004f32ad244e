@@ -1,0 +1,1 @@
+Issue refresh on 2026-10-08 showed the owner-edited plan-review comment now explicitly requests a new minor version. With 0.4.11 as the prior release, the branch and plan were corrected from 1.0.0 to 0.5.0 before PR creation.
