@@ -1,0 +1,1 @@
+Browser smoke rationale: verify the Settings drawer, persistence, protected UBSan help link, and compile payload in Chromium. The opt-in smoke-test query exposes xterm's logical buffer because current xterm rendering leaves terminal output unavailable through DOM textContent.
