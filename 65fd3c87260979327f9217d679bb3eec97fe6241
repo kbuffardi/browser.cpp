@@ -1,0 +1,17 @@
+## AI Agent Reasoning
+
+### Context
+Issue #104 requires opt-in runtime memory diagnostics for wasm32-wasi programs, with useful source-aware reports and no generic-trap-only fallback.
+
+### Decisions Made
+- Use Clang UBSan instrumentation with fatal handlers supplied as WebAssembly imports because the browsercc sysroot has no compatible compiler-rt UBSan archive.
+- Validate every non-WASI import after linking so --allow-undefined cannot conceal ordinary unresolved user symbols.
+- Pair UBSan with libc++ debug hardening so vector::operator[] and other container preconditions emit descriptive assertion failures.
+- Keep the mode disabled unless explicitly requested by the compile payload.
+
+### Trade-offs
+- This provides documented UBSan and hardened-library coverage, not ASan-style heap use-after-free detection; ASan is unsupported for the current WASI target.
+
+### References
+- GitHub Issue #104
+- Plan: specs/issue-104-memory-debug-mode-settings-panel-20261008.md
