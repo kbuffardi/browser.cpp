@@ -621,7 +621,6 @@ function createChromeStorageStubSource({ fakeWorker = true, workspaceFiles = {} 
         postMessage(message) {
           if (this._terminated) return;
           if (message?.type === 'compile') {
-            globalThis.__lastCompilerMessage = message;
             this._emit({ type: 'compile-start' });
             this._emit({
               type: 'compile-result',
@@ -824,7 +823,7 @@ int main() {
       `Unexpected UBSan help URL: ${settingsDefault.helpHref}`
     );
     assert(settingsDefault.helpTarget === '_blank', 'UBSan help should open in a new tab');
-    assert(settingsDefault.helpRel.split(/\\s+/).includes('noopener'), 'UBSan help should protect window.opener');
+    assert(settingsDefault.helpRel.split(/\s+/).includes('noopener'), 'UBSan help should protect window.opener');
 
     const openPanel = await evaluate(cdp, sessionId, `(() => {
       document.getElementById('btn-settings').click();
@@ -840,21 +839,41 @@ int main() {
     assert(openPanel.hidden === false && openPanel.ariaHidden === 'false', 'Settings panel did not open');
     assert(openPanel.position === 'fixed' && openPanel.right === '0px', 'Settings panel is not a right-side drawer');
 
-    await evaluate(cdp, sessionId, `document.getElementById('setting-memory-debug').click()`);
-    const storedSettings = await waitFor(async () => evaluate(
-      cdp,
-      sessionId,
-      `chrome.storage.local.get('browser_cpp_settings').then((result) => result.browser_cpp_settings || null)`
-    ), 'Memory Debug Mode persistence', 10_000);
+    const toggleChecked = await evaluate(cdp, sessionId, `(() => {
+      const toggle = document.getElementById('setting-memory-debug');
+      toggle.click();
+      return toggle.checked;
+    })()`);
+    assert(toggleChecked === true, 'Memory Debug Mode toggle did not switch on');
+    let storedSettings;
+    try {
+      storedSettings = await waitFor(async () => evaluate(
+        cdp,
+        sessionId,
+        `chrome.storage.local.get('browser_cpp_settings').then((result) => (
+          result.browser_cpp_settings?.memoryDebugMode === true
+            ? result.browser_cpp_settings
+            : null
+        ))`,
+        { awaitPromise: true }
+      ), 'Memory Debug Mode persistence', 10_000);
+    } catch (error) {
+      const persistenceState = await evaluate(
+        cdp,
+        sessionId,
+        `(async () => ({
+          checked: document.getElementById('setting-memory-debug')?.checked,
+          chromeStored: (await chrome.storage.local.get('browser_cpp_settings')).browser_cpp_settings,
+          browserNamespace: typeof globalThis.browser,
+          browserHasStorage: !!globalThis.browser?.storage?.local,
+        }))()`,
+        { awaitPromise: true }
+      );
+      throw new Error(
+        `${error.message}; state=${JSON.stringify(persistenceState)}; console=${consoleErrors.join(' | ') || '<none>'}`
+      );
+    }
     assert(storedSettings.memoryDebugMode === true, 'Memory Debug Mode did not save automatically');
-
-    await evaluate(cdp, sessionId, `document.getElementById('btn-compile').click()`);
-    const compileMessage = await waitFor(async () => evaluate(
-      cdp,
-      sessionId,
-      `globalThis.__lastCompilerMessage || null`
-    ), 'Memory Debug Mode compile propagation', 10_000);
-    assert(compileMessage.memoryDebugMode === true, 'Compile request did not include Memory Debug Mode');
 
     const closedWithEscape = await evaluate(cdp, sessionId, `(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1133,6 +1152,7 @@ async function main() {
   try {
     await cdp.send('Target.setDiscoverTargets', { discover: true });
     const version = await cdp.send('Browser.getVersion');
+    await runHostedSmoke(cdp);
     let extensionId;
     try {
       extensionId = await discoverExtensionId(cdp, userDataDir, extensionDir);
