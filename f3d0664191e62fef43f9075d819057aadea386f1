@@ -1,0 +1,1 @@
+Review hardening: replaced prefix-based acceptance of unresolved __ubsan_handle_* imports with an explicit compiler-rt handler allowlist. The real-toolchain test now proves a lookalike user symbol remains a build failure.
