@@ -763,6 +763,47 @@ test('e2e: fresh no-workspace state has no open file and cannot compile', async 
   }
 });
 
+test('e2e: every assembled compile payload snapshots the extension Memory Debug Mode setting', async () => {
+  const originalDocument = global.document;
+  global.document = createFakeDocument();
+  try {
+    const workspace = {
+      name: 'project',
+      entries: [{ path: 'main.cpp', kind: 'file' }],
+    };
+    let memoryDebugMode = false;
+    initToolbar(
+      { onmessage: null, postMessage() {} },
+      {
+        getValue: () => 'int main() { return 0; }\n',
+        setValue: () => {},
+        clearDiagnostics: () => {},
+        setLanguage: () => {},
+      },
+      { setWorkspace: () => {}, clearTerminal: () => {} },
+      {
+        readWorkspaceFile: async () => 'int main() { return 0; }\n',
+        readAllWorkspaceFiles: async () => [{
+          path: 'main.cpp',
+          bytes: new TextEncoder().encode('int main() { return 0; }\n'),
+        }],
+      },
+      {
+        getCompileOptions: () => ({ memoryDebugMode }),
+      }
+    );
+    await restoreToolbarWorkspace(workspace, ['main.cpp'], 'main.cpp', {
+      'main.cpp': 'int main() { return 0; }\n',
+    });
+
+    assert.equal((await assembleCompilePayload({})).memoryDebugMode, false);
+    memoryDebugMode = true;
+    assert.equal((await assembleCompilePayload({})).memoryDebugMode, true);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
 test('e2e: startup gate prevents pre-restore persistence from wiping workspace session', async () => {
   const storage = createStorageArea();
   const handleStore = createHandleStore();

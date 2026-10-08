@@ -34,12 +34,17 @@ import { createSessionPersistence, createPersistenceGate } from './session-persi
 import { registerPageUnload } from './page-lifecycle.mjs';
 import { getExtensionVersionLabel } from '../extension-api.mjs';
 import { selectRunBinaryBytes } from './build-request.mjs';
+import { createExtensionSettings, initSettingsPanel } from './settings.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('DOMContentLoaded', async () => {
   const versionStatus = document.getElementById('status-version');
   if (versionStatus) versionStatus.textContent = getExtensionVersionLabel();
+
+  const extensionSettings = createExtensionSettings();
+  await extensionSettings.load();
+  initSettingsPanel({ document, settings: extensionSettings });
 
   // 1. Monaco editor
   const editorContainer = document.getElementById('editor-container');
@@ -137,6 +142,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     persistState: () => persistenceGate.persistState(),
     persistWorkspace: () => persistenceGate.persistWorkspace(),
     scheduleState: () => persistenceGate.scheduleState(),
+    getCompileOptions: () => extensionSettings.get(),
   });
   resetToNewProject();
 

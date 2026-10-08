@@ -40,6 +40,10 @@ body {
   overflow: hidden;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 #app {
   display: flex;
   flex-direction: column;
@@ -155,6 +159,152 @@ select:focus {
   font-size: 12px;
   min-width: 140px;
   text-align: right;
+}
+
+#btn-settings {
+  flex: 0 0 auto;
+}
+
+/* ── Extension settings drawer ───────────────────────────────────────────── */
+
+.settings-backdrop {
+  position: fixed;
+  inset: var(--toolbar-h) 0 var(--statusbar-h) 0;
+  z-index: 30;
+  background: rgb(17 17 27 / 55%);
+}
+
+.settings-panel {
+  position: fixed;
+  top: var(--toolbar-h);
+  right: 0;
+  bottom: var(--statusbar-h);
+  z-index: 31;
+  display: flex;
+  width: min(360px, 100vw);
+  flex-direction: column;
+  background: var(--mantle);
+  border-left: 1px solid var(--surface1);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 30%);
+}
+
+.settings-panel-header {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.settings-panel-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#btn-close-settings {
+  padding: 4px;
+  background: transparent;
+  font-size: 16px;
+}
+
+.settings-panel-content {
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-copy {
+  min-width: 0;
+}
+
+.settings-label-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.settings-copy p {
+  margin-top: 6px;
+  color: var(--subtext0);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-help-link {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--overlay0);
+  border-radius: 50%;
+  color: var(--blue);
+  font-size: 11px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.settings-help-link:hover,
+.settings-help-link:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+  color: var(--text);
+}
+
+.settings-switch {
+  position: relative;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.settings-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-switch-track {
+  display: block;
+  width: 34px;
+  height: 18px;
+  padding: 2px;
+  border: 1px solid var(--overlay0);
+  border-radius: 9px;
+  background: var(--surface0);
+}
+
+.settings-switch-track::after {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--subtext0);
+  content: '';
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.settings-switch input:checked + .settings-switch-track {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.settings-switch input:checked + .settings-switch-track::after {
+  transform: translateX(16px);
+  background: var(--crust);
+}
+
+.settings-switch input:focus-visible + .settings-switch-track {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 /* ── Main layout ──────────────────────────────────────────────────────────── */

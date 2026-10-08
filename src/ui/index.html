@@ -36,7 +36,64 @@
       </div>
 
       <div id="toolbar-status" aria-live="polite"></div>
+      <button
+        id="btn-settings"
+        type="button"
+        title="Open extension settings"
+        aria-controls="settings-panel"
+        aria-expanded="false"
+      >
+        <span class="settings-gear-icon" aria-hidden="true">⚙</span>
+        Settings
+      </button>
     </header>
+
+    <div id="settings-backdrop" class="settings-backdrop" hidden></div>
+    <aside
+      id="settings-panel"
+      class="settings-panel"
+      aria-labelledby="settings-heading"
+      aria-hidden="true"
+      hidden
+    >
+      <div class="settings-panel-header">
+        <h2 id="settings-heading">Settings</h2>
+        <button id="btn-close-settings" type="button" aria-label="Close settings">
+          <span class="codicon codicon-close" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="settings-panel-content">
+        <div class="settings-row">
+          <div class="settings-copy">
+            <div class="settings-label-line">
+              <label for="setting-memory-debug">Memory Debug Mode</label>
+              <a
+                class="settings-help-link"
+                href="https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open official UBSan documentation in a new tab"
+                title="Official UBSan documentation"
+              >?</a>
+            </div>
+            <p id="setting-memory-debug-description">
+              Add UBSan checks and hardened standard-library bounds checks to every compile.
+              Builds may run slower and produce larger WebAssembly files.
+            </p>
+          </div>
+          <label class="settings-switch">
+            <span class="sr-only">Toggle Memory Debug Mode</span>
+            <input
+              id="setting-memory-debug"
+              type="checkbox"
+              role="switch"
+              aria-describedby="setting-memory-debug-description"
+            />
+            <span class="settings-switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+    </aside>
 
     <!-- ── Main ─────────────────────────────────────────────────────────── -->
     <div id="main">
