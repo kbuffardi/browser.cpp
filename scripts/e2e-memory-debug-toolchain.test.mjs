@@ -192,9 +192,11 @@ int main() {
 });
 
 test('Memory Debug Mode keeps ordinary unresolved user symbols as build failures', async () => {
-  const result = await compileAndLink(`int missing();
+  const result = await compileAndLink(`extern "C" void __ubsan_handle_not_real();
+int missing();
 
 int main() {
+  __ubsan_handle_not_real();
   return missing();
 }
 `, memoryDebugFlags(true));
@@ -202,8 +204,9 @@ int main() {
   assert.equal(result.status, 0, result.diagnostics);
   const module = await WebAssembly.compile(result.output);
   const unsupported = unsupportedMemoryDebugImports(module);
-  assert.equal(unsupported.length, 1);
-  assert.match(unsupported[0].name, /missing/);
+  assert.equal(unsupported.length, 2);
+  assert.ok(unsupported.some(({ name }) => /missing/.test(name)));
+  assert.ok(unsupported.some(({ name }) => name === '__ubsan_handle_not_real'));
 });
 
 test('Memory Debug Mode leaves a valid program runnable', async () => {

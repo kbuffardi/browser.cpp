@@ -29,6 +29,7 @@ const HANDLER_LABELS = Object.freeze({
   divrem_overflow: 'division or remainder overflow',
   shift_out_of_bounds: 'shift out of bounds',
   out_of_bounds: 'out-of-bounds access',
+  local_out_of_bounds: 'local out-of-bounds access',
   builtin_unreachable: 'unreachable code executed',
   missing_return: 'missing return value',
   vla_bound_not_positive: 'variable-length array bound is not positive',
@@ -36,13 +37,27 @@ const HANDLER_LABELS = Object.freeze({
   load_invalid_value: 'invalid value loaded',
   invalid_builtin: 'invalid compiler builtin argument',
   function_type_mismatch: 'function type mismatch',
+  function_type_mismatch_v1: 'function type mismatch',
   implicit_conversion: 'invalid implicit conversion',
   nonnull_arg: 'null passed to a non-null argument',
   nonnull_return: 'null returned from a non-null function',
+  nonnull_return_v1: 'null returned from a non-null function',
   nullability_arg: 'nullability argument violation',
   nullability_return: 'nullability return violation',
+  nullability_return_v1: 'nullability return violation',
   pointer_overflow: 'pointer overflow',
+  cfi_bad_type: 'control-flow integrity type check failed',
+  cfi_check_fail: 'control-flow integrity check failed',
+  dynamic_type_cache_miss: 'dynamic type check failed',
+  invalid_objc_cast: 'invalid Objective-C cast',
 });
+
+const SUPPORTED_HANDLER_IMPORTS = new Set(
+  Object.keys(HANDLER_LABELS).flatMap((kind) => [
+    `${UBSAN_PREFIX}${kind}`,
+    `${UBSAN_PREFIX}${kind}${UBSAN_ABORT_SUFFIX}`,
+  ])
+);
 
 export class MemoryDebugRuntimeError extends Error {
   constructor(message) {
@@ -117,7 +132,7 @@ function formatDiagnostic(name, location) {
 }
 
 function isSupportedHandlerImport(descriptor) {
-  return descriptor.kind === 'function' && descriptor.name.startsWith(UBSAN_PREFIX);
+  return descriptor.kind === 'function' && SUPPORTED_HANDLER_IMPORTS.has(descriptor.name);
 }
 
 /**
