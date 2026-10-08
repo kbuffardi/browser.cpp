@@ -161,7 +161,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 - Document known diagnostic limitations if source lines or stack traces are unavailable in the WASI/browser runtime.
 - Link the Settings help icon to Clang's official UBSan documentation in a new tab.
 - Update any terminal help only if users need to understand that terminal compiles also honor the setting.
-- Align `manifest.json`, `package.json`, and `package-lock.json` at the requested major version `1.0.0`.
+- Align `manifest.json`, `package.json`, and `package-lock.json` at the requested minor version `0.5.0`.
 
 ### 14. Run the Validation Commands
 - Execute every command listed below.
@@ -199,7 +199,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 - Terminal output preserves program output printed before the memory failure.
 - Terminal shows a detailed diagnostic with error type plus address/source/stack details where supported by the toolchain.
 - Existing non-debug compiles, runs, file I/O, stdin, and multi-file builds continue to pass.
-- Release metadata is aligned at version `1.0.0`.
+- Release metadata is aligned at version `0.5.0`.
 
 ## Validation Commands
 Execute every command to validate the feature works correctly with zero regressions.
@@ -216,7 +216,7 @@ npm run test:e2e:compiler
 npm run test:browser:chrome
 ```
 
-Because this is a major-version release, also run:
+Because this is a minor-version release, also run:
 
 ```bash
 npm run package:release
@@ -230,4 +230,4 @@ npm run package:release
   - `_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE` catches `std::vector::operator[]` in the issue sample, but also presents as a generic trap.
 - WebAssembly traps alone are not enough for Issue #104 because many C++ out-of-bounds accesses stay within linear memory and will not trap.
 - `std::vector::at()` behavior may depend on libc++ exception/assertion support. The project currently compiles with `-fno-exceptions` because the bundled WASI libc++abi lacks exception support, so Memory Debug Mode should focus on sanitizer/hardening behavior that is actually validated in this runtime.
-- The implementation PR should be opened from `feature/issue-104-memory-debug-mode`, include `Closes #104`, and release version `1.0.0`.
+- The implementation PR should be opened from `feature/issue-104-memory-debug-mode`, include `Closes #104`, and release version `0.5.0`.
