@@ -1,0 +1,1 @@
+Release rationale: version 1.0.0 is an explicit user decision. README and the reviewed plan document the proven UBSan plus libc++ hardening scope, the absence of wasm32-wasi ASan, and the JavaScript WebAssembly-import runtime design.
