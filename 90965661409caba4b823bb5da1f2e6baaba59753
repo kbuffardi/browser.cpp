@@ -1,0 +1,1 @@
+Browser verification correction: ensure the hosted UI phase actually runs on every Chrome smoke invocation, await Promise-based storage reads through CDP, and keep compile-payload propagation in its deterministic Node test rather than coupling it to no-workspace browser setup.
