@@ -161,3 +161,15 @@ test('Settings markup exposes the official UBSan help link in a protected new ta
   assert.match(html, /rel="noopener noreferrer"/);
   assert.doesNotMatch(html, /settings-save|Save settings|Apply settings/i);
 });
+
+test('Settings backdrop preserves accurate workspace theme previews', async () => {
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  const backdrop = css.match(/\.settings-backdrop\s*\{([^}]*)\}/)?.[1];
+  const panel = css.match(/\.settings-panel\s*\{([^}]*)\}/)?.[1];
+
+  assert.ok(backdrop, 'Settings backdrop styles should exist for click-outside close');
+  assert.match(backdrop, /background:\s*transparent\s*;/);
+  assert.doesNotMatch(backdrop, /(?:opacity|filter|backdrop-filter)\s*:/);
+  assert.ok(panel, 'Settings drawer styles should exist');
+  assert.doesNotMatch(panel, /box-shadow\s*:/);
+});
