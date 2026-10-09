@@ -343,6 +343,21 @@ export function createTerminal(container, {
   term.open(container);
   fitAddon.fit();
 
+  // Browser smoke tests need the logical terminal buffer because xterm may
+  // render through canvas, where container.textContent contains only styles.
+  // Keep the hook opt-in so normal extension pages expose no test surface.
+  if (new URLSearchParams(globalThis.location?.search || '').has('smoke-test')) {
+    container.__browserCppReadTerminal = () => {
+      const buffer = term?.buffer?.active;
+      if (!buffer) return '';
+      const lines = [];
+      for (let index = 0; index < buffer.length; index += 1) {
+        lines.push(buffer.getLine(index)?.translateToString(true) || '');
+      }
+      return lines.join('\n');
+    };
+  }
+
   // Welcome banner
   term.write(
     `${C.cyan}${C.bold}browser.cpp${C.reset} – C++20 WASM terminal${CRLF}` +

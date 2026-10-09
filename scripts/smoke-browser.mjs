@@ -326,7 +326,7 @@ async function openExtensionPage(cdp, extensionId) {
   await cdp.send('Page.enable', {}, sessionId);
   await cdp.send('Runtime.enable', {}, sessionId);
   const navigateResult = await cdp.send('Page.navigate', {
-    url: `chrome-extension://${extensionId}/index.html`,
+    url: `chrome-extension://${extensionId}/index.html?smoke-test=1`,
   }, sessionId);
   await cdp.waitForEvent(
     'Page.loadEventFired',
@@ -772,7 +772,7 @@ int main() {
     },
   ]));
 
-  await cdp.send('Page.navigate', { url: `${baseUrl}index.html` }, sessionId);
+  await cdp.send('Page.navigate', { url: `${baseUrl}index.html?smoke-test=1` }, sessionId);
   await cdp.waitForEvent('Page.loadEventFired', (event) => event.sessionId === sessionId, 60_000);
   await waitFor(async () => {
     const href = await evaluate(cdp, sessionId, 'location.href');
@@ -799,6 +799,89 @@ int main() {
   assert(hasEditor, 'Monaco editor did not render');
 
   if (!realRun) {
+    const settingsDefault = await evaluate(cdp, sessionId, `(() => {
+      const button = document.getElementById('btn-settings');
+      const panel = document.getElementById('settings-panel');
+      const toggle = document.getElementById('setting-memory-debug');
+      const help = document.querySelector('.settings-help-link');
+      return {
+        buttonText: button?.textContent?.replace(/\\s+/g, ' ').trim(),
+        expanded: button?.getAttribute('aria-expanded'),
+        panelHidden: panel?.hidden,
+        toggleChecked: toggle?.checked,
+        helpHref: help?.href,
+        helpTarget: help?.target,
+        helpRel: help?.rel,
+      };
+    })()`);
+    assert(settingsDefault.buttonText?.includes('Settings'), 'Settings button label did not render');
+    assert(settingsDefault.expanded === 'false', 'Settings button should initially be collapsed');
+    assert(settingsDefault.panelHidden === true, 'Settings panel should initially be hidden');
+    assert(settingsDefault.toggleChecked === false, 'Memory Debug Mode should default to off');
+    assert(
+      settingsDefault.helpHref === 'https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html',
+      `Unexpected UBSan help URL: ${settingsDefault.helpHref}`
+    );
+    assert(settingsDefault.helpTarget === '_blank', 'UBSan help should open in a new tab');
+    assert(settingsDefault.helpRel.split(/\s+/).includes('noopener'), 'UBSan help should protect window.opener');
+
+    const openPanel = await evaluate(cdp, sessionId, `(() => {
+      document.getElementById('btn-settings').click();
+      const panel = document.getElementById('settings-panel');
+      const style = getComputedStyle(panel);
+      return {
+        hidden: panel.hidden,
+        ariaHidden: panel.getAttribute('aria-hidden'),
+        position: style.position,
+        right: style.right,
+      };
+    })()`);
+    assert(openPanel.hidden === false && openPanel.ariaHidden === 'false', 'Settings panel did not open');
+    assert(openPanel.position === 'fixed' && openPanel.right === '0px', 'Settings panel is not a right-side drawer');
+
+    const toggleChecked = await evaluate(cdp, sessionId, `(() => {
+      const toggle = document.getElementById('setting-memory-debug');
+      toggle.click();
+      return toggle.checked;
+    })()`);
+    assert(toggleChecked === true, 'Memory Debug Mode toggle did not switch on');
+    let storedSettings;
+    try {
+      storedSettings = await waitFor(async () => evaluate(
+        cdp,
+        sessionId,
+        `chrome.storage.local.get('browser_cpp_settings').then((result) => (
+          result.browser_cpp_settings?.memoryDebugMode === true
+            ? result.browser_cpp_settings
+            : null
+        ))`,
+        { awaitPromise: true }
+      ), 'Memory Debug Mode persistence', 10_000);
+    } catch (error) {
+      const persistenceState = await evaluate(
+        cdp,
+        sessionId,
+        `(async () => ({
+          checked: document.getElementById('setting-memory-debug')?.checked,
+          chromeStored: (await chrome.storage.local.get('browser_cpp_settings')).browser_cpp_settings,
+          browserNamespace: typeof globalThis.browser,
+          browserHasStorage: !!globalThis.browser?.storage?.local,
+        }))()`,
+        { awaitPromise: true }
+      );
+      throw new Error(
+        `${error.message}; state=${JSON.stringify(persistenceState)}; console=${consoleErrors.join(' | ') || '<none>'}`
+      );
+    }
+    assert(storedSettings.memoryDebugMode === true, 'Memory Debug Mode did not save automatically');
+
+    const closedWithEscape = await evaluate(cdp, sessionId, `(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const panel = document.getElementById('settings-panel');
+      return panel.hidden && document.activeElement?.id === 'btn-settings';
+    })()`);
+    assert(closedWithEscape, 'Escape did not close Settings and restore button focus');
+
     await evaluate(cdp, sessionId, `(() => {
       const status = document.getElementById('status-compiler');
       if (status) status.textContent = 'Compiler ready';
@@ -838,7 +921,11 @@ int main() {
     await waitFor(async () => {
       return evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.exists('output.txt')`);
     }, 'hosted runtime-created file', 180_000);
-    terminalText = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
+    terminalText = await evaluate(
+      cdp,
+      sessionId,
+      `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`
+    );
   } catch (err) {
     const status = await evaluate(cdp, sessionId, `document.getElementById('status-compiler')?.textContent || ''`);
     const terminal = await evaluate(cdp, sessionId, `document.getElementById('terminal-container')?.textContent || ''`);
@@ -1002,7 +1089,11 @@ int main() {
 
   try {
     await waitFor(async () => {
-      const text = await evaluate(cdp, sessionId, `document.body.textContent || ''`);
+      const text = await evaluate(
+        cdp,
+        sessionId,
+        `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`
+      );
       return text.includes('Compilation successful.') && text.includes('5 stream') ? text : null;
     }, 'stream insertion compile-and-run output', 120_000);
   } catch (err) {
@@ -1061,6 +1152,7 @@ async function main() {
   try {
     await cdp.send('Target.setDiscoverTargets', { discover: true });
     const version = await cdp.send('Browser.getVersion');
+    await runHostedSmoke(cdp);
     let extensionId;
     try {
       extensionId = await discoverExtensionId(cdp, userDataDir, extensionDir);

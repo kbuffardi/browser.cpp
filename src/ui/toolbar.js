@@ -58,6 +58,7 @@ let _loadingFile = false;
 let _persistSession = null;
 let _persistWorkspaceSession = null;
 let _schedulePersistSession = null;
+let _getCompileOptions = () => ({ memoryDebugMode: false });
 let _persistTimer = null;
 
 function describeRuntimeWritebackIssue(reason) {
@@ -108,10 +109,12 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistence) 
     _persistSession = persistence;
     _persistWorkspaceSession = persistence;
     _schedulePersistSession = null;
+    _getCompileOptions = () => ({ memoryDebugMode: false });
   } else {
     _persistSession = persistence?.persistState ?? null;
     _persistWorkspaceSession = persistence?.persistWorkspace ?? _persistSession;
     _schedulePersistSession = persistence?.scheduleState ?? null;
+    _getCompileOptions = persistence?.getCompileOptions ?? (() => ({ memoryDebugMode: false }));
   }
 
   bindButtons();
@@ -742,6 +745,7 @@ async function actionCompileRun() {
  * @returns {Promise<object>} worker `compile` message payload
  */
 export async function assembleCompilePayload({ sourcePaths = null, std, flags = [], outputName = null }) {
+  const memoryDebugMode = _getCompileOptions()?.memoryDebugMode === true;
   // Snapshot the active editor buffer so unsaved edits to the focused tab build.
   if (_activeTabPath !== null && _openTabs.has(_activeTabPath)) {
     _openTabs.get(_activeTabPath).content = _editorAPI.getValue();
@@ -768,6 +772,7 @@ export async function assembleCompilePayload({ sourcePaths = null, std, flags = 
     std: resolvedStd,
     flags,
     outputName,
+    memoryDebugMode,
     primarySourcePath: primarySourcePath ? normalizeOverlayPath(primarySourcePath) : null,
   };
 }

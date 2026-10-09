@@ -10,6 +10,7 @@ An in-browser **C++20 IDE** delivered as a Chrome / Chromium extension.
 | File access | File System Access API on Chromium; Firefox fallback flows are deprecated |
 | File I/O | `fstream` / `ifstream` / `ofstream` – read and write workspace files at runtime |
 | Standards | C++14 · C++17 · **C++20** (selectable in the toolbar) |
+| Memory debugging | Opt-in UBSan diagnostics and hardened libc++ bounds checks |
 
 ---
 
@@ -74,9 +75,11 @@ browser.cpp/
 │   │   ├── editor.js              Monaco editor setup & diagnostic API
 │   │   ├── terminal.js            xterm.js terminal + shell emulator
 │   │   ├── filesystem.js          File System Access API wrapper
+│   │   ├── settings.mjs           Extension-wide settings + Settings drawer
 │   │   └── toolbar.js             Toolbar buttons & keyboard shortcuts
 │   └── workers/
-│       └── compiler.worker.js     WASM Clang loader, compile, WASI run
+│       ├── compiler.worker.js     WASM Clang loader, compile, WASI run
+│       └── memory-debug.mjs       UBSan flags, imports, and diagnostics
 │
 ├── scripts/
 │   ├── generate-icons.js          Generates PNG extension icons (prebuild)
@@ -103,7 +106,8 @@ browser.cpp/
 
 ```
 Workspace sources (+ unsaved tab overlay)
-    │  postMessage {type:'compile', sourcePaths, files, std, flags, outputName}
+    │  postMessage {type:'compile', sourcePaths, files, std, flags, outputName,
+    │               memoryDebugMode}
     ▼
 compiler.worker.js  ──importScripts──▶  dist/clang/clang.js
     │   clang++ -###  → multi-TU compile plan (one -cc1 per source + wasm-ld)
@@ -115,7 +119,7 @@ compiler.worker.js  ──importScripts──▶  dist/clang/clang.js
     │  WebAssembly.instantiate(output.wasm, { wasi_snapshot_preview1: … })
     │
     ▼
-WASI shim (built into compiler.worker.js)
+WASI shim + optional UBSan handler imports (built into compiler.worker.js)
     │  stdout/stderr streamed back via postMessage
     ▼
 terminal.js  →  xterm.js display
@@ -177,6 +181,26 @@ shim. OS-dependent features are intentionally limited:
   directory iteration, symlinks, permissions, or other platform-specific file
   operations. Locale databases and other platform-specific facilities are also
   not guaranteed.
+
+### Memory Debug Mode
+
+Open **Settings** from the top-right toolbar to enable **Memory Debug Mode**.
+The setting is extension-wide, saves automatically, defaults to off, and applies
+to toolbar, keyboard-shortcut, and terminal `g++`/`clang++` compiles.
+
+When enabled, browser.cpp adds fatal UndefinedBehaviorSanitizer checks and
+libc++ debug hardening. Supported failures print a source-aware diagnostic to
+the terminal, preserve output written before the failure, and terminate the
+program with a nonzero exit status. For example, statically knowable array
+bounds violations are reported by UBSan, while hardened libc++ checks detect
+invalid `std::vector::operator[]` access.
+
+Memory Debug Mode intentionally does not claim full AddressSanitizer coverage.
+The current `wasm32-wasi` target does not support ASan, so arbitrary heap
+overruns, use-after-free, and every invalid pointer access are not guaranteed to
+be detected. Instrumented builds may also be larger and run more slowly. See
+[Clang's official UBSan documentation](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
+for the sanitizer's checks and reporting behavior.
 
 ---
 
@@ -534,6 +558,9 @@ Copy the resulting `clang.js` and `clang.wasm` into `dist/clang/`.
   socket support.
 - **Standard library**: Only the subset of libc/libc++ compiled into the WASM
   sysroot is available.
+- **Memory Debug Mode scope**: UBSan and hardened libc++ catch supported
+  undefined behavior and standard-library precondition violations, but do not
+  provide ASan-style heap, use-after-free, or comprehensive pointer checking.
 - **C++ exceptions**: `try`, `catch`, and `throw` are not supported. The bundled
   WASI C++ runtime has no exception-unwinding support, so use return values,
   error-state checks (such as `stream.fail()`), or other non-throwing error
