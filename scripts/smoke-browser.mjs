@@ -828,16 +828,24 @@ int main() {
     const openPanel = await evaluate(cdp, sessionId, `(() => {
       document.getElementById('btn-settings').click();
       const panel = document.getElementById('settings-panel');
+      const backdrop = document.getElementById('settings-backdrop');
       const style = getComputedStyle(panel);
+      const backdropStyle = getComputedStyle(backdrop);
       return {
         hidden: panel.hidden,
         ariaHidden: panel.getAttribute('aria-hidden'),
         position: style.position,
         right: style.right,
+        boxShadow: style.boxShadow,
+        backdropHidden: backdrop.hidden,
+        backdropBackground: backdropStyle.backgroundColor,
       };
     })()`);
     assert(openPanel.hidden === false && openPanel.ariaHidden === 'false', 'Settings panel did not open');
     assert(openPanel.position === 'fixed' && openPanel.right === '0px', 'Settings panel is not a right-side drawer');
+    assert(openPanel.backdropHidden === false, 'Settings backdrop should remain available for click-outside close');
+    assert(openPanel.backdropBackground === 'rgba(0, 0, 0, 0)', 'Settings backdrop must not fade theme previews');
+    assert(openPanel.boxShadow === 'none', 'Settings panel must not cast a shadow over workspace previews');
 
     const toggleChecked = await evaluate(cdp, sessionId, `(() => {
       const toggle = document.getElementById('setting-memory-debug');

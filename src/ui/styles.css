@@ -176,7 +176,8 @@ select:focus {
   position: fixed;
   inset: var(--toolbar-h) 0 var(--statusbar-h) 0;
   z-index: 30;
-  background: rgb(17 17 27 / 55%);
+  /* Keep click-outside close without changing the colors being previewed. */
+  background: transparent;
 }
 
 .settings-panel {
@@ -190,7 +191,6 @@ select:focus {
   flex-direction: column;
   background: var(--mantle);
   border-left: 1px solid var(--surface1);
-  box-shadow: -8px 0 24px rgb(0 0 0 / 30%);
 }
 
 .settings-panel-header {
