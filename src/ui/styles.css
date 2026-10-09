@@ -35,6 +35,11 @@
   background: var(--base);
 }
 
+:root[data-visual-theme="vs"] { --crust:#f6f8fa; --mantle:#fff; --base:#fff; --surface0:#d0d7de; --surface1:#afb8c1; --overlay0:#57606a; --text:#1f2328; --subtext0:#57606a; --green:#1a7f37; --red:#cf222e; --yellow:#9a6700; --blue:#0969da; --mauve:#8250df; --peach:#bc4c00; }
+:root[data-visual-theme="vs-dark"] { --crust:#181818; --mantle:#202020; --base:#1e1e1e; --surface0:#2d2d30; --surface1:#3e3e42; --overlay0:#858585; --text:#d4d4d4; --subtext0:#a0a0a0; --green:#89d185; --red:#f48771; --yellow:#dcdcaa; --blue:#569cd6; --mauve:#c586c0; --peach:#ce9178; }
+:root[data-visual-theme="hc-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#e5e5e5; --surface1:#6f6f6f; --overlay0:#333; --text:#000; --subtext0:#333; --green:#064; --red:#a80000; --yellow:#704d00; --blue:#0037da; --mauve:#5b00a5; --peach:#8a3100; }
+:root[data-visual-theme="hc-black"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#1f1f1f; --surface1:#fff; --overlay0:#d0d0d0; --text:#fff; --subtext0:#fff; --green:#0f0; --red:#ff6b6b; --yellow:#ff0; --blue:#3daee9; --mauve:#ff8cff; --peach:#ffb86c; }
+
 body {
   height: 100vh;
   overflow: hidden;
@@ -212,6 +217,16 @@ select:focus {
   overflow-y: auto;
   padding: 16px;
 }
+
+.settings-theme-fieldset { border: 0; margin: 0 0 18px; padding: 0; }
+.settings-theme-fieldset legend { font-weight: 600; margin-bottom: 10px; }
+.theme-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.theme-card { display: grid; grid-template-columns: 1fr; gap: 5px; padding: 6px; border: 1px solid var(--surface1); border-radius: 5px; color: var(--text); cursor: pointer; font-size: 11px; }
+.theme-card:has(input:checked) { border: 2px solid var(--blue); }
+.theme-card:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
+.theme-card input { position: absolute; opacity: 0; }
+.theme-preview { height: 34px; border: 1px solid var(--surface1); border-radius: 3px; background: linear-gradient(var(--preview-background), var(--preview-background)); box-shadow: inset 5px 0 var(--preview-accent); }
+.theme-preview::after { content: 'int main()'; display: block; padding: 9px; color: var(--preview-foreground); font: 9px monospace; }
 
 .settings-row {
   display: flex;
