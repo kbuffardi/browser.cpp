@@ -36,6 +36,7 @@ import {
   collectBrowserCapabilities,
   selectStdinTransport,
 } from './browser-capabilities.mjs';
+import { getVisualTheme } from './themes.mjs';
 
 function moduleExports(pkg) {
   return Object.prototype.hasOwnProperty.call(pkg, 'default') ? pkg['default'] : pkg;
@@ -287,6 +288,7 @@ export function createTerminal(container, {
   readWorkspaceFile,
   onMkdir,
   onTouch,
+  visualTheme = 'browser-cpp-dark',
 }) {
   _onCompile = onCompile;
   _onRun     = onRun;
@@ -309,28 +311,7 @@ export function createTerminal(container, {
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
     fontSize: 13,
     lineHeight: 1.4,
-    theme: {
-      background:   '#11111b',
-      foreground:   '#cdd6f4',
-      cursor:       '#f5c2e7',
-      cursorAccent: '#1e1e2e',
-      black:        '#45475a',
-      red:          '#f38ba8',
-      green:        '#a6e3a1',
-      yellow:       '#f9e2af',
-      blue:         '#89b4fa',
-      magenta:      '#cba6f7',
-      cyan:         '#89dceb',
-      white:        '#bac2de',
-      brightBlack:  '#585b70',
-      brightRed:    '#f38ba8',
-      brightGreen:  '#a6e3a1',
-      brightYellow: '#f9e2af',
-      brightBlue:   '#89b4fa',
-      brightMagenta:'#cba6f7',
-      brightCyan:   '#89dceb',
-      brightWhite:  '#a6adc8',
-    },
+    theme: getVisualTheme(visualTheme).terminalTheme,
     cursorBlink: true,
     scrollback: 5000,
     convertEol: false,
@@ -367,6 +348,10 @@ export function createTerminal(container, {
   term.onKey(handleKey);
 
   return term;
+}
+
+export function setTheme(themeId) {
+  if (term) term.options.theme = { ...getVisualTheme(themeId).terminalTheme };
 }
 
 /** Resize the terminal to fill its container (call after layout changes). */

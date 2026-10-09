@@ -101,14 +101,14 @@ for (const [name, createStorage] of [
     const storage = createStorage();
     const settings = createExtensionSettings({ storage });
 
-    assert.deepEqual(await settings.load(), { memoryDebugMode: false });
+    assert.deepEqual(await settings.load(), { memoryDebugMode: false, visualTheme: 'browser-cpp-dark' });
     await settings.setMemoryDebugMode(true);
 
-    assert.deepEqual(settings.get(), { memoryDebugMode: true });
+    assert.deepEqual(settings.get(), { memoryDebugMode: true, visualTheme: 'browser-cpp-dark' });
     assert.deepEqual((await new Promise((resolve) => {
       const result = storage.get(SETTINGS_STORAGE_KEY, resolve);
       if (result?.then) result.then(resolve);
-    }))[SETTINGS_STORAGE_KEY], { memoryDebugMode: true });
+    }))[SETTINGS_STORAGE_KEY], { memoryDebugMode: true, visualTheme: 'browser-cpp-dark' });
   });
 }
 

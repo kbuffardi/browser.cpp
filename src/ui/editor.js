@@ -38,7 +38,7 @@ let _editor = null;
  * @param {HTMLElement} container
  * @returns {monaco.editor.IStandaloneCodeEditor}
  */
-export function createEditor(container) {
+export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
   // Define a custom VS Code–like dark theme that matches our CSS palette
   monaco.editor.defineTheme('browser-cpp-dark', {
     base: 'vs-dark',
@@ -71,7 +71,7 @@ export function createEditor(container) {
   _editor = monaco.editor.create(container, {
     value: '',
     language: 'cpp',
-    theme: 'browser-cpp-dark',
+    theme,
     fontSize: 14,
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace",
     fontLigatures: true,
@@ -91,6 +91,10 @@ export function createEditor(container) {
   });
 
   return _editor;
+}
+
+export function setTheme(theme) {
+  monaco.editor.setTheme(theme);
 }
 
 /** Get the full text of the current document. */

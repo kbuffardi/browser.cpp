@@ -35,6 +35,7 @@ import { registerPageUnload } from './page-lifecycle.mjs';
 import { getExtensionVersionLabel } from '../extension-api.mjs';
 import { selectRunBinaryBytes } from './build-request.mjs';
 import { createExtensionSettings, initSettingsPanel } from './settings.mjs';
+import { getVisualTheme } from './themes.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -44,11 +45,19 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   const extensionSettings = createExtensionSettings();
   await extensionSettings.load();
+  const applyVisualTheme = ({ visualTheme }) => {
+    const theme = getVisualTheme(visualTheme);
+    document.documentElement.dataset.visualTheme = theme.id;
+    editorAPI.setTheme(theme.monacoTheme);
+    terminalAPI.setTheme(theme.id);
+  };
+  const initialTheme = getVisualTheme(extensionSettings.get().visualTheme);
+  document.documentElement.dataset.visualTheme = initialTheme.id;
   initSettingsPanel({ document, settings: extensionSettings });
 
   // 1. Monaco editor
   const editorContainer = document.getElementById('editor-container');
-  editorAPI.createEditor(editorContainer);
+  editorAPI.createEditor(editorContainer, { theme: initialTheme.monacoTheme });
 
   // 2. Compiler web worker
   //    The worker starts loading the Clang WASM binary immediately.
@@ -59,6 +68,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   //    Pass callbacks so the terminal's `g++` command dispatches to the worker.
   const terminalContainer = document.getElementById('terminal-container');
   terminalAPI.createTerminal(terminalContainer, {
+    visualTheme: initialTheme.id,
     onCompile: async (request) => {
       // Terminal builds: explicit `g++ a.cpp b.cpp` sources (or null for the
       // single editor buffer). Reuse the toolbar's overlay assembly so terminal
@@ -142,8 +152,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     persistState: () => persistenceGate.persistState(),
     persistWorkspace: () => persistenceGate.persistWorkspace(),
     scheduleState: () => persistenceGate.scheduleState(),
-    getCompileOptions: () => extensionSettings.get(),
+    getCompileOptions: () => ({ memoryDebugMode: extensionSettings.get().memoryDebugMode }),
   });
+  extensionSettings.subscribe(applyVisualTheme);
   resetToNewProject();
 
   // 5. Track unsaved changes
