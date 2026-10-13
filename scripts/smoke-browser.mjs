@@ -314,6 +314,40 @@ async function replaceEditorText(cdp, sessionId, source) {
   await cdp.send('Input.insertText', { text: source }, sessionId);
 }
 
+async function selectTerminalText(cdp, sessionId) {
+  const bounds = await evaluate(cdp, sessionId, `(() => {
+    const screen = document.querySelector('#terminal-container .xterm-screen');
+    const state = document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.();
+    if (!screen || !state) return null;
+    const rect = screen.getBoundingClientRect();
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      cols: state.cols,
+      rows: state.rows,
+      firstTextRow: state.firstTextRow,
+    };
+  })()`);
+  assert(bounds?.width > 0 && bounds?.height > 0 && bounds.cols > 0 && bounds.rows > 0,
+    'Terminal screen is not available for mouse selection');
+
+  const cellWidth = bounds.width / bounds.cols;
+  const cellHeight = bounds.height / bounds.rows;
+  const startX = bounds.x + cellWidth;
+  const endX = startX + cellWidth * 9;
+  const y = bounds.y + (bounds.firstTextRow + 0.5) * cellHeight;
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: startX, y, button: 'left', buttons: 1 }, sessionId);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: endX, y, button: 'left', buttons: 1 }, sessionId);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: endX, y, button: 'left', buttons: 0 }, sessionId);
+  return waitFor(async () => {
+    const selection = await evaluate(cdp, sessionId,
+      `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
+    return selection?.hasSelection && selection.text.length >= 5 ? selection : null;
+  }, 'terminal text selection', 5_000);
+}
+
 async function openExtensionPage(cdp, extensionId) {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
@@ -946,6 +980,35 @@ int main() {
   const createdFileText = await evaluate(cdp, sessionId, `globalThis.__browserCppTestFs.readText('output.txt')`);
   assert(createdFileText === 'hello from fstream\n', `Expected output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
   assert(terminalText.includes('5 stream wrote output.txt'), `Expected stream-insertion output, got: ${JSON.stringify(terminalText)}`);
+
+  for (const themeId of ['vs', 'hc-light']) {
+    await evaluate(cdp, sessionId, `(() => {
+      const input = document.querySelector('input[name="visual-theme"][value="${themeId}"]');
+      input?.click();
+      return !!input;
+    })()`);
+    await waitFor(async () => evaluate(
+      cdp,
+      sessionId,
+      `document.documentElement.dataset.visualTheme === '${themeId}'`
+    ), `${themeId} theme selection`, 10_000);
+
+    const selection = await selectTerminalText(cdp, sessionId);
+    const expectedSelectionBackground = themeId === 'vs' ? '#0969da' : '#0037da';
+    assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
+    assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);
+    assert.equal(selection.theme.selectionBackground, expectedSelectionBackground,
+      `${themeId} did not apply its configured terminal selection background`);
+    assert.notEqual(selection.theme.selectionBackground, selection.theme.background,
+      `${themeId} terminal selection is not distinct from its background`);
+    const currentTerminal = await evaluate(
+      cdp,
+      sessionId,
+      `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`
+    );
+    assert(currentTerminal.includes('5 stream wrote output.txt'),
+      `Terminal content was lost while applying ${themeId}`);
+  }
 
   const explorerPath = await waitFor(async () => {
     return evaluate(

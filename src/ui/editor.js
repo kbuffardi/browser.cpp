@@ -15,6 +15,7 @@
 
 import * as monaco from 'monaco-editor';
 import { parseDiagnostics as parseDiagnosticsShared } from './diagnostics.mjs';
+import { VISUAL_THEMES } from './themes.mjs';
 
 // ── Monaco worker bootstrap ───────────────────────────────────────────────────
 // Must run before any monaco API call. Tells Monaco where its worker scripts
@@ -39,6 +40,7 @@ let _editor = null;
  * @returns {monaco.editor.IStandaloneCodeEditor}
  */
 export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
+  const darkTheme = VISUAL_THEMES.find(({ id }) => id === 'browser-cpp-dark');
   // Define a custom VS Code–like dark theme that matches our CSS palette
   monaco.editor.defineTheme('browser-cpp-dark', {
     base: 'vs-dark',
@@ -59,14 +61,29 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
       'editorLineNumber.activeForeground': '#a6adc8',
       'editor.lineHighlightBackground':   '#313244',
       'editorCursor.foreground':     '#f5c2e7',
-      'editor.selectionBackground':  '#45475a',
-      'editor.inactiveSelectionBackground': '#313244',
+      'editor.selectionForeground': darkTheme.selection.foreground,
+      'editor.selectionBackground': darkTheme.selection.background,
+      'editor.inactiveSelectionBackground': darkTheme.selection.inactiveBackground,
       'editorIndentGuide.background': '#313244',
       'editorWidget.background':     '#181825',
       'editorSuggestWidget.background': '#181825',
       'editorSuggestWidget.border':  '#45475a',
     },
   });
+
+  for (const visualTheme of VISUAL_THEMES) {
+    if (visualTheme.id === 'browser-cpp-dark') continue;
+    monaco.editor.defineTheme(visualTheme.monacoTheme, {
+      base: visualTheme.id,
+      inherit: true,
+      rules: [],
+      colors: {
+        'editor.selectionForeground': visualTheme.selection.foreground,
+        'editor.selectionBackground': visualTheme.selection.background,
+        'editor.inactiveSelectionBackground': visualTheme.selection.inactiveBackground,
+      },
+    });
+  }
 
   _editor = monaco.editor.create(container, {
     value: '',
