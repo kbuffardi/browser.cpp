@@ -75,6 +75,23 @@ let fitAddon = null;
 let terminalLineHasContent = false;
 const trackedTerminals = new WeakSet();
 
+/**
+ * Repaint xterm's current selection after it changes or the theme changes.
+ * The public selection event exposes the selected text, but xterm's renderer
+ * selection redraw can arrive before the final mouse-drag range is available.
+ */
+function refreshTerminalSelection() {
+  const position = term?.getSelectionPosition?.();
+  const renderer = term?._core?._renderService;
+  if (!renderer?.handleSelectionChanged) return;
+
+  renderer.handleSelectionChanged(
+    position ? [position.start.x, position.start.y] : undefined,
+    position ? [position.end.x, position.end.y] : undefined,
+    false
+  );
+}
+
 /** Current line being typed */
 let inputBuffer = '';
 /** History of commands entered */
@@ -323,6 +340,8 @@ export function createTerminal(container, {
 
   term.open(container);
   fitAddon.fit();
+  term.onSelectionChange(refreshTerminalSelection);
+  container.addEventListener('mouseup', refreshTerminalSelection);
 
   // Browser smoke tests need the logical terminal buffer because xterm may
   // render through canvas, where container.textContent contains only styles.
@@ -337,14 +356,44 @@ export function createTerminal(container, {
       }
       return lines.join('\n');
     };
+    container.__browserCppRunCommand = (command) => {
+      if (!term || command !== 'help') return false;
+      term.clear();
+      terminalLineHasContent = false;
+      initialPromptShown = true;
+      busy = false;
+      inputBuffer = '';
+      writePrompt();
+      term.write(command + CRLF);
+      cmdHelp();
+      return true;
+    };
+    container.__browserCppScrollToText = (text) => {
+      const buffer = term?.buffer?.active;
+      if (!buffer || typeof text !== 'string') return false;
+      for (let lineIndex = 0; lineIndex < buffer.length; lineIndex += 1) {
+        if (buffer.getLine(lineIndex)?.translateToString(true).includes(text)) {
+          term.scrollToLine(lineIndex);
+          return true;
+        }
+      }
+      return false;
+    };
+    container.__browserCppClearTerminalSelection = () => {
+      term?.clearSelection?.();
+      return true;
+    };
     container.__browserCppReadTerminalSelection = () => {
       const buffer = term?.buffer?.active;
       let firstTextRow = 0;
+      let foundFirstTextRow = false;
+      const visibleLines = [];
       for (let row = 0; buffer && row < term.rows; row += 1) {
         const line = buffer.getLine(buffer.viewportY + row)?.translateToString(true) || '';
-        if (line.trim()) {
+        visibleLines.push(line);
+        if (!foundFirstTextRow && line.trim()) {
           firstTextRow = row;
-          break;
+          foundFirstTextRow = true;
         }
       }
       return {
@@ -353,12 +402,65 @@ export function createTerminal(container, {
         cols: term?.cols || 0,
         rows: term?.rows || 0,
         firstTextRow,
+        viewportY: buffer?.viewportY || 0,
+        visibleLines,
         theme: {
           background: term?.options.theme?.background,
           selectionBackground: term?.options.theme?.selectionBackground,
           selectionForeground: term?.options.theme?.selectionForeground,
           selectionInactiveBackground: term?.options.theme?.selectionInactiveBackground,
         },
+      };
+    };
+    container.__browserCppReadSelectionPaint = () => {
+      const overlays = [...container.querySelectorAll('.xterm-selection div')];
+      const selectionLayer = container.querySelector('.xterm-selection');
+      const xterm = container.querySelector('.xterm');
+      const selectionText = term?.getSelection?.() || '';
+      const selectedTextForegrounds = selectionText
+        ? [...container.querySelectorAll('.xterm-rows > div')]
+          .flatMap((row) => [...row.querySelectorAll('span')])
+          .filter((element) => element.textContent?.includes(selectionText))
+          .map((element) => getComputedStyle(element).color)
+        : [];
+      const rects = overlays.map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          background: style.backgroundColor,
+        };
+      });
+      const screen = container.querySelector('.xterm-screen')?.getBoundingClientRect();
+      const bounds = rects.reduce((box, rect) => ({
+        x: Math.min(box.x, rect.x),
+        y: Math.min(box.y, rect.y),
+        right: Math.max(box.right, rect.x + rect.width),
+        bottom: Math.max(box.bottom, rect.y + rect.height),
+      }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity });
+      return {
+        rects,
+        selectionPosition: term?.getSelectionPosition?.() || null,
+        selectionText,
+        selectedTextForegrounds,
+        renderer: term?.options?.rendererType || 'default',
+        selectionLayer: selectionLayer && {
+          childCount: selectionLayer.childElementCount,
+          html: selectionLayer.innerHTML,
+          parentClass: selectionLayer.parentElement?.className || '',
+        },
+        xtermClass: xterm?.className || '',
+        bounds: rects.length ? {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.right - bounds.x,
+          height: bounds.bottom - bounds.y,
+        } : null,
+        screen: screen && { x: screen.x, y: screen.y, width: screen.width, height: screen.height },
+        canvasCount: container.querySelectorAll('canvas').length,
       };
     };
   }
@@ -375,7 +477,10 @@ export function createTerminal(container, {
 }
 
 export function setTheme(themeId) {
-  if (term) term.options.theme = { ...getVisualTheme(themeId).terminalTheme };
+  if (term) {
+    term.options.theme = { ...getVisualTheme(themeId).terminalTheme };
+    refreshTerminalSelection();
+  }
 }
 
 /** Resize the terminal to fill its container (call after layout changes). */

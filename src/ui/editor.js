@@ -107,6 +107,34 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     automaticLayout: true, // resize with container
   });
 
+  if (new URLSearchParams(globalThis.location?.search || '').has('smoke-test')) {
+    container.__browserCppPrepareSelectionColorRead = () => {
+      return true;
+    };
+    container.__browserCppReadSelectionColors = () => {
+      const editorNode = _editor.getDomNode();
+      if (!editorNode) return null;
+      const viewLine = document.createElement('div');
+      viewLine.className = 'view-line focused';
+      const selected = document.createElement('span');
+      selected.className = 'selected-text inline-selected-text';
+      selected.textContent = 'theme color probe';
+      viewLine.append(selected);
+      editorNode.append(viewLine);
+      const toHex = (value) => {
+        const channels = value.match(/[\d.]+/g)?.map(Number);
+        if (!channels || channels.length < 3) return value;
+        return `#${channels.slice(0, 3).map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
+      };
+      const background = toHex(getComputedStyle(selected).backgroundColor);
+      const foreground = toHex(getComputedStyle(selected).color);
+      viewLine.classList.remove('focused');
+      const inactiveBackground = toHex(getComputedStyle(selected).backgroundColor);
+      viewLine.remove();
+      return { background, foreground, inactiveBackground };
+    };
+  }
+
   return _editor;
 }
 
