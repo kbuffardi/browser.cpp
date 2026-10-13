@@ -337,6 +337,30 @@ export function createTerminal(container, {
       }
       return lines.join('\n');
     };
+    container.__browserCppReadTerminalSelection = () => {
+      const buffer = term?.buffer?.active;
+      let firstTextRow = 0;
+      for (let row = 0; buffer && row < term.rows; row += 1) {
+        const line = buffer.getLine(buffer.viewportY + row)?.translateToString(true) || '';
+        if (line.trim()) {
+          firstTextRow = row;
+          break;
+        }
+      }
+      return {
+        text: term?.getSelection() || '',
+        hasSelection: term?.hasSelection() || false,
+        cols: term?.cols || 0,
+        rows: term?.rows || 0,
+        firstTextRow,
+        theme: {
+          background: term?.options.theme?.background,
+          selectionBackground: term?.options.theme?.selectionBackground,
+          selectionForeground: term?.options.theme?.selectionForeground,
+          selectionInactiveBackground: term?.options.theme?.selectionInactiveBackground,
+        },
+      };
+    };
   }
 
   // Welcome banner
