@@ -1,0 +1,24 @@
+## AI Agent Reasoning
+
+### Context
+
+In Light and High Contrast Light, the bottom of the terminal displayed a
+black strip before any text selection occurred.
+
+### Decision
+
+xterm's bundled stylesheet assigns a black background to `.xterm-viewport`.
+When the canvas does not consume the full viewport height, that default is
+visible. The app now overrides it with a theme-specific terminal-background
+token, preserving the terminal's actual canvas background rather than using
+the adjacent panel color.
+
+### Verification
+
+- Focused visual-theme regression
+- npm run lint
+- npm run build
+- npm run test:e2e
+
+Chrome smoke could not complete locally because the x64 Chrome process running
+under Rosetta timed out waiting for Page.loadEventFired.
