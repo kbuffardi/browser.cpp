@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { PNG } from 'pngjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = path.join(repoRoot, 'dist');
@@ -281,7 +282,10 @@ async function evaluate(cdp, sessionId, expression, { awaitPromise = false } = {
   }, sessionId);
 
   if (result.exceptionDetails) {
-    throw new Error(`Browser evaluation failed: ${result.exceptionDetails.text}`);
+    throw new Error(
+      `Browser evaluation failed: ${result.exceptionDetails.text}; ` +
+      `${result.exceptionDetails.exception?.description || ''}`
+    );
   }
 
   return result.result?.value;
@@ -314,44 +318,141 @@ async function replaceEditorText(cdp, sessionId, source) {
   await cdp.send('Input.insertText', { text: source }, sessionId);
 }
 
-async function selectTerminalText(cdp, sessionId) {
-  const bounds = await evaluate(cdp, sessionId, `(() => {
-    const screen = document.querySelector('#terminal-container .xterm-screen');
+async function selectTerminalText(cdp, sessionId, targetText = 'Compilation successful.') {
+  const targetLiteral = JSON.stringify(targetText);
+  const scrolled = await evaluate(cdp, sessionId,
+    `document.getElementById('terminal-container')?.__browserCppScrollToText?.(${targetLiteral}) || false`);
+  assert(scrolled, `Could not scroll terminal to ${JSON.stringify(targetText)}`);
+  const target = await waitFor(async () => evaluate(cdp, sessionId, `(() => {
     const state = document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.();
-    if (!screen || !state) return null;
-    const rect = screen.getBoundingClientRect();
-    return {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      cols: state.cols,
-      rows: state.rows,
-      firstTextRow: state.firstTextRow,
-    };
-  })()`);
-  assert(bounds?.width > 0 && bounds?.height > 0 && bounds.cols > 0 && bounds.rows > 0,
-    'Terminal screen is not available for mouse selection');
+    const row = state?.visibleLines?.findIndex((line) => line.includes(${targetLiteral})) ?? -1;
+    const screen = document.querySelector('#terminal-container .xterm-screen')?.getBoundingClientRect();
+    if (row < 0 || !screen || !state?.cols || !state?.rows) return null;
+    const column = state.visibleLines[row].indexOf(${targetLiteral});
+    return { row, column, cols: state.cols, rows: state.rows, screen: { x: screen.x, y: screen.y, width: screen.width, height: screen.height } };
+  })()`), `visible terminal line ${targetText}`, 5_000);
+  await evaluate(cdp, sessionId,
+    `document.getElementById('terminal-container')?.__browserCppClearTerminalSelection?.()`);
+  await waitFor(async () => evaluate(cdp, sessionId, `(() => {
+    const selection = document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.();
+    const paint = document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.();
+    return !selection?.hasSelection && !paint?.rects?.length;
+  })()`), 'cleared prior terminal selection', 5_000);
+  const before = await captureScreenshot(cdp, sessionId);
+  const cellWidth = target.screen.width / target.cols;
+  const cellHeight = target.screen.height / target.rows;
+  const startX = target.screen.x + cellWidth * (target.column + 0.35);
+  const endX = target.screen.x + cellWidth * (target.column + targetText.length - 0.35);
+  const y = target.screen.y + cellHeight * (target.row + 0.5);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: startX, y, button: 'left', buttons: 1, clickCount: 1,
+  }, sessionId);
+  const dragSteps = Math.max(3, Math.ceil(targetText.length / 4));
+  for (let step = 1; step <= dragSteps; step += 1) {
+    const x = startX + ((endX - startX) * step) / dragSteps;
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x, y, button: 'left', buttons: 1,
+    }, sessionId);
+  }
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: endX, y, button: 'left', buttons: 0, clickCount: 1,
+  }, sessionId);
+  const selection = await waitFor(async () => evaluate(cdp, sessionId,
+    `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`),
+  'logical terminal selection', 5_000);
+  assert(selection?.hasSelection && selection.text.includes(targetText),
+    `Mouse drag did not select ${JSON.stringify(targetText)}: ${JSON.stringify(selection)}`);
+  let paint;
+  try {
+    paint = await waitFor(async () => {
+      const state = await evaluate(cdp, sessionId,
+        `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
+      return state?.rects?.some(({ width, height }) => width > 0 && height > 0) ? state : null;
+    }, 'terminal selection renderer rectangles', 5_000);
+  } catch (error) {
+    const diagnostic = await evaluate(cdp, sessionId,
+      `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
+    throw new Error(`${error.message}; selection=${JSON.stringify(selection)}; renderer=${JSON.stringify(diagnostic)}`);
+  }
+  return { ...selection, before, paintBounds: paint.bounds, paint };
+}
 
-  const cellWidth = bounds.width / bounds.cols;
-  const cellHeight = bounds.height / bounds.rows;
-  const startX = bounds.x + cellWidth;
-  const endX = startX + cellWidth * 9;
-  const y = bounds.y + (bounds.firstTextRow + 0.5) * cellHeight;
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: startX, y, button: 'left', buttons: 1 }, sessionId);
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: endX, y, button: 'left', buttons: 1 }, sessionId);
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: endX, y, button: 'left', buttons: 0 }, sessionId);
-  return waitFor(async () => {
-    const selection = await evaluate(cdp, sessionId,
-      `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
-    return selection?.hasSelection && selection.text.length >= 5 ? selection : null;
-  }, 'terminal text selection', 5_000);
+async function captureScreenshot(cdp, sessionId) {
+  const { data } = await cdp.send('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false,
+  }, sessionId);
+  const screenshot = PNG.sync.read(Buffer.from(data, 'base64'));
+  screenshot.devicePixelRatio = await evaluate(cdp, sessionId, 'window.devicePixelRatio');
+  return screenshot;
+}
+
+function assertScreenshotSelectionChanged(before, after, bounds, expectedColor) {
+  assert(bounds && bounds.width > 0 && bounds.height > 0,
+    'Terminal selection screenshot bounds are missing');
+  const color = parseRgbColor(expectedColor);
+  assert(color, `Could not parse Monaco selection color ${expectedColor}`);
+  const scale = after.devicePixelRatio || 1;
+  const region = {
+    left: Math.max(0, Math.floor(bounds.x * scale)),
+    top: Math.max(0, Math.floor(bounds.y * scale)),
+    right: Math.min(after.width, Math.ceil((bounds.x + bounds.width) * scale)),
+    bottom: Math.min(after.height, Math.ceil((bounds.y + bounds.height) * scale)),
+  };
+  let changedPixels = 0;
+  let matchingColorPixels = 0;
+  let sampledPixels = 0;
+  const sampledColors = new Map();
+  for (let y = region.top; y < region.bottom; y += 2) {
+    for (let x = region.left; x < region.right; x += 2) {
+      const index = (y * after.width + x) * 4;
+      const beforeIndex = (y * before.width + x) * 4;
+      sampledPixels += 1;
+      const pixelColor = [0, 1, 2].map((channel) => after.data[index + channel]);
+      const pixelKey = `#${pixelColor.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+      sampledColors.set(pixelKey, (sampledColors.get(pixelKey) || 0) + 1);
+      const changed = [0, 1, 2].some((channel) => before.data[beforeIndex + channel] !== after.data[index + channel]);
+      if (changed) {
+        changedPixels += 1;
+      }
+      // Chrome's PNG capture can apply display color conversion on macOS; the
+      // computed CSS color is asserted exactly, while changed pixels use a
+      // per-channel tolerance to confirm the selected background was painted.
+      if (changed && pixelColor.every((channel, position) => Math.abs(channel - color[position]) <= 96)) {
+        matchingColorPixels += 1;
+      }
+    }
+  }
+  assert(sampledPixels > 0 && changedPixels / sampledPixels > 0.01,
+    `Terminal selection did not change a visible portion of its screenshot region (${changedPixels}/${sampledPixels})`);
+  assert(matchingColorPixels > 0,
+    `Terminal selection screenshot contains no pixels matching Monaco ${expectedColor}; ` +
+    `region=${JSON.stringify(region)} image=${after.width}x${after.height} dpr=${scale} ` +
+    `commonPixels=${JSON.stringify([...sampledColors].sort((a, b) => b[1] - a[1]).slice(0, 8))}`);
+}
+
+function normalizeCssColor(color) {
+  const channels = parseRgbColor(color);
+  return channels
+    ? `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+    : color;
+}
+
+function parseRgbColor(color) {
+  const hex = /^#([\da-f]{6})$/i.exec(color);
+  if (hex) {
+    return [0, 2, 4].map((offset) => parseInt(hex[1].slice(offset, offset + 2), 16));
+  }
+  const rgb = /^rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/i.exec(color);
+  return rgb ? rgb.slice(1, 4).map(Number) : null;
 }
 
 async function openExtensionPage(cdp, extensionId) {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
   });
+  await cdp.send('Target.activateTarget', { targetId });
   const { sessionId } = await cdp.send('Target.attachToTarget', {
     targetId,
     flatten: true,
@@ -760,6 +861,7 @@ function startStaticServer(rootDir) {
 async function runHostedSmoke(cdp, { realRun = false } = {}) {
   const { server, baseUrl } = await startStaticServer(distDir);
   const pageTarget = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  await cdp.send('Target.activateTarget', { targetId: pageTarget.targetId });
   const { sessionId } = await cdp.send('Target.attachToTarget', {
     targetId: pageTarget.targetId,
     flatten: true,
@@ -924,6 +1026,90 @@ int main() {
     })()`);
     assert(closedWithEscape, 'Escape did not close Settings and restore button focus');
 
+    const selectionPrepared = await evaluate(cdp, sessionId,
+      `document.getElementById('editor-container')?.__browserCppPrepareSelectionColorRead?.() || false`);
+    assert(selectionPrepared, 'Monaco selection color smoke hook is unavailable');
+    await evaluate(cdp, sessionId,
+      `document.getElementById('terminal-container')?.__browserCppRunCommand?.('help')`);
+    const helpOutput = await waitFor(async () => {
+      const output = await evaluate(cdp, sessionId,
+        `document.getElementById('terminal-container')?.__browserCppReadTerminal?.() || ''`);
+      return output.includes('Available commands:') && output.includes('g++') ? output : null;
+    }, 'real help output in terminal buffer', 5_000);
+    assert(helpOutput.includes('Run the last compiled binary'),
+      'Real help output is missing the run-command description');
+    let previousSelection = null;
+    for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black']) {
+      await evaluate(cdp, sessionId, `document.querySelector('input[name="visual-theme"][value="${themeId}"]')?.click()`);
+      await waitFor(async () => evaluate(
+        cdp,
+        sessionId,
+        `document.documentElement.dataset.visualTheme === '${themeId}'`
+      ), `${themeId} theme selection`, 10_000);
+      const monacoColors = await waitFor(async () => evaluate(cdp, sessionId,
+        `document.getElementById('editor-container')?.__browserCppReadSelectionColors?.() || null`),
+      `${themeId} computed Monaco selection styles`, 5_000);
+      assert(monacoColors?.background && monacoColors.foreground && monacoColors.inactiveBackground,
+        `${themeId} Monaco selection styles were not computed`);
+      if (previousSelection) {
+        const retained = await evaluate(cdp, sessionId,
+          `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
+        assert(retained?.hasSelection && retained.text === previousSelection?.text,
+          'Changing Monaco theme cleared the existing terminal selection');
+        const changedPaint = await waitFor(async () => {
+          const current = await evaluate(cdp, sessionId,
+            `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
+          return current?.rects?.length && normalizeCssColor(current.rects[0].background) === monacoColors.inactiveBackground
+            ? current
+            : null;
+        }, `${themeId} inactive terminal selection repaint`, 5_000);
+        assert(changedPaint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.inactiveBackground),
+          `${themeId} existing selection did not adopt Monaco's inactive selection color`);
+      }
+
+      const targetText = previousSelection ? 'g++' : 'Available commands:';
+      const selection = await selectTerminalText(cdp, sessionId, targetText);
+      assert(selection.theme.selectionBackground === monacoColors.background,
+        `${themeId} terminal active selection background ${selection.theme.selectionBackground} does not exactly match Monaco ${monacoColors.background}`);
+      assert(selection.theme.selectionForeground === monacoColors.foreground,
+        `${themeId} terminal selection foreground ${selection.theme.selectionForeground} does not exactly match Monaco ${monacoColors.foreground}`);
+      assert(selection.theme.selectionInactiveBackground === monacoColors.inactiveBackground,
+        `${themeId} terminal inactive selection background ${selection.theme.selectionInactiveBackground} does not exactly match Monaco ${monacoColors.inactiveBackground}`);
+      assert(selection.text.includes(targetText),
+        `Terminal selected text does not include ${JSON.stringify(targetText)}: ${JSON.stringify(selection.text)}`);
+      assert(selection.paint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.background),
+        `${themeId} rendered active selection background does not exactly match Monaco`);
+      assert(selection.paint.selectedTextForegrounds.some((color) => normalizeCssColor(color) === monacoColors.foreground),
+        `${themeId} rendered selected text foreground does not exactly match Monaco's ${monacoColors.foreground}`);
+      previousSelection = {
+        ...selection,
+        colors: monacoColors,
+      };
+      const editorFocused = await evaluate(cdp, sessionId, `(() => {
+        const input = document.querySelector('#editor-container textarea.inputarea');
+        input?.focus();
+        return Boolean(input && document.activeElement === input);
+      })()`);
+      assert(editorFocused, `${themeId} could not move focus from the terminal to Monaco`);
+      const retainedAfterBlur = await evaluate(cdp, sessionId,
+        `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
+      assert(retainedAfterBlur?.hasSelection && retainedAfterBlur.text === selection.text,
+        `${themeId} terminal selection disappeared after focus moved away`);
+      const inactivePaint = await waitFor(async () => {
+        const current = await evaluate(cdp, sessionId,
+          `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
+        return current?.rects?.length && normalizeCssColor(current.rects[0].background) === monacoColors.inactiveBackground
+          ? current
+          : null;
+      }, `${themeId} unfocused selection color`, 5_000);
+      assert(inactivePaint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.inactiveBackground),
+        `${themeId} rendered inactive selection background does not exactly match Monaco`);
+      const afterBlur = await captureScreenshot(cdp, sessionId);
+      assertScreenshotSelectionChanged(selection.before, afterBlur, selection.paintBounds,
+        monacoColors.inactiveBackground);
+      previousSelection = { ...selection, beforeThemeChange: afterBlur };
+    }
+
     await evaluate(cdp, sessionId, `(() => {
       const status = document.getElementById('status-compiler');
       if (status) status.textContent = 'Compiler ready';
@@ -997,9 +1183,9 @@ int main() {
     const expectedSelectionBackground = themeId === 'vs' ? '#0969da' : '#0037da';
     assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
     assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);
-    assert.equal(selection.theme.selectionBackground, expectedSelectionBackground,
+    assert(selection.theme.selectionBackground === expectedSelectionBackground,
       `${themeId} did not apply its configured terminal selection background`);
-    assert.notEqual(selection.theme.selectionBackground, selection.theme.background,
+    assert(selection.theme.selectionBackground !== selection.theme.background,
       `${themeId} terminal selection is not distinct from its background`);
     const currentTerminal = await evaluate(
       cdp,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -37,6 +38,20 @@ test('theme registry exposes the requested Monaco themes and safe fallback', () 
   assert.deepEqual(VISUAL_THEMES.slice(1).map(({ monacoTheme }) => monacoTheme), [
     'browser-cpp-vs', 'browser-cpp-vs-dark', 'browser-cpp-hc-light', 'browser-cpp-hc-black',
   ]);
+});
+
+test('terminal viewport inherits the active visual theme background', async () => {
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  const app = await readFile(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  assert.match(css, /\.xterm\s+\.xterm-viewport\s*\{[^}]*background-color:\s*var\(--terminal-background\);/s);
+  assert.ok(
+    app.indexOf("import '@xterm/xterm/css/xterm.css';") < app.indexOf("import './styles.css';"),
+    'load application styles after xterm so terminal overrides win'
+  );
+  assert.deepEqual(
+    [...css.matchAll(/--terminal-background:\s*(#[\da-f]{3,6});/gi)].map(([, color]) => color.toLowerCase()),
+    ['#11111b', '#fff', '#181818', '#fff', '#000']
+  );
 });
 
 function contrastRatio(foreground, background) {
