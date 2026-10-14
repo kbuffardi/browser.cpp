@@ -12,8 +12,8 @@
 
 'use strict';
 
-import './styles.css';
 import '@xterm/xterm/css/xterm.css';
+import './styles.css';
 
 import * as editorAPI   from './editor.js';
 import * as terminalAPI from './terminal.js';
