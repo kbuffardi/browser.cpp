@@ -1039,7 +1039,7 @@ int main() {
     assert(helpOutput.includes('Run the last compiled binary'),
       'Real help output is missing the run-command description');
     let previousSelection = null;
-    for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black']) {
+    for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black', 'monochrome-light', 'monochrome-dark']) {
       await evaluate(cdp, sessionId, `document.querySelector('input[name="visual-theme"][value="${themeId}"]')?.click()`);
       await waitFor(async () => evaluate(
         cdp,
@@ -1167,7 +1167,7 @@ int main() {
   assert(createdFileText === 'hello from fstream\n', `Expected output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
   assert(terminalText.includes('5 stream wrote output.txt'), `Expected stream-insertion output, got: ${JSON.stringify(terminalText)}`);
 
-  for (const themeId of ['vs', 'hc-light']) {
+  for (const themeId of ['vs', 'hc-light', 'monochrome-light', 'monochrome-dark']) {
     await evaluate(cdp, sessionId, `(() => {
       const input = document.querySelector('input[name="visual-theme"][value="${themeId}"]');
       input?.click();
@@ -1180,13 +1180,24 @@ int main() {
     ), `${themeId} theme selection`, 10_000);
 
     const selection = await selectTerminalText(cdp, sessionId);
-    const expectedSelectionBackground = themeId === 'vs' ? '#0969da' : '#0037da';
+    const expectedSelectionBackground = {
+      vs: '#0969da',
+      'hc-light': '#0037da',
+      'monochrome-light': '#666666',
+      'monochrome-dark': '#999999',
+    }[themeId];
     assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
     assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);
     assert(selection.theme.selectionBackground === expectedSelectionBackground,
       `${themeId} did not apply its configured terminal selection background`);
     assert(selection.theme.selectionBackground !== selection.theme.background,
       `${themeId} terminal selection is not distinct from its background`);
+    if (themeId.startsWith('monochrome-')) {
+      const colors = [selection.theme.background, selection.theme.foreground,
+        selection.theme.selectionBackground, selection.theme.selectionForeground];
+      assert(colors.every((color) => /^#([\da-f]{2})\1\1$/i.test(color)),
+        `${themeId} terminal colors are not grayscale: ${colors.join(', ')}`);
+    }
     const currentTerminal = await evaluate(
       cdp,
       sessionId,

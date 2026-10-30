@@ -73,6 +73,32 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
 
   for (const visualTheme of VISUAL_THEMES) {
     if (visualTheme.id === 'browser-cpp-dark') continue;
+    if (visualTheme.id.startsWith('monochrome-')) {
+      const { cssTokens: colors } = visualTheme;
+      const isLight = visualTheme.id === 'monochrome-light';
+      monaco.editor.defineTheme(visualTheme.monacoTheme, {
+        base: isLight ? 'vs' : 'vs-dark',
+        inherit: false,
+        rules: [],
+        colors: {
+          'editor.background': colors.base,
+          'editor.foreground': colors.text,
+          'editorLineNumber.foreground': colors.subtext0,
+          'editorLineNumber.activeForeground': colors.text,
+          'editor.lineHighlightBackground': colors.surface0,
+          'editorCursor.foreground': colors.text,
+          'editor.selectionForeground': visualTheme.selection.foreground,
+          'editor.selectionBackground': visualTheme.selection.background,
+          'editor.inactiveSelectionBackground': visualTheme.selection.inactiveBackground,
+          'editorIndentGuide.background': colors.surface1,
+          'editorWidget.background': colors.mantle,
+          'editorSuggestWidget.background': colors.mantle,
+          'editorSuggestWidget.border': colors.surface1,
+          'minimap.background': colors.mantle,
+        },
+      });
+      continue;
+    }
     monaco.editor.defineTheme(visualTheme.monacoTheme, {
       base: visualTheme.id,
       inherit: true,

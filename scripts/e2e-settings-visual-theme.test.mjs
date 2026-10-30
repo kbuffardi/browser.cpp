@@ -66,7 +66,7 @@ test('terminal viewport inherits the active visual theme background', async () =
   );
   assert.deepEqual(
     [...css.matchAll(/--terminal-background:\s*(#[\da-f]{3,6});/gi)].map(([, color]) => color.toLowerCase()),
-    ['#11111b', '#fff', '#181818', '#fff', '#000']
+    ['#11111b', '#fff', '#181818', '#fff', '#000', '#fff', '#000']
   );
 });
 

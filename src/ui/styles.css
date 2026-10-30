@@ -23,6 +23,10 @@
   --mauve:   #cba6f7;
   --peach:   #fab387;
   --terminal-background: #11111b;
+  --primary-hover: #b9f0b3;
+  --danger-wash: rgba(243, 139, 168, 0.12);
+  --danger-wash-hover: rgba(243, 139, 168, 0.22);
+  --reload-overlay: rgba(17, 17, 27, 0.6);
 
   --toolbar-h: 36px;
   --statusbar-h: 22px;
@@ -40,6 +44,8 @@
 :root[data-visual-theme="vs-dark"] { --crust:#181818; --mantle:#202020; --base:#1e1e1e; --surface0:#2d2d30; --surface1:#3e3e42; --overlay0:#858585; --text:#d4d4d4; --subtext0:#a0a0a0; --green:#89d185; --red:#f48771; --yellow:#dcdcaa; --blue:#569cd6; --mauve:#c586c0; --peach:#ce9178; --terminal-background:#181818; }
 :root[data-visual-theme="hc-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#e5e5e5; --surface1:#6f6f6f; --overlay0:#333; --text:#000; --subtext0:#333; --green:#064; --red:#a80000; --yellow:#704d00; --blue:#0037da; --mauve:#5b00a5; --peach:#8a3100; --terminal-background:#fff; }
 :root[data-visual-theme="hc-black"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#1f1f1f; --surface1:#fff; --overlay0:#d0d0d0; --text:#fff; --subtext0:#fff; --green:#0f0; --red:#ff6b6b; --yellow:#ff0; --blue:#3daee9; --mauve:#ff8cff; --peach:#ffb86c; --terminal-background:#000; }
+:root[data-visual-theme="monochrome-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#fff; --surface1:#666; --overlay0:#666; --text:#000; --subtext0:#666; --green:#000; --red:#666; --yellow:#666; --blue:#000; --mauve:#000; --peach:#666; --terminal-background:#fff; --primary-hover:#000; --danger-wash:rgba(102,102,102,.12); --danger-wash-hover:rgba(102,102,102,.22); --reload-overlay:rgba(102,102,102,.6); }
+:root[data-visual-theme="monochrome-dark"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#000; --surface1:#999; --overlay0:#999; --text:#fff; --subtext0:#999; --green:#fff; --red:#999; --yellow:#999; --blue:#fff; --mauve:#fff; --peach:#999; --terminal-background:#000; --primary-hover:#fff; --danger-wash:rgba(153,153,153,.12); --danger-wash-hover:rgba(153,153,153,.22); --reload-overlay:rgba(153,153,153,.6); }
 
 body {
   height: 100vh;
@@ -141,7 +147,7 @@ button:disabled:active {
 }
 
 .btn-primary:hover {
-  background: #b9f0b3;
+  background: var(--primary-hover);
   border-color: transparent;
 }
 
@@ -620,7 +626,7 @@ select:focus {
   padding: 1px 6px;
   border: 1px solid var(--red);
   border-radius: 3px;
-  background: rgba(243, 139, 168, 0.12);
+  background: var(--danger-wash);
   color: var(--red);
   font-size: 11px;
   font-weight: 700;
@@ -637,7 +643,7 @@ select:focus {
 }
 
 .terminal-stop-btn:hover:not(:disabled) {
-  background: rgba(243, 139, 168, 0.22);
+  background: var(--danger-wash-hover);
   border-color: var(--red);
   color: var(--text);
 }
@@ -742,7 +748,7 @@ body.is-resizing-horizontal * {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(17, 17, 27, 0.6);
+  background: var(--reload-overlay);
 }
 
 .session-reload-dialog {
