@@ -121,6 +121,20 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
       return result;
     },
+    onRemove: async ({ paths, recursive }) => {
+      const results = [];
+      let snapshot = null;
+      for (const path of paths) {
+        const result = await fsAPI.deleteWorkspaceEntry(path, { recursive });
+        results.push(result);
+        if (result?.ok) snapshot = result.snapshot;
+      }
+      if (snapshot) {
+        applyWorkspaceSnapshot(snapshot);
+        await persistenceGate.persistState();
+      }
+      return { results };
+    },
     getSource: () => editorAPI.getValue(),
     readWorkspaceFile: (path) => fsAPI.readWorkspaceFile(path),
   });

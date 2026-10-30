@@ -12,6 +12,7 @@
  *   ls                                 – list virtual files
  *   mkdir [-p] <dir>                   – create workspace directories
  *   touch <file>                       – create an empty workspace file
+ *   rm [-r] <path>...                  – remove workspace entries
  *   cat <file>                         – print file content
  *   pwd                                – print working directory
  *   help                               – list available commands
@@ -66,7 +67,7 @@ const CSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`
 
 /** Maximum number of commands retained in shell history. */
 const MAX_HISTORY_SIZE = 200;
-const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'touch ', 'cat ', 'pwd', 'help'];
+const TAB_COMMANDS = ['g++ ', 'g++ main.cpp', './a.out', 'clear', 'echo ', 'ls', 'cd ', 'mkdir ', 'touch ', 'rm ', 'cat ', 'pwd', 'help'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,7 @@ let workspaceCwd = '/';
 let _readWorkspaceFile = null;
 let _onMkdir = null;
 let _onTouch = null;
+let _onRemove = null;
 let initialPromptShown = false;
 
 // ── Interactive stdin (SharedArrayBuffer + Atomics) ───────────────────────────
@@ -916,6 +918,9 @@ async function executeCommand(cmdLine) {
     case 'touch':
       await cmdTouch(args);
       break;
+    case 'rm':
+      await cmdRm(args);
+      break;
     case 'cat':
       await cmdCat(args);
       break;
@@ -1176,6 +1181,37 @@ async function cmdTouch(args) {
   writePrompt();
 }
 
+async function cmdRm(args) {
+  const parsed = parseRmArgs(args);
+  if (!parsed.ok) {
+    term.write(`${C.red}Usage: rm [-r] <path>...${C.reset}${CRLF}`);
+    writePrompt();
+    return;
+  }
+
+  const paths = [];
+  for (const rawPath of parsed.pathArgs) {
+    const resolved = resolveWorkspaceDeletePath(rawPath);
+    if (!resolved) {
+      term.write(`${C.red}rm: cannot remove '${rawPath}': Invalid path${C.reset}${CRLF}`);
+      continue;
+    }
+    paths.push(resolved);
+  }
+  if (!paths.length) {
+    writePrompt();
+    return;
+  }
+
+  const result = await _onRemove?.({ paths, recursive: parsed.recursive });
+  for (const item of result?.results || []) {
+    if (!item?.ok) {
+      term.write(`${C.red}${formatRmFilesystemError(item)}${C.reset}${CRLF}`);
+    }
+  }
+  writePrompt();
+}
+
 function cmdHelp() {
   term.write(
     `${C.bold}Available commands:${C.reset}${CRLF}` +
@@ -1188,6 +1224,7 @@ function cmdHelp() {
     `  ${C.green}cd [dir]${C.reset}                                   Change folder in the opened workspace${CRLF}` +
     `  ${C.green}mkdir [-p] <dir>${C.reset}                            Create workspace directories${CRLF}` +
     `  ${C.green}touch <file>${C.reset}                               Create an empty workspace file${CRLF}` +
+    `  ${C.green}rm [-r] <path>...${C.reset}                           Delete workspace files or directories${CRLF}` +
     `  ${C.green}cat <file>${C.reset}                                 Print file contents${CRLF}` +
     `  ${C.green}pwd${C.reset}                                        Print current working directory${CRLF}` +
     `  ${C.green}help${C.reset}                                       Show this message${CRLF}` +
@@ -1266,6 +1303,7 @@ export function __setTerminalTestHarness({
   readWorkspaceFile = null,
   onMkdir = null,
   onTouch = null,
+  onRemove = null,
   supportsInteractiveStdin: supportsInteractiveStdinForTest = () => true,
   supportsMessageInteractiveStdin: supportsMessageInteractiveStdinForTest = () => false,
   createStdinSessionId: createStdinSessionIdForTest = () => 'stdin-session-test',
@@ -1283,6 +1321,7 @@ export function __setTerminalTestHarness({
   _readWorkspaceFile = readWorkspaceFile;
   _onMkdir = onMkdir;
   _onTouch = onTouch;
+  _onRemove = onRemove;
   _supportsInteractiveStdin = supportsInteractiveStdinForTest;
   _getStdinTransport = () => {
     if (supportsInteractiveStdinForTest()) return 'shared-buffer';
@@ -1381,6 +1420,21 @@ function parseTouchArgs(args) {
   return { ok: true, pathArg: args[0] };
 }
 
+function parseRmArgs(args) {
+  let recursive = false;
+  const pathArgs = [];
+  for (const arg of args) {
+    if (arg === '-r' || arg === '-R') {
+      recursive = true;
+    } else if (arg.startsWith('-')) {
+      return { ok: false };
+    } else {
+      pathArgs.push(arg);
+    }
+  }
+  return pathArgs.length ? { ok: true, recursive, pathArgs } : { ok: false };
+}
+
 function formatMkdirValidationError(result) {
   if (result.error === 'invalid-name') {
     const chars = (result.unsupportedChars || []).map((ch) => (ch === ' ' ? "' '" : ch));
@@ -1442,6 +1496,23 @@ function formatTouchFilesystemError(result, displayPath) {
   }
 }
 
+function formatRmFilesystemError(result) {
+  const path = result.path || '';
+  switch (result.error) {
+    case 'not-found':
+      return `rm: cannot remove '${path}': No such file or directory`;
+    case 'is-directory':
+      return `rm: cannot remove '${path}': Is a directory`;
+    case 'permission-denied':
+    case 'not-writable':
+      return `rm: cannot remove '${path}': Permission denied`;
+    case 'directory-not-empty':
+      return `rm: cannot remove '${path}': Directory not empty`;
+    default:
+      return `rm: cannot remove '${path}'`;
+  }
+}
+
 function promptPath() {
   if (!workspaceName || workspaceCwd === '/') return '~';
   return `~${workspaceCwd}`;
@@ -1469,6 +1540,23 @@ function resolvePath(input) {
     parts.push(part);
   }
   return '/' + parts.join('/');
+}
+
+function resolveWorkspaceDeletePath(input) {
+  const raw = String(input || '').trim();
+  if (!raw || raw.startsWith('/')) return null;
+
+  const parts = workspaceCwd.split('/').filter(Boolean);
+  for (const part of raw.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (!parts.length) return null;
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.length ? parts.join('/') : null;
 }
 
 function listDirEntries(dirPath) {

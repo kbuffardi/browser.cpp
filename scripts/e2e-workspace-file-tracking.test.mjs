@@ -247,8 +247,14 @@ class FakeDirHandle {
     }
     return child;
   }
-  async removeEntry(name) {
+  async removeEntry(name, { recursive = false } = {}) {
     if (!this.children.has(name)) { const e = new Error('NotFound'); e.name = 'NotFoundError'; throw e; }
+    const child = this.children.get(name);
+    if (child.kind === 'directory' && child.children.size && !recursive) {
+      const e = new Error('InvalidModification');
+      e.name = 'InvalidModificationError';
+      throw e;
+    }
     this.children.delete(name);
   }
 }
@@ -637,6 +643,64 @@ test('e2e: deleteWorkspaceFile is a no-op when no workspace is open', async () =
   assert.equal(await fs.deleteWorkspaceFile('out.txt'), null);
 });
 
+test('e2e: deleteWorkspaceEntry removes a nested file with a strict result contract', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  const src = new FakeDirHandle('src');
+  src.children.set('main.cpp', new FakeFileHandle('main.cpp'));
+  root.children.set('src', src);
+  await fs.openFolderFromHandle(root);
+
+  const result = await fs.deleteWorkspaceEntry('src/main.cpp');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'src/main.cpp');
+  assert.equal(src.children.has('main.cpp'), false);
+  assert.equal(result.snapshot.entries.some((entry) => entry.path === 'src/main.cpp'), false);
+});
+
+test('e2e: deleteWorkspaceEntry requires recursive intent for directories', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  const build = new FakeDirHandle('build');
+  build.children.set('app', new FakeFileHandle('app'));
+  root.children.set('build', build);
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.deleteWorkspaceEntry('build'), {
+    ok: false,
+    error: 'is-directory',
+    path: 'build',
+  });
+  assert.equal(root.children.has('build'), true);
+
+  const result = await fs.deleteWorkspaceEntry('build', { recursive: true });
+  assert.equal(result.ok, true);
+  assert.equal(root.children.has('build'), false);
+  assert.equal(result.snapshot.entries.some((entry) => entry.path.startsWith('build')), false);
+});
+
+test('e2e: deleteWorkspaceEntry rejects root-escaping and missing targets without mutation', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.children.set('keep.cpp', new FakeFileHandle('keep.cpp'));
+  await fs.openFolderFromHandle(root);
+
+  for (const path of ['', '/', '../outside.cpp', 'src/../../outside.cpp']) {
+    assert.deepEqual(await fs.deleteWorkspaceEntry(path), {
+      ok: false,
+      error: 'invalid-path',
+      path,
+    });
+  }
+  assert.deepEqual(await fs.deleteWorkspaceEntry('missing.cpp'), {
+    ok: false,
+    error: 'not-found',
+    path: 'missing.cpp',
+  });
+  assert.equal(root.children.has('keep.cpp'), true);
+});
+
 // ── Diagnostics stay scoped to the exact path for duplicate basenames ──────────
 
 test('e2e: diagnostics scope to the exact path when basenames collide', () => {
@@ -773,7 +837,7 @@ function createFakeDocument() {
     },
   };
   const ids = [
-    'btn-new', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
+    'btn-new', 'btn-delete-file', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
     'btn-compile-run', 'btn-stop-run', 'btn-clear-terminal', 'btn-toggle-terminal',
     'tab-bar', 'file-tree', 'status-file', 'status-compiler', 'cpp-standard',
   ];
@@ -829,10 +893,11 @@ async function setupToolbar(fsOverrides = {}) {
   }
   if (fsOverrides.window) global.window = fsOverrides.window;
   else delete global.window;
+  global.confirm = fsOverrides.confirm ?? (() => true);
   const toolbar = await import(`../src/ui/toolbar.js?tb=${Math.random()}`);
   const { editorAPI, editorCalls, terminalAPI, terminalCalls } = makeFakes();
 
-  const fsCalls = { create: [], write: [], delete: [], refresh: [], openFolder: 0, save: [], saveAs: [] };
+  const fsCalls = { create: [], write: [], delete: [], deleteEntry: [], refresh: [], openFolder: 0, save: [], saveAs: [] };
   const fsAPI = {
     newFile() {},
     getDirectoryHandle: () => ({}),
@@ -859,6 +924,11 @@ async function setupToolbar(fsOverrides = {}) {
     deleteWorkspaceFile: async (path) => {
       fsCalls.delete.push(path);
       return fsOverrides.deleteWorkspaceFileResult ?? { name: 'p', entries: [] };
+    },
+    deleteWorkspaceEntry: async (path, options) => {
+      fsCalls.deleteEntry.push({ path, options });
+      if (fsOverrides.deleteWorkspaceEntry) return fsOverrides.deleteWorkspaceEntry(path, options);
+      return fsOverrides.deleteWorkspaceEntryResult ?? { ok: true, path, snapshot: { name: 'p', entries: [] } };
     },
     saveFile: async (content, suggestedName) => {
       fsCalls.save.push({ content, suggestedName });
@@ -1009,6 +1079,65 @@ test('e2e: New file with a workspace shows an inline Explorer naming input', asy
   const input = inlineInput(ctx.document);
   assert.ok(input, 'inline input rendered');
   assert.equal(input.tagName, 'INPUT');
+});
+
+test('e2e: Explorer delete icon is enabled for the selected file and confirms before deletion', async () => {
+  let confirmations = 0;
+  const ctx = await setupToolbar({
+    confirm: () => { confirmations += 1; return true; },
+    deleteWorkspaceEntryResult: { ok: true, path: 'main.cpp', snapshot: { name: 'p', entries: [] } },
+  });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    [],
+    null
+  );
+
+  const deleteButton = ctx.document.getElementById('btn-delete-file');
+  assert.equal(deleteButton.disabled, true);
+  renderedTreeItem(ctx.document, 'main.cpp').click();
+  await tick();
+  assert.equal(deleteButton.disabled, false);
+
+  deleteButton.click();
+  await tick();
+
+  assert.equal(confirmations, 1);
+  assert.deepEqual(ctx.fsCalls.deleteEntry, [{ path: 'main.cpp', options: { recursive: false } }]);
+  assert.equal(deleteButton.disabled, true);
+  assert.equal(renderedTreePaths(ctx.document).includes('main.cpp'), false);
+});
+
+test('e2e: Explorer delete leaves the selected file untouched when confirmation is cancelled', async () => {
+  const ctx = await setupToolbar({ confirm: () => false });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+
+  ctx.document.getElementById('btn-delete-file').click();
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.deleteEntry, []);
+  assert.equal(renderedTreePaths(ctx.document).includes('main.cpp'), true);
+});
+
+test('e2e: Explorer delete requires a second confirmation for dirty selected tabs', async () => {
+  const confirmations = [true, false];
+  const ctx = await setupToolbar({ confirm: () => confirmations.shift() });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+  ctx.toolbar.markDirty(true);
+
+  ctx.document.getElementById('btn-delete-file').click();
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.deleteEntry, []);
+  assert.equal(ctx.toolbar.getActiveTabPath(), 'main.cpp');
 });
 
 test('e2e: submitting a root filename creates the file and opens it as the active tab', async () => {

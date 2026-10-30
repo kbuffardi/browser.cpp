@@ -230,6 +230,7 @@ for the sanitizer's checks and reporting behavior.
 | `cd [dir]` | Change the current workspace directory |
 | `mkdir [-p] <dir>` | Create workspace directories (`-p` creates missing parents) |
 | `touch <file>` | Create an empty file in the opened workspace (existing files are not overwritten) |
+| `rm [-r] <path>...` | Delete one or more workspace files; use `-r` for directories. Paths may use `..` only when they remain inside the opened workspace. |
 | `cat <file>` | Print file contents |
 | `pwd` | Print working directory |
 | `help` | Show command list |
