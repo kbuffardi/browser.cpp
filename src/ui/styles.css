@@ -27,6 +27,11 @@
   --danger-wash: rgba(243, 139, 168, 0.12);
   --danger-wash-hover: rgba(243, 139, 168, 0.22);
   --reload-overlay: rgba(17, 17, 27, 0.6);
+  --panel-explorer: var(--mantle);
+  --panel-editor: var(--base);
+  --panel-terminal: var(--crust);
+  --panel-border: var(--surface0);
+  --button-border: transparent;
 
   --toolbar-h: 36px;
   --statusbar-h: 22px;
@@ -44,8 +49,8 @@
 :root[data-visual-theme="vs-dark"] { --crust:#181818; --mantle:#202020; --base:#1e1e1e; --surface0:#2d2d30; --surface1:#3e3e42; --overlay0:#858585; --text:#d4d4d4; --subtext0:#a0a0a0; --green:#89d185; --red:#f48771; --yellow:#dcdcaa; --blue:#569cd6; --mauve:#c586c0; --peach:#ce9178; --terminal-background:#181818; }
 :root[data-visual-theme="hc-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#e5e5e5; --surface1:#6f6f6f; --overlay0:#333; --text:#000; --subtext0:#333; --green:#064; --red:#a80000; --yellow:#704d00; --blue:#0037da; --mauve:#5b00a5; --peach:#8a3100; --terminal-background:#fff; }
 :root[data-visual-theme="hc-black"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#1f1f1f; --surface1:#fff; --overlay0:#d0d0d0; --text:#fff; --subtext0:#fff; --green:#0f0; --red:#ff6b6b; --yellow:#ff0; --blue:#3daee9; --mauve:#ff8cff; --peach:#ffb86c; --terminal-background:#000; }
-:root[data-visual-theme="monochrome-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#fff; --surface1:#666; --overlay0:#666; --text:#000; --subtext0:#666; --green:#000; --red:#666; --yellow:#666; --blue:#000; --mauve:#000; --peach:#666; --terminal-background:#fff; --primary-hover:#000; --danger-wash:rgba(102,102,102,.12); --danger-wash-hover:rgba(102,102,102,.22); --reload-overlay:rgba(102,102,102,.6); }
-:root[data-visual-theme="monochrome-dark"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#000; --surface1:#999; --overlay0:#999; --text:#fff; --subtext0:#999; --green:#fff; --red:#999; --yellow:#999; --blue:#fff; --mauve:#fff; --peach:#999; --terminal-background:#000; --primary-hover:#fff; --danger-wash:rgba(153,153,153,.12); --danger-wash-hover:rgba(153,153,153,.22); --reload-overlay:rgba(153,153,153,.6); }
+:root[data-visual-theme="monochrome-light"] { --crust:#fff; --mantle:#fff; --base:#fff; --surface0:#fff; --surface1:#666; --overlay0:#666; --text:#000; --subtext0:#666; --green:#000; --red:#666; --yellow:#666; --blue:#000; --mauve:#000; --peach:#666; --terminal-background:#e6e6e6; --primary-hover:#000; --danger-wash:rgba(102,102,102,.12); --danger-wash-hover:rgba(102,102,102,.22); --reload-overlay:rgba(102,102,102,.6); --panel-explorer:#f2f2f2; --panel-editor:#fff; --panel-terminal:#e6e6e6; --panel-border:#666; --button-border:#666; }
+:root[data-visual-theme="monochrome-dark"] { --crust:#000; --mantle:#000; --base:#000; --surface0:#000; --surface1:#999; --overlay0:#999; --text:#fff; --subtext0:#999; --green:#fff; --red:#999; --yellow:#999; --blue:#fff; --mauve:#fff; --peach:#999; --terminal-background:#262626; --primary-hover:#fff; --danger-wash:rgba(153,153,153,.12); --danger-wash-hover:rgba(153,153,153,.22); --reload-overlay:rgba(153,153,153,.6); --panel-explorer:#1a1a1a; --panel-editor:#000; --panel-terminal:#262626; --panel-border:#999; --button-border:#999; }
 
 body {
   height: 100vh;
@@ -113,6 +118,11 @@ button {
   transition: background 0.1s;
 }
 
+:root[data-visual-theme="monochrome-light"] button,
+:root[data-visual-theme="monochrome-dark"] button {
+  border-color: var(--button-border);
+}
+
 button:hover {
   background: var(--surface1);
   border-color: var(--overlay0);
@@ -129,7 +139,7 @@ button:disabled:active {
   cursor: not-allowed;
   opacity: 0.5;
   background: var(--surface0);
-  border-color: transparent;
+  border-color: var(--button-border);
   filter: none;
 }
 
@@ -148,7 +158,7 @@ button:disabled:active {
 
 .btn-primary:hover {
   background: var(--primary-hover);
-  border-color: transparent;
+  border-color: var(--button-border);
 }
 
 select {
@@ -342,8 +352,8 @@ select:focus {
 #sidebar {
   width: var(--sidebar-w);
   min-width: 120px;
-  background: var(--mantle);
-  border-right: 1px solid var(--surface0);
+  background: var(--panel-explorer);
+  border-right: 1px solid var(--panel-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -365,7 +375,7 @@ select:focus {
 
 .panel-header-btn {
   background: transparent;
-  border: none;
+  border: 1px solid var(--button-border);
   padding: 2px 4px;
   color: var(--subtext0);
   font-size: 14px;
@@ -496,6 +506,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--panel-editor);
 }
 
 /* ── Tab bar ──────────────────────────────────────────────────────────────── */
@@ -503,8 +514,8 @@ select:focus {
 #tab-bar {
   display: flex;
   height: var(--tab-h);
-  background: var(--mantle);
-  border-bottom: 1px solid var(--surface0);
+  background: var(--panel-editor);
+  border-bottom: 1px solid var(--panel-border);
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
@@ -556,7 +567,7 @@ select:focus {
 
 .tab-close {
   background: none;
-  border: none;
+  border: 1px solid var(--button-border);
   color: var(--subtext0);
   padding: 0 2px;
   font-size: 14px;
@@ -575,6 +586,7 @@ select:focus {
 #editor-container {
   flex: 1;
   overflow: hidden;
+  background: var(--panel-editor);
 }
 
 /* ── Terminal panel ───────────────────────────────────────────────────────── */
@@ -582,8 +594,8 @@ select:focus {
 #terminal-panel {
   height: var(--terminal-h);
   min-height: 80px;
-  background: var(--crust);
-  border-top: 2px solid var(--surface0);
+  background: var(--panel-terminal);
+  border-top: 2px solid var(--panel-border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -600,8 +612,8 @@ select:focus {
   align-items: center;
   justify-content: space-between;
   padding: 4px 10px;
-  background: var(--mantle);
-  border-bottom: 1px solid var(--surface0);
+  background: var(--panel-terminal);
+  border-bottom: 1px solid var(--panel-border);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -661,7 +673,7 @@ select:focus {
 
 .panel-controls button {
   background: none;
-  border: none;
+  border: 1px solid var(--button-border);
   color: var(--subtext0);
   padding: 1px 4px;
   font-size: 13px;
@@ -677,6 +689,7 @@ select:focus {
   flex: 1;
   overflow: hidden;
   padding: 4px 6px;
+  background: var(--panel-terminal);
 }
 
 /* xterm overrides */

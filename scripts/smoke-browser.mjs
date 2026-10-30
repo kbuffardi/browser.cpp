@@ -1190,6 +1190,37 @@ int main() {
       `document.documentElement.dataset.visualTheme === '${themeId}'`
     ), `${themeId} theme selection`, 10_000);
 
+    if (themeId.startsWith('monochrome-')) {
+      const panelStyles = await evaluate(cdp, sessionId, `(() => {
+        const style = (selector) => {
+          const element = document.querySelector(selector);
+          const computed = element && getComputedStyle(element);
+          return computed && {
+            background: computed.backgroundColor,
+            border: computed.borderRightColor || computed.borderTopColor,
+          };
+        };
+        const button = document.querySelector('#toolbar button');
+        return {
+          explorer: style('#sidebar'),
+          editor: style('#editor-container'),
+          terminal: style('#terminal-panel'),
+          buttonBorder: button ? getComputedStyle(button).borderTopColor : null,
+        };
+      })()`);
+      const expectedPanels = themeId === 'monochrome-light'
+        ? { explorer: '#f2f2f2', editor: '#ffffff', terminal: '#e6e6e6', border: '#666666' }
+        : { explorer: '#1a1a1a', editor: '#000000', terminal: '#262626', border: '#999999' };
+      assert(normalizeCssColor(panelStyles.explorer.background) === expectedPanels.explorer,
+        `${themeId} explorer panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.editor.background) === expectedPanels.editor,
+        `${themeId} editor panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.terminal.background) === expectedPanels.terminal,
+        `${themeId} terminal panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.buttonBorder) === expectedPanels.border,
+        `${themeId} buttons do not have a contrasting outline`);
+    }
+
     const selection = await selectTerminalText(cdp, sessionId);
     const expectedSelectionBackground = {
       vs: '#0969da',
