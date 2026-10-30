@@ -685,6 +685,15 @@ select:focus {
   background: var(--surface0);
 }
 
+:root[data-visual-theme="monochrome-light"] .panel-header-btn,
+:root[data-visual-theme="monochrome-dark"] .panel-header-btn,
+:root[data-visual-theme="monochrome-light"] .tab-close,
+:root[data-visual-theme="monochrome-dark"] .tab-close,
+:root[data-visual-theme="monochrome-light"] .panel-controls button,
+:root[data-visual-theme="monochrome-dark"] .panel-controls button {
+  border: 1px solid var(--button-border);
+}
+
 #terminal-container {
   flex: 1;
   overflow: hidden;
