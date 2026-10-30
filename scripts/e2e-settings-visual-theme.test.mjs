@@ -66,18 +66,18 @@ test('terminal viewport inherits the active visual theme background', async () =
   );
   assert.deepEqual(
     [...css.matchAll(/--terminal-background:\s*(#[\da-f]{3,6});/gi)].map(([, color]) => color.toLowerCase()),
-    ['#11111b', '#fff', '#181818', '#fff', '#000', '#e6e6e6', '#262626']
+    ['#11111b', '#fff', '#181818', '#fff', '#000', '#d9d9d9', '#333']
   );
 });
 
 test('monochrome themes separate panels and outline buttons', async () => {
   const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
-  assert.match(css, /--panel-explorer:#f2f2f2/);
+  assert.match(css, /--panel-explorer:#d9d9d9/);
   assert.match(css, /--panel-editor:#fff/);
-  assert.match(css, /--panel-terminal:#e6e6e6/);
-  assert.match(css, /--panel-explorer:#1a1a1a/);
+  assert.match(css, /--panel-terminal:#d9d9d9/);
+  assert.match(css, /--panel-explorer:#333/);
   assert.match(css, /--panel-editor:#000/);
-  assert.match(css, /--panel-terminal:#262626/);
+  assert.match(css, /--panel-terminal:#333/);
   assert.match(css, /--button-border:#666/);
   assert.match(css, /--button-border:#999/);
   assert.match(css, /:root\[data-visual-theme="monochrome-light"\][\s\S]*button[\s\S]*border-color: var\(--button-border\);/);
