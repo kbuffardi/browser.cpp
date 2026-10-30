@@ -2,16 +2,30 @@
 
 export const DEFAULT_VISUAL_THEME_ID = 'browser-cpp-dark';
 
-const terminal = (background, foreground, accent, selection) => ({
+const DEFAULT_ANSI_COLORS = {
+  black: foreground => foreground, red: '#c01c28', green: '#2d7d46', yellow: '#9a6700',
+  blue: '#0969da', magenta: '#8250df', cyan: '#0a7b83', white: foreground => foreground,
+  brightBlack: '#768390', brightRed: '#d1242f', brightGreen: '#1a7f37',
+  brightYellow: '#bf8700', brightBlue: '#218bff', brightMagenta: '#a475f9',
+  brightCyan: '#1b9aaa', brightWhite: foreground => foreground,
+};
+
+const terminal = (background, foreground, accent, selection, ansi = DEFAULT_ANSI_COLORS) => ({
   background, foreground, cursor: accent, cursorAccent: background,
   selectionForeground: selection.foreground,
   selectionBackground: selection.background,
   selectionInactiveBackground: selection.inactiveBackground,
-  black: foreground, red: '#c01c28', green: '#2d7d46', yellow: '#9a6700',
-  blue: '#0969da', magenta: '#8250df', cyan: '#0a7b83', white: foreground,
-  brightBlack: '#768390', brightRed: '#d1242f', brightGreen: '#1a7f37',
-  brightYellow: '#bf8700', brightBlue: '#218bff', brightMagenta: '#a475f9',
-  brightCyan: '#1b9aaa', brightWhite: foreground,
+  ...Object.fromEntries(Object.entries(ansi).map(([key, value]) => [
+    key, typeof value === 'function' ? value(foreground) : value,
+  ])),
+});
+
+const monochromeAnsi = (foreground, tertiary) => ({
+  black: foreground, red: tertiary, green: tertiary, yellow: tertiary,
+  blue: tertiary, magenta: tertiary, cyan: tertiary, white: foreground,
+  brightBlack: tertiary, brightRed: foreground, brightGreen: foreground,
+  brightYellow: foreground, brightBlue: foreground, brightMagenta: foreground,
+  brightCyan: foreground, brightWhite: foreground,
 });
 
 const visualTheme = ({ id, label, monacoTheme, selection, cssTokens, terminalColors, preview }) => ({
@@ -24,7 +38,8 @@ const visualTheme = ({ id, label, monacoTheme, selection, cssTokens, terminalCol
     terminalColors.background,
     terminalColors.foreground,
     terminalColors.accent,
-    selection
+    selection,
+    terminalColors.ansi
   ),
   preview,
 });
@@ -59,6 +74,18 @@ export const VISUAL_THEMES = Object.freeze([
     selection: { foreground: '#000000', background: '#ffff00', inactiveBackground: '#ffff00' },
     cssTokens: { crust: '#000000', mantle: '#000000', base: '#000000', surface0: '#1f1f1f', surface1: '#ffffff', overlay0: '#d0d0d0', text: '#ffffff', subtext0: '#ffffff', green: '#00ff00', red: '#ff6b6b', yellow: '#ffff00', blue: '#3daee9', mauve: '#ff8cff', peach: '#ffb86c' },
     terminalColors: { background: '#000000', foreground: '#ffffff', accent: '#ffffff' }, preview: { background: '#000000', foreground: '#ffffff', accent: '#ffff00' },
+  }),
+  visualTheme({
+    id: 'monochrome-light', label: 'Monochrome Light', monacoTheme: 'browser-cpp-monochrome-light',
+    selection: { foreground: '#ffffff', background: '#666666', inactiveBackground: '#999999' },
+    cssTokens: { crust: '#ffffff', mantle: '#ffffff', base: '#ffffff', surface0: '#ffffff', surface1: '#666666', overlay0: '#666666', text: '#000000', subtext0: '#666666', green: '#000000', red: '#666666', yellow: '#666666', blue: '#000000', mauve: '#000000', peach: '#666666' },
+    terminalColors: { background: '#dddddd', foreground: '#000000', accent: '#666666', ansi: monochromeAnsi('#000000', '#666666') }, preview: { background: '#ffffff', foreground: '#000000', accent: '#666666' },
+  }),
+  visualTheme({
+    id: 'monochrome-dark', label: 'Monochrome Dark', monacoTheme: 'browser-cpp-monochrome-dark',
+    selection: { foreground: '#000000', background: '#999999', inactiveBackground: '#666666' },
+    cssTokens: { crust: '#000000', mantle: '#000000', base: '#000000', surface0: '#000000', surface1: '#999999', overlay0: '#999999', text: '#ffffff', subtext0: '#999999', green: '#ffffff', red: '#999999', yellow: '#999999', blue: '#ffffff', mauve: '#ffffff', peach: '#999999' },
+    terminalColors: { background: '#222222', foreground: '#ffffff', accent: '#999999', ansi: monochromeAnsi('#ffffff', '#999999') }, preview: { background: '#000000', foreground: '#ffffff', accent: '#999999' },
   }),
 ]);
 

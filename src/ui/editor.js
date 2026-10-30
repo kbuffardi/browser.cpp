@@ -32,6 +32,10 @@ self.MonacoEnvironment = {
 // ── Internal state ────────────────────────────────────────────────────────────
 let _editor = null;
 
+function isMonochromeTheme(theme) {
+  return theme === 'browser-cpp-monochrome-light' || theme === 'browser-cpp-monochrome-dark';
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -73,6 +77,39 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
 
   for (const visualTheme of VISUAL_THEMES) {
     if (visualTheme.id === 'browser-cpp-dark') continue;
+    if (visualTheme.id.startsWith('monochrome-')) {
+      const { cssTokens: colors } = visualTheme;
+      const isLight = visualTheme.id === 'monochrome-light';
+      monaco.editor.defineTheme(visualTheme.monacoTheme, {
+        base: isLight ? 'vs' : 'vs-dark',
+        inherit: false,
+        rules: [],
+        colors: {
+          'editor.background': colors.base,
+          'editor.foreground': colors.text,
+          'editorLineNumber.foreground': colors.subtext0,
+          'editorLineNumber.activeForeground': colors.text,
+          'editor.lineHighlightBackground': colors.surface0,
+          'editorCursor.foreground': colors.text,
+          'editor.selectionForeground': visualTheme.selection.foreground,
+          'editor.selectionBackground': visualTheme.selection.background,
+          'editor.inactiveSelectionBackground': visualTheme.selection.inactiveBackground,
+          'editorIndentGuide.background': colors.surface1,
+          'editorWidget.background': colors.mantle,
+          'editorSuggestWidget.background': colors.mantle,
+          'editorSuggestWidget.border': colors.surface1,
+          'minimap.background': colors.mantle,
+          'editorBracketHighlight.foreground1': colors.text,
+          'editorBracketHighlight.foreground2': colors.text,
+          'editorBracketHighlight.foreground3': colors.text,
+          'editorBracketHighlight.foreground4': colors.text,
+          'editorBracketHighlight.foreground5': colors.text,
+          'editorBracketHighlight.foreground6': colors.text,
+          'editorBracketHighlight.unexpectedBracket.foreground': colors.text,
+        },
+      });
+      continue;
+    }
     monaco.editor.defineTheme(visualTheme.monacoTheme, {
       base: visualTheme.id,
       inherit: true,
@@ -105,6 +142,11 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     cursorBlinking: 'smooth',
     cursorSmoothCaretAnimation: 'on',
     automaticLayout: true, // resize with container
+  });
+
+  _editor.updateOptions({
+    bracketPairColorization: { enabled: !isMonochromeTheme(theme) },
+    guides: { bracketPairs: !isMonochromeTheme(theme), indentation: true },
   });
 
   if (new URLSearchParams(globalThis.location?.search || '').has('smoke-test')) {
@@ -140,6 +182,10 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
 
 export function setTheme(theme) {
   monaco.editor.setTheme(theme);
+  _editor?.updateOptions({
+    bracketPairColorization: { enabled: !isMonochromeTheme(theme) },
+    guides: { bracketPairs: !isMonochromeTheme(theme), indentation: true },
+  });
 }
 
 /** Get the full text of the current document. */

@@ -1039,7 +1039,7 @@ int main() {
     assert(helpOutput.includes('Run the last compiled binary'),
       'Real help output is missing the run-command description');
     let previousSelection = null;
-    for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black']) {
+    for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black', 'monochrome-light', 'monochrome-dark']) {
       await evaluate(cdp, sessionId, `document.querySelector('input[name="visual-theme"][value="${themeId}"]')?.click()`);
       await waitFor(async () => evaluate(
         cdp,
@@ -1051,6 +1051,17 @@ int main() {
       `${themeId} computed Monaco selection styles`, 5_000);
       assert(monacoColors?.background && monacoColors.foreground && monacoColors.inactiveBackground,
         `${themeId} Monaco selection styles were not computed`);
+      if (themeId.startsWith('monochrome-')) {
+        const editorTextColors = await evaluate(cdp, sessionId, `(() => {
+          const spans = [...document.querySelectorAll('.monaco-editor .view-lines .view-line span')];
+          return spans.map((element) => getComputedStyle(element).color).filter(Boolean);
+        })()`);
+        assert(editorTextColors.length > 0, `${themeId} rendered no Monaco text spans`);
+        assert(editorTextColors.every((color) => {
+          const channels = color.match(/[\\d.]+/g)?.map(Number);
+          return channels?.length >= 3 && channels[0] === channels[1] && channels[1] === channels[2];
+        }), `${themeId} Monaco text contains chromatic syntax or bracket colors`);
+      }
       if (previousSelection) {
         const retained = await evaluate(cdp, sessionId,
           `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
@@ -1167,7 +1178,7 @@ int main() {
   assert(createdFileText === 'hello from fstream\n', `Expected output.txt to be created, got: ${JSON.stringify(createdFileText)}`);
   assert(terminalText.includes('5 stream wrote output.txt'), `Expected stream-insertion output, got: ${JSON.stringify(terminalText)}`);
 
-  for (const themeId of ['vs', 'hc-light']) {
+  for (const themeId of ['vs', 'hc-light', 'monochrome-light', 'monochrome-dark']) {
     await evaluate(cdp, sessionId, `(() => {
       const input = document.querySelector('input[name="visual-theme"][value="${themeId}"]');
       input?.click();
@@ -1179,14 +1190,56 @@ int main() {
       `document.documentElement.dataset.visualTheme === '${themeId}'`
     ), `${themeId} theme selection`, 10_000);
 
+    if (themeId.startsWith('monochrome-')) {
+      const panelStyles = await evaluate(cdp, sessionId, `(() => {
+        const style = (selector) => {
+          const element = document.querySelector(selector);
+          const computed = element && getComputedStyle(element);
+          return computed && {
+            background: computed.backgroundColor,
+            border: computed.borderRightColor || computed.borderTopColor,
+          };
+        };
+        const button = document.querySelector('#toolbar button');
+        return {
+          explorer: style('#sidebar'),
+          editor: style('#editor-container'),
+          terminal: style('#terminal-panel'),
+          buttonBorder: button ? getComputedStyle(button).borderTopColor : null,
+        };
+      })()`);
+      const expectedPanels = themeId === 'monochrome-light'
+        ? { explorer: '#dddddd', editor: '#ffffff', terminal: '#dddddd', border: '#666666' }
+        : { explorer: '#222222', editor: '#000000', terminal: '#222222', border: '#999999' };
+      assert(normalizeCssColor(panelStyles.explorer.background) === expectedPanels.explorer,
+        `${themeId} explorer panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.editor.background) === expectedPanels.editor,
+        `${themeId} editor panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.terminal.background) === expectedPanels.terminal,
+        `${themeId} terminal panel has the wrong background`);
+      assert(normalizeCssColor(panelStyles.buttonBorder) === expectedPanels.border,
+        `${themeId} buttons do not have a contrasting outline`);
+    }
+
     const selection = await selectTerminalText(cdp, sessionId);
-    const expectedSelectionBackground = themeId === 'vs' ? '#0969da' : '#0037da';
+    const expectedSelectionBackground = {
+      vs: '#0969da',
+      'hc-light': '#0037da',
+      'monochrome-light': '#666666',
+      'monochrome-dark': '#999999',
+    }[themeId];
     assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
     assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);
     assert(selection.theme.selectionBackground === expectedSelectionBackground,
       `${themeId} did not apply its configured terminal selection background`);
     assert(selection.theme.selectionBackground !== selection.theme.background,
       `${themeId} terminal selection is not distinct from its background`);
+    if (themeId.startsWith('monochrome-')) {
+      const colors = [selection.theme.background, selection.theme.foreground,
+        selection.theme.selectionBackground, selection.theme.selectionForeground];
+      assert(colors.every((color) => /^#([\da-f]{2})\1\1$/i.test(color)),
+        `${themeId} terminal colors are not grayscale: ${colors.join(', ')}`);
+    }
     const currentTerminal = await evaluate(
       cdp,
       sessionId,
