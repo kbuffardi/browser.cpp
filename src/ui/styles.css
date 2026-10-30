@@ -566,6 +566,13 @@ select:focus {
   box-shadow: inset 0 0 0 1px var(--panel-border);
 }
 
+:root[data-visual-theme="monochrome-light"] .tab.active,
+:root[data-visual-theme="monochrome-dark"] .tab.active {
+  border-top-color: var(--blue);
+  border-right-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+
 .tab.dirty::after {
   content: '●';
   color: var(--yellow);
