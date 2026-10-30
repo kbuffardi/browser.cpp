@@ -601,6 +601,16 @@ select:focus {
   background: var(--panel-editor);
 }
 
+/* Monaco preserves token colors inside selections, so monochrome themes must
+ * explicitly paint selected glyphs over their configured selection background. */
+:root[data-visual-theme="monochrome-light"] .monaco-editor .selected-text {
+  color: #fff !important;
+}
+
+:root[data-visual-theme="monochrome-dark"] .monaco-editor .selected-text {
+  color: #000 !important;
+}
+
 /* ── Terminal panel ───────────────────────────────────────────────────────── */
 
 #terminal-panel {
