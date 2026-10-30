@@ -375,7 +375,7 @@ select:focus {
 
 .panel-header-btn {
   background: transparent;
-  border: 1px solid var(--button-border);
+  border: none;
   padding: 2px 4px;
   color: var(--subtext0);
   font-size: 14px;
@@ -567,7 +567,7 @@ select:focus {
 
 .tab-close {
   background: none;
-  border: 1px solid var(--button-border);
+  border: none;
   color: var(--subtext0);
   padding: 0 2px;
   font-size: 14px;
@@ -673,7 +673,7 @@ select:focus {
 
 .panel-controls button {
   background: none;
-  border: 1px solid var(--button-border);
+  border: none;
   color: var(--subtext0);
   padding: 1px 4px;
   font-size: 13px;
