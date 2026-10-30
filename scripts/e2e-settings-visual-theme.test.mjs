@@ -86,6 +86,8 @@ test('monochrome themes separate panels and outline buttons', async () => {
   assert.match(css, /\.tab-close[\s\S]*border: none;/);
   assert.match(css, /\.panel-controls button[\s\S]*border: none;/);
   assert.match(css, /monochrome-light[^}]*\.panel-header-btn[\s\S]*border: 1px solid var\(--button-border\);/);
+  assert.match(css, /monochrome-light[^}]*\.tab[\s\S]*border: 1px solid var\(--panel-border\);/);
+  assert.match(css, /monochrome-dark[^}]*\.tab\.active[\s\S]*border: 1px solid var\(--panel-border\);/);
 });
 
 function contrastRatio(foreground, background) {

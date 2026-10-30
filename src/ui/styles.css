@@ -558,6 +558,13 @@ select:focus {
   border-top: 1px solid var(--blue);
 }
 
+:root[data-visual-theme="monochrome-light"] .tab,
+:root[data-visual-theme="monochrome-dark"] .tab,
+:root[data-visual-theme="monochrome-light"] .tab.active,
+:root[data-visual-theme="monochrome-dark"] .tab.active {
+  border: 1px solid var(--panel-border);
+}
+
 .tab.dirty::after {
   content: '●';
   color: var(--yellow);
