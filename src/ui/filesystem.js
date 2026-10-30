@@ -506,6 +506,57 @@ export async function deleteWorkspaceFile(path) {
 }
 
 /**
+ * Delete one user-requested workspace entry through the opened directory
+ * handle. This is intentionally stricter than deleteWorkspaceFile(), which is
+ * retained for runtime VFS cleanup compatibility.
+ *
+ * @param {string} inputPath
+ * @param {{ recursive?: boolean }} [options]
+ * @returns {Promise<
+ *   {ok:true, path:string, snapshot:object} |
+ *   {ok:false, error:string, path?:string}
+ * >}
+ */
+export async function deleteWorkspaceEntry(inputPath, { recursive = false } = {}) {
+  if (!workspaceName) return { ok: false, error: 'no-workspace' };
+  if (!currentDirectoryHandle) return { ok: false, error: 'not-writable' };
+
+  const validated = validateWorkspaceDeletionPath(inputPath);
+  if (!validated.ok) return { ok: false, error: 'invalid-path', path: inputPath };
+
+  const key = validated.path;
+  const entry = workspaceEntries.find((item) => item.path === key) || null;
+  if (!entry) return { ok: false, error: 'not-found', path: key };
+  if (entry.kind === 'directory' && !recursive) {
+    return { ok: false, error: 'is-directory', path: key };
+  }
+
+  const segments = key.split('/');
+  const name = segments.pop();
+  let parent = currentDirectoryHandle;
+  try {
+    for (const segment of segments) {
+      parent = await parent.getDirectoryHandle(segment, { create: false });
+    }
+    await parent.removeEntry(name, { recursive: entry.kind === 'directory' && recursive });
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') {
+      return { ok: false, error: 'permission-denied', path: key };
+    }
+    if (err?.name === 'NotFoundError') {
+      return { ok: false, error: 'not-found', path: key };
+    }
+    if (err?.name === 'InvalidModificationError') {
+      return { ok: false, error: 'directory-not-empty', path: key };
+    }
+    return { ok: false, error: 'delete-failed', path: key };
+  }
+
+  const refreshed = await refreshWorkspace();
+  return { ok: true, path: key, snapshot: refreshed?.snapshot ?? getWorkspaceSnapshot() };
+}
+
+/**
  * Create a new, empty (or seeded) file in the opened workspace from an
  * Explorer-driven action. Validates/normalises the user-entered path, rejects
  * paths that already exist, materialises the file on disk, updates the in-memory
@@ -953,4 +1004,21 @@ async function detectGitMetadata(entries = workspaceEntries, files = workspaceFi
 
 function normalizeWorkspacePath(path) {
   return String(path || '').replace(/^\/+/, '');
+}
+
+/**
+ * Validate an already-resolved workspace-relative deletion path. Terminal path
+ * navigation is resolved before this boundary; this guard rejects any raw path
+ * that could refer to the workspace root or escape its directory handle.
+ */
+function validateWorkspaceDeletionPath(inputPath) {
+  const raw = String(inputPath ?? '').trim();
+  if (!raw || raw.startsWith('/')) return { ok: false };
+
+  const segments = raw.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    return { ok: false };
+  }
+
+  return { ok: true, path: segments.join('/') };
 }

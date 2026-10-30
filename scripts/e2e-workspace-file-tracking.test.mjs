@@ -247,8 +247,14 @@ class FakeDirHandle {
     }
     return child;
   }
-  async removeEntry(name) {
+  async removeEntry(name, { recursive = false } = {}) {
     if (!this.children.has(name)) { const e = new Error('NotFound'); e.name = 'NotFoundError'; throw e; }
+    const child = this.children.get(name);
+    if (child.kind === 'directory' && child.children.size && !recursive) {
+      const e = new Error('InvalidModification');
+      e.name = 'InvalidModificationError';
+      throw e;
+    }
     this.children.delete(name);
   }
 }
@@ -635,6 +641,64 @@ test('e2e: deleteWorkspaceFile removes a file from disk and refreshes the snapsh
 test('e2e: deleteWorkspaceFile is a no-op when no workspace is open', async () => {
   const fs = await importFreshFilesystem();
   assert.equal(await fs.deleteWorkspaceFile('out.txt'), null);
+});
+
+test('e2e: deleteWorkspaceEntry removes a nested file with a strict result contract', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  const src = new FakeDirHandle('src');
+  src.children.set('main.cpp', new FakeFileHandle('main.cpp'));
+  root.children.set('src', src);
+  await fs.openFolderFromHandle(root);
+
+  const result = await fs.deleteWorkspaceEntry('src/main.cpp');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'src/main.cpp');
+  assert.equal(src.children.has('main.cpp'), false);
+  assert.equal(result.snapshot.entries.some((entry) => entry.path === 'src/main.cpp'), false);
+});
+
+test('e2e: deleteWorkspaceEntry requires recursive intent for directories', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  const build = new FakeDirHandle('build');
+  build.children.set('app', new FakeFileHandle('app'));
+  root.children.set('build', build);
+  await fs.openFolderFromHandle(root);
+
+  assert.deepEqual(await fs.deleteWorkspaceEntry('build'), {
+    ok: false,
+    error: 'is-directory',
+    path: 'build',
+  });
+  assert.equal(root.children.has('build'), true);
+
+  const result = await fs.deleteWorkspaceEntry('build', { recursive: true });
+  assert.equal(result.ok, true);
+  assert.equal(root.children.has('build'), false);
+  assert.equal(result.snapshot.entries.some((entry) => entry.path.startsWith('build')), false);
+});
+
+test('e2e: deleteWorkspaceEntry rejects root-escaping and missing targets without mutation', async () => {
+  const fs = await importFreshFilesystem();
+  const root = new FakeDirHandle('project');
+  root.children.set('keep.cpp', new FakeFileHandle('keep.cpp'));
+  await fs.openFolderFromHandle(root);
+
+  for (const path of ['', '/', '../outside.cpp', 'src/../../outside.cpp']) {
+    assert.deepEqual(await fs.deleteWorkspaceEntry(path), {
+      ok: false,
+      error: 'invalid-path',
+      path,
+    });
+  }
+  assert.deepEqual(await fs.deleteWorkspaceEntry('missing.cpp'), {
+    ok: false,
+    error: 'not-found',
+    path: 'missing.cpp',
+  });
+  assert.equal(root.children.has('keep.cpp'), true);
 });
 
 // ── Diagnostics stay scoped to the exact path for duplicate basenames ──────────
