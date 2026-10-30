@@ -1209,8 +1209,8 @@ int main() {
         };
       })()`);
       const expectedPanels = themeId === 'monochrome-light'
-        ? { explorer: '#d9d9d9', editor: '#ffffff', terminal: '#d9d9d9', border: '#666666' }
-        : { explorer: '#333333', editor: '#000000', terminal: '#333333', border: '#999999' };
+        ? { explorer: '#dddddd', editor: '#ffffff', terminal: '#dddddd', border: '#666666' }
+        : { explorer: '#222222', editor: '#000000', terminal: '#222222', border: '#999999' };
       assert(normalizeCssColor(panelStyles.explorer.background) === expectedPanels.explorer,
         `${themeId} explorer panel has the wrong background`);
       assert(normalizeCssColor(panelStyles.editor.background) === expectedPanels.editor,
