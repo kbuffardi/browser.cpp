@@ -1241,8 +1241,8 @@ int main() {
     const expectedSelectionBackground = {
       vs: '#0969da',
       'hc-light': '#0037da',
-      'monochrome-light': '#000000',
-      'monochrome-dark': '#ffffff',
+      'monochrome-light': '#999999',
+      'monochrome-dark': '#555555',
     }[themeId];
     assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
     assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);

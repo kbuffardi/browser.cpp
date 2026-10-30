@@ -94,16 +94,21 @@ test('monochrome themes separate panels and outline buttons', async () => {
   assert.match(css, /monochrome-dark[^}]*border-color: var\(--blue\);/);
 });
 
-test('monochrome Monaco selections override token foreground colors', async () => {
+test('monochrome Monaco selection backgrounds contrast with normal code text', async () => {
   const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
-  assert.match(css, /:root\[data-visual-theme="monochrome-light"\]\s+\.monaco-editor\s+\.selected-text\s*\{[^}]*color:\s*#fff\s*!important;/s);
-  assert.match(css, /:root\[data-visual-theme="monochrome-dark"\]\s+\.monaco-editor\s+\.selected-text\s*\{[^}]*color:\s*#000\s*!important;/s);
+  for (const theme of VISUAL_THEMES.filter(({ id }) => id.startsWith('monochrome-'))) {
+    assert.equal(theme.selection.foreground, theme.cssTokens.text);
+    assert.ok(contrastRatio(theme.cssTokens.text, theme.selection.background) >= 4.5);
+    assert.ok(contrastRatio(theme.cssTokens.text, theme.selection.inactiveBackground) >= 4.5);
+  }
+  assert.doesNotMatch(css, /\.monaco-editor\s+\.selected-text\s*\{[^}]*color:/s);
 });
 
 test('Monaco selection smoke hook reads a real editor selection', async () => {
   const editor = await readFile(new URL('../src/ui/editor.js', import.meta.url), 'utf8');
   assert.match(editor, /_editor\.setSelection\(new monaco\.Range\(/);
-  assert.match(editor, /editorNode\.querySelector\('\.view-line \.selected-text'\)/);
+  assert.match(editor, /editorNode\.querySelector\('\.view-overlays \.selected-text'\)/);
+  assert.match(editor, /editorNode\.querySelector\('\.view-lines \.view-line span'\)/);
   assert.doesNotMatch(editor, /document\.createElement\('div'\)/);
 });
 

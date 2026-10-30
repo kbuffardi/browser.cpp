@@ -77,13 +77,13 @@ export const VISUAL_THEMES = Object.freeze([
   }),
   visualTheme({
     id: 'monochrome-light', label: 'Monochrome Light', monacoTheme: 'browser-cpp-monochrome-light',
-    selection: { foreground: '#ffffff', background: '#000000', inactiveBackground: '#666666' },
+    selection: { foreground: '#000000', background: '#999999', inactiveBackground: '#bbbbbb' },
     cssTokens: { crust: '#ffffff', mantle: '#ffffff', base: '#ffffff', surface0: '#ffffff', surface1: '#666666', overlay0: '#666666', text: '#000000', subtext0: '#666666', green: '#000000', red: '#666666', yellow: '#666666', blue: '#000000', mauve: '#000000', peach: '#666666' },
     terminalColors: { background: '#dddddd', foreground: '#000000', accent: '#666666', ansi: monochromeAnsi('#000000', '#666666') }, preview: { background: '#ffffff', foreground: '#000000', accent: '#666666' },
   }),
   visualTheme({
     id: 'monochrome-dark', label: 'Monochrome Dark', monacoTheme: 'browser-cpp-monochrome-dark',
-    selection: { foreground: '#000000', background: '#ffffff', inactiveBackground: '#999999' },
+    selection: { foreground: '#ffffff', background: '#555555', inactiveBackground: '#707070' },
     cssTokens: { crust: '#000000', mantle: '#000000', base: '#000000', surface0: '#000000', surface1: '#999999', overlay0: '#999999', text: '#ffffff', subtext0: '#999999', green: '#ffffff', red: '#999999', yellow: '#999999', blue: '#ffffff', mauve: '#ffffff', peach: '#999999' },
     terminalColors: { background: '#222222', foreground: '#ffffff', accent: '#999999', ansi: monochromeAnsi('#ffffff', '#999999') }, preview: { background: '#000000', foreground: '#ffffff', accent: '#999999' },
   }),
