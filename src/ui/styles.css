@@ -563,21 +563,11 @@ select:focus {
 :root[data-visual-theme="monochrome-light"] .tab.active,
 :root[data-visual-theme="monochrome-dark"] .tab.active {
   border: 1px solid var(--panel-border);
-  box-shadow: inset 0 0 0 1px var(--panel-border);
 }
 
 :root[data-visual-theme="monochrome-light"] .tab.active,
 :root[data-visual-theme="monochrome-dark"] .tab.active {
-  border-top-color: var(--blue);
-  border-right-color: var(--blue);
-  box-shadow: inset 0 0 0 1px var(--blue);
-}
-
-:root[data-visual-theme="monochrome-light"] .tab,
-:root[data-visual-theme="monochrome-dark"] .tab {
-  position: relative;
-  z-index: 1;
-  border-right: 2px solid var(--blue) !important;
+  border-color: var(--blue);
 }
 
 .tab.dirty::after {
