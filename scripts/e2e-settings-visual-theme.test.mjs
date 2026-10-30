@@ -31,6 +31,9 @@ test('theme registry exposes the requested Monaco themes and safe fallback', () 
     assert.deepEqual(theme.terminalTheme.selectionBackground, theme.selection.background);
     assert.deepEqual(theme.terminalTheme.selectionInactiveBackground, theme.selection.inactiveBackground);
     assert.ok(contrastRatio(theme.selection.foreground, theme.selection.background) >= 4.5);
+    if (theme.id.startsWith('monochrome-')) {
+      assert.ok(contrastRatio(theme.selection.foreground, theme.selection.inactiveBackground) >= 4.5);
+    }
     assert.notEqual(theme.selection.background, theme.terminalTheme.background);
   }
   assert.deepEqual(VISUAL_THEMES.map(({ id }) => id), [
