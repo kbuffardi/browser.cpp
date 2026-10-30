@@ -1051,6 +1051,17 @@ int main() {
       `${themeId} computed Monaco selection styles`, 5_000);
       assert(monacoColors?.background && monacoColors.foreground && monacoColors.inactiveBackground,
         `${themeId} Monaco selection styles were not computed`);
+      if (themeId.startsWith('monochrome-')) {
+        const editorTextColors = await evaluate(cdp, sessionId, `(() => {
+          const spans = [...document.querySelectorAll('.monaco-editor .view-lines .view-line span')];
+          return spans.map((element) => getComputedStyle(element).color).filter(Boolean);
+        })()`);
+        assert(editorTextColors.length > 0, `${themeId} rendered no Monaco text spans`);
+        assert(editorTextColors.every((color) => {
+          const channels = color.match(/[\\d.]+/g)?.map(Number);
+          return channels?.length >= 3 && channels[0] === channels[1] && channels[1] === channels[2];
+        }), `${themeId} Monaco text contains chromatic syntax or bracket colors`);
+      }
       if (previousSelection) {
         const retained = await evaluate(cdp, sessionId,
           `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);

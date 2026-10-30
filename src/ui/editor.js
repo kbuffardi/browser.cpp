@@ -32,6 +32,10 @@ self.MonacoEnvironment = {
 // ── Internal state ────────────────────────────────────────────────────────────
 let _editor = null;
 
+function isMonochromeTheme(theme) {
+  return theme === 'browser-cpp-monochrome-light' || theme === 'browser-cpp-monochrome-dark';
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -95,6 +99,13 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
           'editorSuggestWidget.background': colors.mantle,
           'editorSuggestWidget.border': colors.surface1,
           'minimap.background': colors.mantle,
+          'editorBracketHighlight.foreground1': colors.text,
+          'editorBracketHighlight.foreground2': colors.text,
+          'editorBracketHighlight.foreground3': colors.text,
+          'editorBracketHighlight.foreground4': colors.text,
+          'editorBracketHighlight.foreground5': colors.text,
+          'editorBracketHighlight.foreground6': colors.text,
+          'editorBracketHighlight.unexpectedBracket.foreground': colors.text,
         },
       });
       continue;
@@ -133,6 +144,11 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     automaticLayout: true, // resize with container
   });
 
+  _editor.updateOptions({
+    bracketPairColorization: { enabled: !isMonochromeTheme(theme) },
+    guides: { bracketPairs: !isMonochromeTheme(theme), indentation: true },
+  });
+
   if (new URLSearchParams(globalThis.location?.search || '').has('smoke-test')) {
     container.__browserCppPrepareSelectionColorRead = () => {
       return true;
@@ -166,6 +182,10 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
 
 export function setTheme(theme) {
   monaco.editor.setTheme(theme);
+  _editor?.updateOptions({
+    bracketPairColorization: { enabled: !isMonochromeTheme(theme) },
+    guides: { bracketPairs: !isMonochromeTheme(theme), indentation: true },
+  });
 }
 
 /** Get the full text of the current document. */
