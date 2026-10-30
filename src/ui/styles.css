@@ -375,6 +375,11 @@ select:focus {
   color: var(--text);
 }
 
+.panel-header-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 #file-tree {
   flex: 1;
   overflow-y: auto;

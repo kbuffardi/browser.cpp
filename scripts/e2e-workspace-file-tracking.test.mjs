@@ -837,7 +837,7 @@ function createFakeDocument() {
     },
   };
   const ids = [
-    'btn-new', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
+    'btn-new', 'btn-delete-file', 'btn-open', 'btn-save', 'btn-save-as', 'btn-compile', 'btn-run',
     'btn-compile-run', 'btn-stop-run', 'btn-clear-terminal', 'btn-toggle-terminal',
     'tab-bar', 'file-tree', 'status-file', 'status-compiler', 'cpp-standard',
   ];
@@ -893,10 +893,11 @@ async function setupToolbar(fsOverrides = {}) {
   }
   if (fsOverrides.window) global.window = fsOverrides.window;
   else delete global.window;
+  global.confirm = fsOverrides.confirm ?? (() => true);
   const toolbar = await import(`../src/ui/toolbar.js?tb=${Math.random()}`);
   const { editorAPI, editorCalls, terminalAPI, terminalCalls } = makeFakes();
 
-  const fsCalls = { create: [], write: [], delete: [], refresh: [], openFolder: 0, save: [], saveAs: [] };
+  const fsCalls = { create: [], write: [], delete: [], deleteEntry: [], refresh: [], openFolder: 0, save: [], saveAs: [] };
   const fsAPI = {
     newFile() {},
     getDirectoryHandle: () => ({}),
@@ -923,6 +924,11 @@ async function setupToolbar(fsOverrides = {}) {
     deleteWorkspaceFile: async (path) => {
       fsCalls.delete.push(path);
       return fsOverrides.deleteWorkspaceFileResult ?? { name: 'p', entries: [] };
+    },
+    deleteWorkspaceEntry: async (path, options) => {
+      fsCalls.deleteEntry.push({ path, options });
+      if (fsOverrides.deleteWorkspaceEntry) return fsOverrides.deleteWorkspaceEntry(path, options);
+      return fsOverrides.deleteWorkspaceEntryResult ?? { ok: true, path, snapshot: { name: 'p', entries: [] } };
     },
     saveFile: async (content, suggestedName) => {
       fsCalls.save.push({ content, suggestedName });
@@ -1073,6 +1079,65 @@ test('e2e: New file with a workspace shows an inline Explorer naming input', asy
   const input = inlineInput(ctx.document);
   assert.ok(input, 'inline input rendered');
   assert.equal(input.tagName, 'INPUT');
+});
+
+test('e2e: Explorer delete icon is enabled for the selected file and confirms before deletion', async () => {
+  let confirmations = 0;
+  const ctx = await setupToolbar({
+    confirm: () => { confirmations += 1; return true; },
+    deleteWorkspaceEntryResult: { ok: true, path: 'main.cpp', snapshot: { name: 'p', entries: [] } },
+  });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    [],
+    null
+  );
+
+  const deleteButton = ctx.document.getElementById('btn-delete-file');
+  assert.equal(deleteButton.disabled, true);
+  renderedTreeItem(ctx.document, 'main.cpp').click();
+  await tick();
+  assert.equal(deleteButton.disabled, false);
+
+  deleteButton.click();
+  await tick();
+
+  assert.equal(confirmations, 1);
+  assert.deepEqual(ctx.fsCalls.deleteEntry, [{ path: 'main.cpp', options: { recursive: false } }]);
+  assert.equal(deleteButton.disabled, true);
+  assert.equal(renderedTreePaths(ctx.document).includes('main.cpp'), false);
+});
+
+test('e2e: Explorer delete leaves the selected file untouched when confirmation is cancelled', async () => {
+  const ctx = await setupToolbar({ confirm: () => false });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+
+  ctx.document.getElementById('btn-delete-file').click();
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.deleteEntry, []);
+  assert.equal(renderedTreePaths(ctx.document).includes('main.cpp'), true);
+});
+
+test('e2e: Explorer delete requires a second confirmation for dirty selected tabs', async () => {
+  const confirmations = [true, false];
+  const ctx = await setupToolbar({ confirm: () => confirmations.shift() });
+  await ctx.toolbar.restoreWorkspace(
+    { name: 'p', entries: [{ path: 'main.cpp', kind: 'file' }] },
+    ['main.cpp'],
+    'main.cpp'
+  );
+  ctx.toolbar.markDirty(true);
+
+  ctx.document.getElementById('btn-delete-file').click();
+  await tick();
+
+  assert.deepEqual(ctx.fsCalls.deleteEntry, []);
+  assert.equal(ctx.toolbar.getActiveTabPath(), 'main.cpp');
 });
 
 test('e2e: submitting a root filename creates the file and opens it as the active tab', async () => {

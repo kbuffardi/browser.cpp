@@ -164,6 +164,7 @@ export function setRunPreparing(preparing) {
 
 function bindButtons() {
   on('btn-new',          () => actionNewFile());
+  on('btn-delete-file',  () => void actionDeleteSelectedFile());
   on('btn-open',         () => actionOpen());
   on('btn-save',         () => actionSave());
   on('btn-save-as',      () => actionSaveAs());
@@ -405,6 +406,50 @@ async function actionNewFile() {
   beginInlineFileCreation();
 }
 
+async function actionDeleteSelectedFile() {
+  const path = selectedWorkspaceFilePath();
+  if (!path) return;
+
+  const name = workspaceBaseName(path);
+  if (!confirm(`Delete "${name}"?`)) return;
+
+  const tab = _openTabs.get(path);
+  if (tab?.dirty && !confirm(`Discard unsaved changes in "${name}" and delete it?`)) return;
+
+  let result;
+  try {
+    result = await _fsAPI.deleteWorkspaceEntry(path, { recursive: false });
+  } catch (err) {
+    alert(`Could not delete file:\n${err.message}`);
+    return;
+  }
+  if (!result?.ok) {
+    alert(`Could not delete "${name}".`);
+    return;
+  }
+
+  applyWorkspaceSnapshot(result.snapshot);
+  if (tab) {
+    tab.dirty = false;
+    closeTab(path);
+  }
+  updateExplorerDeleteButton();
+  await _persistSession?.();
+}
+
+function selectedWorkspaceFilePath() {
+  if (!_workspace || !_activeTabPath) return null;
+  return _workspace.entries?.some((entry) => entry.path === _activeTabPath && entry.kind === 'file')
+    ? _activeTabPath
+    : null;
+}
+
+function updateExplorerDeleteButton() {
+  const button = document.getElementById('btn-delete-file');
+  if (!button) return;
+  button.disabled = _explorerLoading || !selectedWorkspaceFilePath();
+}
+
 // ── Inline Explorer file creation ─────────────────────────────────────────────
 
 let _inlineCreationActive = false;
@@ -525,6 +570,7 @@ export function applyWorkspaceSnapshot(snapshot) {
   _terminalAPI.refreshWorkspace?.(snapshot);
   pruneExpandedWorkspaceDirectories(snapshot);
   renderWorkspaceSidebar(snapshot);
+  updateExplorerDeleteButton();
   updateCompileButtons();
 }
 
@@ -830,6 +876,7 @@ function setFileName(name) {
   const statusFile = document.getElementById('status-file');
   if (statusFile) statusFile.textContent = _fileName;
   if (_workspace) highlightWorkspaceFile(name);
+  updateExplorerDeleteButton();
 }
 
 /** Mark the current file as dirty (has unsaved changes). */
@@ -1008,6 +1055,7 @@ function renderWorkspaceSidebar(workspace) {
   renderWorkspaceChildren(tree, childrenByParent, '', 0);
   if (_explorerLoading) renderExplorerLoading(tree);
   highlightWorkspaceFile(_fileName);
+  updateExplorerDeleteButton();
 }
 
 function renderExplorerLoading(tree) {
@@ -1304,6 +1352,7 @@ function setExplorerLoading(loading) {
   }
   document.getElementById('btn-new').disabled = _explorerLoading;
   document.getElementById('btn-open').disabled = _explorerLoading;
+  updateExplorerDeleteButton();
   renderWorkspaceSidebar(_explorerScanPreview ?? _workspace);
 }
 
