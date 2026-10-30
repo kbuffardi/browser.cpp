@@ -156,23 +156,30 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     container.__browserCppReadSelectionColors = () => {
       const editorNode = _editor.getDomNode();
       if (!editorNode) return null;
-      const viewLine = document.createElement('div');
-      viewLine.className = 'view-line focused';
-      const selected = document.createElement('span');
-      selected.className = 'selected-text inline-selected-text';
-      selected.textContent = 'theme color probe';
-      viewLine.append(selected);
-      editorNode.append(viewLine);
       const toHex = (value) => {
         const channels = value.match(/[\d.]+/g)?.map(Number);
         if (!channels || channels.length < 3) return value;
         return `#${channels.slice(0, 3).map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
       };
+      const originalValue = _editor.getValue();
+      const originalSelections = _editor.getSelections();
+      _editor.setValue('theme color probe');
+      _editor.setSelection(new monaco.Range(1, 1, 1, 6));
+      _editor.focus();
+      _editor.render(true);
+      const selected = editorNode.querySelector('.view-overlays .selected-text');
+      const selectedText = editorNode.querySelector('.view-lines .view-line span');
+      if (!selected || !selectedText) return null;
       const background = toHex(getComputedStyle(selected).backgroundColor);
-      const foreground = toHex(getComputedStyle(selected).color);
-      viewLine.classList.remove('focused');
-      const inactiveBackground = toHex(getComputedStyle(selected).backgroundColor);
-      viewLine.remove();
+      const foreground = toHex(getComputedStyle(selectedText).color);
+      editorNode.querySelector('textarea.inputarea')?.blur();
+      _editor.render(true);
+      const inactiveSelected = editorNode.querySelector('.view-overlays .selected-text');
+      if (!inactiveSelected) return null;
+      const inactiveBackground = toHex(getComputedStyle(inactiveSelected).backgroundColor);
+      _editor.setValue(originalValue);
+      if (originalSelections?.length) _editor.setSelections(originalSelections);
+      _editor.render(true);
       return { background, foreground, inactiveBackground };
     };
   }

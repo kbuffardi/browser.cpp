@@ -448,6 +448,18 @@ function parseRgbColor(color) {
   return rgb ? rgb.slice(1, 4).map(Number) : null;
 }
 
+function wcagContrastRatio(foreground, background) {
+  const colors = [parseRgbColor(foreground), parseRgbColor(background)];
+  if (colors.some((color) => !color)) return 0;
+  const luminances = colors.map((color) => {
+    const channels = color.map((channel) => channel / 255).map((channel) => (
+      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    ));
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  }).sort((a, b) => b - a);
+  return (luminances[0] + 0.05) / (luminances[1] + 0.05);
+}
+
 async function openExtensionPage(cdp, extensionId) {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
@@ -1052,6 +1064,10 @@ int main() {
       assert(monacoColors?.background && monacoColors.foreground && monacoColors.inactiveBackground,
         `${themeId} Monaco selection styles were not computed`);
       if (themeId.startsWith('monochrome-')) {
+        assert(wcagContrastRatio(monacoColors.foreground, monacoColors.background) >= 4.5,
+          `${themeId} active Monaco selection fails WCAG AA contrast`);
+        assert(wcagContrastRatio(monacoColors.foreground, monacoColors.inactiveBackground) >= 4.5,
+          `${themeId} inactive Monaco selection fails WCAG AA contrast`);
         const editorTextColors = await evaluate(cdp, sessionId, `(() => {
           const spans = [...document.querySelectorAll('.monaco-editor .view-lines .view-line span')];
           return spans.map((element) => getComputedStyle(element).color).filter(Boolean);
@@ -1225,8 +1241,8 @@ int main() {
     const expectedSelectionBackground = {
       vs: '#0969da',
       'hc-light': '#0037da',
-      'monochrome-light': '#666666',
-      'monochrome-dark': '#999999',
+      'monochrome-light': '#999999',
+      'monochrome-dark': '#555555',
     }[themeId];
     assert(selection.theme.selectionBackground, `${themeId} terminal selection background is missing`);
     assert(selection.theme.selectionForeground, `${themeId} terminal selection foreground is missing`);
@@ -1239,6 +1255,10 @@ int main() {
         selection.theme.selectionBackground, selection.theme.selectionForeground];
       assert(colors.every((color) => /^#([\da-f]{2})\1\1$/i.test(color)),
         `${themeId} terminal colors are not grayscale: ${colors.join(', ')}`);
+      assert(wcagContrastRatio(selection.theme.selectionForeground, selection.theme.selectionBackground) >= 4.5,
+        `${themeId} active terminal selection fails WCAG AA contrast`);
+      assert(wcagContrastRatio(selection.theme.selectionForeground, selection.theme.selectionInactiveBackground) >= 4.5,
+        `${themeId} inactive terminal selection fails WCAG AA contrast`);
     }
     const currentTerminal = await evaluate(
       cdp,
