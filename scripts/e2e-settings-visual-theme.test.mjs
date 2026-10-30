@@ -22,6 +22,7 @@ test('theme registry exposes the requested Monaco themes and safe fallback', () 
   assert.equal(DEFAULT_VISUAL_THEME_ID, 'browser-cpp-dark');
   assert.deepEqual(VISUAL_THEMES.map(({ id }) => id), [
     'browser-cpp-dark', 'vs', 'vs-dark', 'hc-light', 'hc-black',
+    'monochrome-light', 'monochrome-dark',
   ]);
   assert.equal(getVisualTheme('not-a-theme').id, DEFAULT_VISUAL_THEME_ID);
   for (const theme of VISUAL_THEMES) {
@@ -34,10 +35,25 @@ test('theme registry exposes the requested Monaco themes and safe fallback', () 
   }
   assert.deepEqual(VISUAL_THEMES.map(({ id }) => id), [
     'browser-cpp-dark', 'vs', 'vs-dark', 'hc-light', 'hc-black',
+    'monochrome-light', 'monochrome-dark',
   ]);
   assert.deepEqual(VISUAL_THEMES.slice(1).map(({ monacoTheme }) => monacoTheme), [
     'browser-cpp-vs', 'browser-cpp-vs-dark', 'browser-cpp-hc-light', 'browser-cpp-hc-black',
+    'browser-cpp-monochrome-light', 'browser-cpp-monochrome-dark',
   ]);
+
+  for (const theme of VISUAL_THEMES.slice(-2)) {
+    const colors = [
+      ...Object.values(theme.cssTokens),
+      ...Object.values(theme.terminalTheme),
+      ...Object.values(theme.preview),
+      theme.selection.foreground,
+      theme.selection.background,
+      theme.selection.inactiveBackground,
+    ].filter((value) => typeof value === 'string' && value.startsWith('#'));
+    assert.ok(colors.length > 0);
+    assert.ok(colors.every(isGrayscale), `${theme.id} contains a chromatic color`);
+  }
 });
 
 test('terminal viewport inherits the active visual theme background', async () => {
@@ -77,3 +93,20 @@ test('visual theme defaults, sanitizes legacy storage, and persists immediately'
   assert.deepEqual(settings.get(), { memoryDebugMode: true, visualTheme: 'vs' });
   assert.deepEqual(storage.value, { memoryDebugMode: true, visualTheme: 'vs' });
 });
+
+test('monochrome themes persist and unknown values still use the existing default', async () => {
+  const storage = createStorage({ memoryDebugMode: false, visualTheme: 'monochrome-light' });
+  const settings = createExtensionSettings({ storage });
+  assert.equal((await settings.load()).visualTheme, 'monochrome-light');
+  await settings.setVisualTheme('monochrome-dark');
+  assert.equal(storage.value.visualTheme, 'monochrome-dark');
+
+  const invalidStorage = createStorage({ visualTheme: 'not-a-theme' });
+  const invalidSettings = createExtensionSettings({ storage: invalidStorage });
+  assert.equal((await invalidSettings.load()).visualTheme, DEFAULT_VISUAL_THEME_ID);
+});
+
+function isGrayscale(color) {
+  const channels = color.slice(1).match(/.{2}/g)?.map((channel) => parseInt(channel, 16));
+  return channels?.length === 3 && channels[0] === channels[1] && channels[1] === channels[2];
+}
