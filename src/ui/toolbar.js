@@ -574,6 +574,29 @@ export function applyWorkspaceSnapshot(snapshot) {
   updateCompileButtons();
 }
 
+/**
+ * Adopt the result of a successful terminal `rm` command. Terminal deletion is
+ * intentionally stricter than runtime VFS cleanup: a user explicitly removed
+ * the entry, so any tab backed by that path must not remain in the session.
+ *
+ * @param {object} snapshot – authoritative workspace snapshot after host deletion
+ * @param {string[]} removedPaths – successfully removed file or directory paths
+ */
+export function reconcileTerminalRm(snapshot, removedPaths = []) {
+  if (!snapshot) return;
+  applyWorkspaceSnapshot(snapshot);
+
+  const removed = removedPaths
+    .map((path) => normalizeOverlayPath(path))
+    .filter(Boolean);
+  for (const path of [..._openTabs.keys()]) {
+    if (removed.some((target) => path === target || path.startsWith(`${target}/`))) {
+      closeTab(path, { discard: true });
+    }
+  }
+  updateExplorerDeleteButton();
+}
+
 /** Reveal a path created through the Explorer's explicit New File action. */
 function revealWorkspacePath(path) {
   for (const dir of directoriesForPath(path)) {
@@ -1001,13 +1024,13 @@ function renameActiveTabPath(nextPath) {
 }
 
 /** Close the tab for the given path, prompting if it has unsaved changes. */
-function closeTab(path) {
+function closeTab(path, { discard = false } = {}) {
   if (!_openTabs.has(path)) return;
   const tab = _openTabs.get(path);
   const name = workspaceBaseName(path) || path;
   let switchedTabs = false;
 
-  if (tab.dirty && !confirm(`Close "${name}" with unsaved changes?`)) return;
+  if (tab.dirty && !discard && !confirm(`Close "${name}" with unsaved changes?`)) return;
 
   const paths = [..._openTabs.keys()];
   const idx = paths.indexOf(path);
