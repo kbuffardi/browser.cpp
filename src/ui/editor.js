@@ -79,6 +79,7 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     if (visualTheme.id === 'browser-cpp-dark') continue;
     if (visualTheme.id.startsWith('monochrome-')) {
       const { cssTokens: colors } = visualTheme;
+      const selection = visualTheme.editorSelection ?? visualTheme.selection;
       const isLight = visualTheme.id === 'monochrome-light';
       monaco.editor.defineTheme(visualTheme.monacoTheme, {
         base: isLight ? 'vs' : 'vs-dark',
@@ -91,9 +92,9 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
           'editorLineNumber.activeForeground': colors.text,
           'editor.lineHighlightBackground': colors.surface0,
           'editorCursor.foreground': colors.text,
-          'editor.selectionForeground': visualTheme.selection.foreground,
-          'editor.selectionBackground': visualTheme.selection.background,
-          'editor.inactiveSelectionBackground': visualTheme.selection.inactiveBackground,
+          'editor.selectionForeground': selection.foreground,
+          'editor.selectionBackground': selection.background,
+          'editor.inactiveSelectionBackground': selection.inactiveBackground,
           'editorIndentGuide.background': colors.surface1,
           'editorWidget.background': colors.mantle,
           'editorSuggestWidget.background': colors.mantle,
