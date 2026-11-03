@@ -1,0 +1,16 @@
+## AI Agent Reasoning
+
+### Context
+
+Terminal `rm` already deleted the host entry and refreshed the workspace index,
+but left matching open editor tabs and persisted tab content behind.
+
+### Decision
+
+Use a terminal-specific toolbar reconciliation function after successful deletion
+results. Keep runtime-originated deletion behavior unchanged because it follows a
+different user interaction contract.
+
+### References
+
+- Fixes #126
