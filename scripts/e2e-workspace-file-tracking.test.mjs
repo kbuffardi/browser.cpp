@@ -1746,6 +1746,31 @@ test('e2e: runtime vfsDeletes are deleted from the workspace and refreshed', asy
   assert.equal(ctx.terminalCalls.refresh.at(-1).entries.length, 0);
 });
 
+test('e2e: terminal rm reconciles removed tabs only after host deletion succeeds', async () => {
+  const ctx = await setupToolbar();
+  await ctx.toolbar.restoreWorkspace(
+    {
+      name: 'p',
+      entries: [
+        { path: 'old.cpp', kind: 'file' },
+        { path: 'generated', kind: 'directory' },
+        { path: 'generated/old.cpp', kind: 'file' },
+        { path: 'keep.cpp', kind: 'file' },
+      ],
+    },
+    ['old.cpp', 'generated/old.cpp', 'keep.cpp'],
+    'old.cpp'
+  );
+
+  ctx.toolbar.reconcileTerminalRm(
+    { name: 'p', entries: [{ path: 'keep.cpp', kind: 'file' }] },
+    ['old.cpp', 'generated']
+  );
+
+  assert.deepEqual(ctx.toolbar.getOpenTabPaths(), ['keep.cpp']);
+  assert.equal(ctx.terminalCalls.refresh.at(-1).entries[0].path, 'keep.cpp');
+});
+
 test('e2e: run-result sync keeps deleted open tabs while removing them from Explorer', async () => {
   const ctx = await setupToolbar({
     refreshWorkspaceResult: {

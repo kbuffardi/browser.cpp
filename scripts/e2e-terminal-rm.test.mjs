@@ -58,6 +58,15 @@ test('e2e: rm sends multiple files and recursive directories to the callback', a
   ]);
 });
 
+test('e2e: rm sends dotfiles to the removal callback', async () => {
+  const ctx = setupTerminalHarness();
+  setWorkspace({ name: 'project', entries: [{ path: '.DS_Store', kind: 'file' }] });
+
+  await __executeTerminalCommandForTesting('rm .DS_Store');
+
+  assert.deepEqual(ctx.removeCalls, [{ paths: ['.DS_Store'], recursive: false }]);
+});
+
 test('e2e: rm rejects root escape, no operands, and unsupported options', async () => {
   const ctx = setupTerminalHarness();
   setWorkspace({ name: 'project', entries: [{ path: 'src', kind: 'directory' }] });
@@ -86,4 +95,19 @@ test('e2e: rm formats filesystem errors for each failed target', async () => {
   const output = ctx.writes.join('');
   assert.ok(output.includes("rm: cannot remove 'missing.cpp': No such file or directory"));
   assert.ok(output.includes("rm: cannot remove 'build': Is a directory"));
+});
+
+test('e2e: rm never silently succeeds when the removal service is unavailable', async () => {
+  const writes = [];
+  __setTerminalTestHarness({
+    term: { clear() {}, write(text) { writes.push(text); } },
+    onRemove: null,
+  });
+  setWorkspace({ name: 'project', entries: [{ path: '.DS_Store', kind: 'file' }] });
+
+  await __executeTerminalCommandForTesting('rm .DS_Store');
+
+  assert.ok(
+    writes.join('').includes("rm: cannot remove '.DS_Store': Filesystem unavailable")
+  );
 });

@@ -29,6 +29,7 @@ import {
   resetToNewProject,
   assembleCompilePayload,
   applyWorkspaceSnapshot,
+  reconcileTerminalRm,
 } from './toolbar.js';
 import { createSessionPersistence, createPersistenceGate } from './session-persistence.mjs';
 import { registerPageUnload } from './page-lifecycle.mjs';
@@ -130,7 +131,10 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (result?.ok) snapshot = result.snapshot;
       }
       if (snapshot) {
-        applyWorkspaceSnapshot(snapshot);
+        reconcileTerminalRm(
+          snapshot,
+          results.filter((result) => result?.ok).map((result) => result.path)
+        );
         await persistenceGate.persistState();
       }
       return { results };
