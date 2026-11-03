@@ -104,6 +104,31 @@ test('monochrome Monaco selection backgrounds contrast with normal code text', a
   assert.doesNotMatch(css, /\.monaco-editor\s+\.selected-text\s*\{[^}]*color:/s);
 });
 
+test('monochrome editor selections share the highest-contrast background without changing terminal selections', () => {
+  const expectedEditorSelections = {
+    'monochrome-light': { foreground: '#000000', background: '#bbbbbb' },
+    'monochrome-dark': { foreground: '#ffffff', background: '#555555' },
+  };
+  const expectedTerminalSelections = {
+    'monochrome-light': { background: '#999999', inactiveBackground: '#bbbbbb' },
+    'monochrome-dark': { background: '#555555', inactiveBackground: '#707070' },
+  };
+
+  for (const [id, expected] of Object.entries(expectedEditorSelections)) {
+    const theme = getVisualTheme(id);
+    assert.deepEqual(theme.editorSelection, {
+      ...expected,
+      inactiveBackground: expected.background,
+    });
+    assert.equal(theme.editorSelection.foreground, theme.cssTokens.text);
+    assert.ok(contrastRatio(theme.editorSelection.foreground, theme.editorSelection.background) >= 4.5);
+    assert.deepEqual(theme.selection, {
+      foreground: expected.foreground,
+      ...expectedTerminalSelections[id],
+    });
+  }
+});
+
 test('Monaco selection smoke hook reads a real editor selection', async () => {
   const editor = await readFile(new URL('../src/ui/editor.js', import.meta.url), 'utf8');
   assert.match(editor, /_editor\.setSelection\(new monaco\.Range\(/);

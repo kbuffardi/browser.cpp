@@ -1050,6 +1050,10 @@ int main() {
     }, 'real help output in terminal buffer', 5_000);
     assert(helpOutput.includes('Run the last compiled binary'),
       'Real help output is missing the run-command description');
+    const monochromeTerminalSelections = {
+      'monochrome-light': { background: '#999999', foreground: '#000000', inactiveBackground: '#bbbbbb' },
+      'monochrome-dark': { background: '#555555', foreground: '#ffffff', inactiveBackground: '#707070' },
+    };
     let previousSelection = null;
     for (const themeId of ['vs', 'hc-light', 'browser-cpp-dark', 'vs-dark', 'hc-black', 'monochrome-light', 'monochrome-dark']) {
       await evaluate(cdp, sessionId, `document.querySelector('input[name="visual-theme"][value="${themeId}"]')?.click()`);
@@ -1064,6 +1068,11 @@ int main() {
       assert(monacoColors?.background && monacoColors.foreground && monacoColors.inactiveBackground,
         `${themeId} Monaco selection styles were not computed`);
       if (themeId.startsWith('monochrome-')) {
+        const expectedBackground = themeId === 'monochrome-light' ? '#bbbbbb' : '#555555';
+        assert(monacoColors.background === expectedBackground,
+          `${themeId} active Monaco selection has the wrong background`);
+        assert(monacoColors.inactiveBackground === expectedBackground,
+          `${themeId} inactive Monaco selection has the wrong background`);
         assert(wcagContrastRatio(monacoColors.foreground, monacoColors.background) >= 4.5,
           `${themeId} active Monaco selection fails WCAG AA contrast`);
         assert(wcagContrastRatio(monacoColors.foreground, monacoColors.inactiveBackground) >= 4.5,
@@ -1078,6 +1087,7 @@ int main() {
           return channels?.length >= 3 && channels[0] === channels[1] && channels[1] === channels[2];
         }), `${themeId} Monaco text contains chromatic syntax or bracket colors`);
       }
+      const terminalColors = monochromeTerminalSelections[themeId] ?? monacoColors;
       if (previousSelection) {
         const retained = await evaluate(cdp, sessionId,
           `document.getElementById('terminal-container')?.__browserCppReadTerminalSelection?.() || null`);
@@ -1086,28 +1096,28 @@ int main() {
         const changedPaint = await waitFor(async () => {
           const current = await evaluate(cdp, sessionId,
             `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
-          return current?.rects?.length && normalizeCssColor(current.rects[0].background) === monacoColors.inactiveBackground
+          return current?.rects?.length && normalizeCssColor(current.rects[0].background) === terminalColors.inactiveBackground
             ? current
             : null;
         }, `${themeId} inactive terminal selection repaint`, 5_000);
-        assert(changedPaint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.inactiveBackground),
-          `${themeId} existing selection did not adopt Monaco's inactive selection color`);
+        assert(changedPaint.rects.every(({ background }) => normalizeCssColor(background) === terminalColors.inactiveBackground),
+          `${themeId} existing selection did not adopt the configured inactive selection color`);
       }
 
       const targetText = previousSelection ? 'g++' : 'Available commands:';
       const selection = await selectTerminalText(cdp, sessionId, targetText);
-      assert(selection.theme.selectionBackground === monacoColors.background,
-        `${themeId} terminal active selection background ${selection.theme.selectionBackground} does not exactly match Monaco ${monacoColors.background}`);
-      assert(selection.theme.selectionForeground === monacoColors.foreground,
-        `${themeId} terminal selection foreground ${selection.theme.selectionForeground} does not exactly match Monaco ${monacoColors.foreground}`);
-      assert(selection.theme.selectionInactiveBackground === monacoColors.inactiveBackground,
-        `${themeId} terminal inactive selection background ${selection.theme.selectionInactiveBackground} does not exactly match Monaco ${monacoColors.inactiveBackground}`);
+      assert(selection.theme.selectionBackground === terminalColors.background,
+        `${themeId} terminal active selection background is incorrect`);
+      assert(selection.theme.selectionForeground === terminalColors.foreground,
+        `${themeId} terminal selection foreground is incorrect`);
+      assert(selection.theme.selectionInactiveBackground === terminalColors.inactiveBackground,
+        `${themeId} terminal inactive selection background is incorrect`);
       assert(selection.text.includes(targetText),
         `Terminal selected text does not include ${JSON.stringify(targetText)}: ${JSON.stringify(selection.text)}`);
-      assert(selection.paint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.background),
-        `${themeId} rendered active selection background does not exactly match Monaco`);
-      assert(selection.paint.selectedTextForegrounds.some((color) => normalizeCssColor(color) === monacoColors.foreground),
-        `${themeId} rendered selected text foreground does not exactly match Monaco's ${monacoColors.foreground}`);
+      assert(selection.paint.rects.every(({ background }) => normalizeCssColor(background) === terminalColors.background),
+        `${themeId} rendered active terminal selection background is incorrect`);
+      assert(selection.paint.selectedTextForegrounds.some((color) => normalizeCssColor(color) === terminalColors.foreground),
+        `${themeId} rendered terminal selected text foreground is incorrect`);
       previousSelection = {
         ...selection,
         colors: monacoColors,
@@ -1125,15 +1135,15 @@ int main() {
       const inactivePaint = await waitFor(async () => {
         const current = await evaluate(cdp, sessionId,
           `document.getElementById('terminal-container')?.__browserCppReadSelectionPaint?.() || null`);
-        return current?.rects?.length && normalizeCssColor(current.rects[0].background) === monacoColors.inactiveBackground
+        return current?.rects?.length && normalizeCssColor(current.rects[0].background) === terminalColors.inactiveBackground
           ? current
           : null;
       }, `${themeId} unfocused selection color`, 5_000);
-      assert(inactivePaint.rects.every(({ background }) => normalizeCssColor(background) === monacoColors.inactiveBackground),
-        `${themeId} rendered inactive selection background does not exactly match Monaco`);
+      assert(inactivePaint.rects.every(({ background }) => normalizeCssColor(background) === terminalColors.inactiveBackground),
+        `${themeId} rendered inactive terminal selection background is incorrect`);
       const afterBlur = await captureScreenshot(cdp, sessionId);
       assertScreenshotSelectionChanged(selection.before, afterBlur, selection.paintBounds,
-        monacoColors.inactiveBackground);
+        terminalColors.inactiveBackground);
       previousSelection = { ...selection, beforeThemeChange: afterBlur };
     }
 
