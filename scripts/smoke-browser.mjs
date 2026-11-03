@@ -952,6 +952,10 @@ int main() {
       const panel = document.getElementById('settings-panel');
       const toggle = document.getElementById('setting-memory-debug');
       const help = document.querySelector('.settings-help-link');
+      const iconSize = (selector) => {
+        const icon = document.querySelector(selector);
+        return icon ? getComputedStyle(icon).fontSize : null;
+      };
       return {
         buttonText: button?.textContent?.replace(/\\s+/g, ' ').trim(),
         expanded: button?.getAttribute('aria-expanded'),
@@ -960,12 +964,19 @@ int main() {
         helpHref: help?.href,
         helpTarget: help?.target,
         helpRel: help?.rel,
+        settingsGearSize: iconSize('#btn-settings .settings-gear-icon'),
+        openIconSize: iconSize('#btn-open .codicon'),
+        compileIconSize: iconSize('#btn-compile .codicon'),
       };
     })()`);
     assert(settingsDefault.buttonText?.includes('Settings'), 'Settings button label did not render');
     assert(settingsDefault.expanded === 'false', 'Settings button should initially be collapsed');
     assert(settingsDefault.panelHidden === true, 'Settings panel should initially be hidden');
     assert(settingsDefault.toggleChecked === false, 'Memory Debug Mode should default to off');
+    assert(settingsDefault.settingsGearSize === settingsDefault.openIconSize,
+      'Settings gear size does not match the Open icon');
+    assert(settingsDefault.settingsGearSize === settingsDefault.compileIconSize,
+      'Settings gear size does not match the Compile icon');
     assert(
       settingsDefault.helpHref === 'https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html',
       `Unexpected UBSan help URL: ${settingsDefault.helpHref}`

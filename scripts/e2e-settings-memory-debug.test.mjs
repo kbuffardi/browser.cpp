@@ -162,6 +162,12 @@ test('Settings markup exposes the official UBSan help link in a protected new ta
   assert.doesNotMatch(html, /settings-save|Save settings|Apply settings/i);
 });
 
+test('Settings gear uses the toolbar icon size', async () => {
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+
+  assert.match(css, /\.settings-gear-icon\s*\{[^}]*font-size:\s*16px\s*;/s);
+});
+
 test('Settings backdrop preserves accurate workspace theme previews', async () => {
   const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
   const backdrop = css.match(/\.settings-backdrop\s*\{([^}]*)\}/)?.[1];
