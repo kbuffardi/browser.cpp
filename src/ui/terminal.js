@@ -293,6 +293,7 @@ function createStdinSessionId() {
  *   readWorkspaceFile?: (path:string) => Promise<string|null>,
  *   onMkdir?: (request:{path:string, parents:boolean}) => Promise<object>,
  *   onTouch?: (request:{path:string}) => Promise<object>,
+ *   onRemove?: (request:{paths:string[], recursive:boolean}) => Promise<{results:object[]}>,
  * }} callbacks
  */
 export function createTerminal(container, {
@@ -307,6 +308,7 @@ export function createTerminal(container, {
   readWorkspaceFile,
   onMkdir,
   onTouch,
+  onRemove,
   visualTheme = 'browser-cpp-dark',
 }) {
   _onCompile = onCompile;
@@ -320,6 +322,7 @@ export function createTerminal(container, {
   _readWorkspaceFile = readWorkspaceFile || null;
   _onMkdir = onMkdir || null;
   _onTouch = onTouch || null;
+  _onRemove = onRemove || null;
   _supportsInteractiveStdin = supportsInteractiveStdin;
   _getStdinTransport = getStdinTransport;
   _createStdinSessionId = createStdinSessionId;
@@ -1203,7 +1206,15 @@ async function cmdRm(args) {
     return;
   }
 
-  const result = await _onRemove?.({ paths, recursive: parsed.recursive });
+  if (!_onRemove) {
+    for (const path of paths) {
+      term.write(`${C.red}${formatRmFilesystemError({ path, error: 'service-unavailable' })}${C.reset}${CRLF}`);
+    }
+    writePrompt();
+    return;
+  }
+
+  const result = await _onRemove({ paths, recursive: parsed.recursive });
   for (const item of result?.results || []) {
     if (!item?.ok) {
       term.write(`${C.red}${formatRmFilesystemError(item)}${C.reset}${CRLF}`);
@@ -1508,6 +1519,8 @@ function formatRmFilesystemError(result) {
       return `rm: cannot remove '${path}': Permission denied`;
     case 'directory-not-empty':
       return `rm: cannot remove '${path}': Directory not empty`;
+    case 'service-unavailable':
+      return `rm: cannot remove '${path}': Filesystem unavailable`;
     default:
       return `rm: cannot remove '${path}'`;
   }
