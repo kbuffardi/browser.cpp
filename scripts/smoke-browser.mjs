@@ -956,6 +956,12 @@ int main() {
         const icon = document.querySelector(selector);
         return icon ? getComputedStyle(icon).fontSize : null;
       };
+      const rect = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const { width, height } = element.getBoundingClientRect();
+        return { width, height };
+      };
       return {
         buttonText: button?.textContent?.replace(/\\s+/g, ' ').trim(),
         expanded: button?.getAttribute('aria-expanded'),
@@ -964,9 +970,15 @@ int main() {
         helpHref: help?.href,
         helpTarget: help?.target,
         helpRel: help?.rel,
-        settingsGearSize: iconSize('#btn-settings .settings-gear-icon'),
+        settingsGearSize: iconSize('#btn-settings .codicon-gear'),
         openIconSize: iconSize('#btn-open .codicon'),
         compileIconSize: iconSize('#btn-compile .codicon'),
+        settingsButtonRect: rect('#btn-settings'),
+        openButtonRect: rect('#btn-open'),
+        compileButtonRect: rect('#btn-compile'),
+        settingsGearRect: rect('#btn-settings .codicon-gear'),
+        openIconRect: rect('#btn-open .codicon'),
+        compileIconRect: rect('#btn-compile .codicon'),
       };
     })()`);
     assert(settingsDefault.buttonText?.includes('Settings'), 'Settings button label did not render');
@@ -977,6 +989,16 @@ int main() {
       'Settings gear size does not match the Open icon');
     assert(settingsDefault.settingsGearSize === settingsDefault.compileIconSize,
       'Settings gear size does not match the Compile icon');
+    assert(settingsDefault.settingsButtonRect?.height === settingsDefault.openButtonRect?.height,
+      'Settings button height does not match the Open button');
+    assert(settingsDefault.settingsButtonRect?.height === settingsDefault.compileButtonRect?.height,
+      'Settings button height does not match the Compile button');
+    assert(settingsDefault.settingsGearRect?.width === settingsDefault.openIconRect?.width &&
+      settingsDefault.settingsGearRect?.height === settingsDefault.openIconRect?.height,
+      'Settings gear dimensions do not match the Open icon');
+    assert(settingsDefault.settingsGearRect?.width === settingsDefault.compileIconRect?.width &&
+      settingsDefault.settingsGearRect?.height === settingsDefault.compileIconRect?.height,
+      'Settings gear dimensions do not match the Compile icon');
     assert(
       settingsDefault.helpHref === 'https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html',
       `Unexpected UBSan help URL: ${settingsDefault.helpHref}`
