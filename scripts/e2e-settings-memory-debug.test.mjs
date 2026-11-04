@@ -150,10 +150,10 @@ test('Memory Debug Mode toggle saves immediately without a Save button', async (
   assert.equal(settings.get().memoryDebugMode, true);
 });
 
-test('Settings markup exposes the official UBSan help link in a protected new tab', async () => {
+test('Settings markup uses the shared toolbar gear icon and exposes the official UBSan help link in a protected new tab', async () => {
   const html = await readFile(new URL('../src/ui/index.html', import.meta.url), 'utf8');
 
-  assert.match(html, /id="btn-settings"[\s\S]*settings-gear-icon[\s\S]*Settings/);
+  assert.match(html, /id="btn-settings"[\s\S]*class="codicon codicon-gear" aria-hidden="true"[\s\S]*Settings/);
   assert.match(html, /id="settings-panel"/);
   assert.match(html, /id="setting-memory-debug"/);
   assert.match(html, /href="https:\/\/clang\.llvm\.org\/docs\/UndefinedBehaviorSanitizer\.html"/);
@@ -162,10 +162,10 @@ test('Settings markup exposes the official UBSan help link in a protected new ta
   assert.doesNotMatch(html, /settings-save|Save settings|Apply settings/i);
 });
 
-test('Settings gear uses the toolbar icon size', async () => {
+test('Settings relies on the shared toolbar icon style', async () => {
   const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
 
-  assert.match(css, /\.settings-gear-icon\s*\{[^}]*font-size:\s*16px\s*;/s);
+  assert.doesNotMatch(css, /\.settings-gear-icon\s*\{/);
 });
 
 test('Settings backdrop preserves accurate workspace theme previews', async () => {
