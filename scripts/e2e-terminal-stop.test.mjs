@@ -8,6 +8,7 @@ import {
   clearTerminal,
   onRunStart,
   onRunResult,
+  prepareCompilerRestart,
   printInfo,
   resetTerminalSession,
   showInitialPrompt,
@@ -69,7 +70,7 @@ function ctrlCEvent() {
 
 test('e2e: compiler ready status prints before the first terminal prompt', () => {
   const ctx = setupTerminalHarness();
-  const status = 'Clang WASM compiler loaded. Ready to compile C++20.';
+  const status = 'Clang WASM compiler loaded, ready to compile C++ in browser';
 
   printInfo(status);
   showInitialPrompt();
@@ -116,7 +117,7 @@ test('e2e: clearing during startup does not reveal the initial prompt early', ()
   const ctx = setupTerminalHarness();
 
   clearTerminal();
-  printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
+  printInfo('Clang WASM compiler loaded, ready to compile C++ in browser');
   showInitialPrompt();
 
   const output = ctx.writes.join('');
@@ -184,6 +185,34 @@ test('e2e: STOP discards stdout queued after a stopped run', async () => {
 
   assert.equal(ctx.writes.length, writesAfterStop);
   assert.ok(!ctx.writes.join('').includes('Process interrupted.'));
+});
+
+test('e2e: compiler restart waits to restore the prompt until the worker is ready', async () => {
+  const ctx = setupTerminalHarness();
+  const status = 'Clang WASM compiler loaded, ready to compile C++ in browser';
+
+  showInitialPrompt();
+  assert.equal(await startRun(), true);
+  onRunStart({ stdinMode: 'interactive' });
+  assert.equal(stopRun(), true);
+
+  const clearCallsBeforeRestart = ctx.clearCalls.length;
+  const writesBeforeRestart = ctx.writes.length;
+  prepareCompilerRestart();
+  assert.equal(ctx.clearCalls.length, clearCallsBeforeRestart + 1);
+  assert.equal(__getTerminalStateForTesting().busy, true);
+  const writesBeforeInput = ctx.writes.length;
+  __handleTerminalKeyForTesting('x', { key: 'x', ctrlKey: false, altKey: false });
+  assert.equal(ctx.writes.length, writesBeforeInput);
+
+  printInfo(status);
+  showInitialPrompt();
+
+  const output = ctx.writes.slice(writesBeforeRestart).join('');
+  assert.equal(__getTerminalStateForTesting().busy, false);
+  assert.ok(output.indexOf(status) < output.indexOf('browser.cpp'));
+  assert.equal(output.match(/browser\.cpp/g)?.length, 1);
+  assert.ok(!output.includes(`browser.cpp:~$ ${status}`));
 });
 
 test('e2e: STOP ignores a late nonzero run result', async () => {

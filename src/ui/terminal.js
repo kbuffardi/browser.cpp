@@ -621,6 +621,18 @@ export function stopRun() {
   return true;
 }
 
+/**
+ * Clear the stopped-run prompt while a replacement compiler worker loads.
+ * The next compiler-ready or compiler-error event restores the prompt.
+ */
+export function prepareCompilerRestart() {
+  clearScreen();
+  initialPromptShown = false;
+  inputBuffer = '';
+  historyIdx = -1;
+  busy = true;
+}
+
 // ── Output helpers called by toolbar.js / app.js ─────────────────────────────
 
 /** Write stdout text from the running program. */
