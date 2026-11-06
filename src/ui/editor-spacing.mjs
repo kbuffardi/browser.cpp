@@ -21,6 +21,15 @@ export function spacingForPath(path, settings) {
     : normalizeSpacing(settings.defaultSpacing, 'spaces-2');
 }
 
+export function detectSpacing(text) {
+  const prefixes = String(text).match(/^[\t ]+(?=\S)/gm) || [];
+  if (prefixes.some((prefix) => prefix.includes('\t'))) return 'tabs';
+  const widths = prefixes.map((prefix) => prefix.length).filter(Boolean);
+  if (!widths.length) return 'spaces-2';
+  const width = Math.min(...widths);
+  return width >= 4 ? 'spaces-4' : 'spaces-2';
+}
+
 export function convertLeadingIndentation(text, fromId, toId) {
   const from = SPACING_OPTIONS[normalizeSpacing(fromId)];
   const to = SPACING_OPTIONS[normalizeSpacing(toId)];
@@ -41,7 +50,6 @@ export function initSpacingControl({ document, settings, editorAPI, getActivePat
   const menu = document.getElementById('spacing-menu');
   if (!button || !menu) return { refresh() {}, destroy() {} };
   let open = false;
-  const previousByCategory = {};
   const active = () => spacingForPath(getActivePath?.(), settings.get());
   const close = (focus = false) => { open = false; menu.hidden = true; button.setAttribute('aria-expanded', 'false'); if (focus) button.focus(); };
   const refresh = () => {
@@ -52,7 +60,6 @@ export function initSpacingControl({ document, settings, editorAPI, getActivePat
   };
   const choose = async (id) => {
     const category = isMakefilePath(getActivePath?.()) ? 'makefileSpacing' : 'defaultSpacing';
-    previousByCategory[category] = settings.get()[category];
     await settings.setSpacing(category, id);
     editorAPI.setIndentation(SPACING_OPTIONS[id]); refresh(); close(true);
   };
@@ -61,14 +68,20 @@ export function initSpacingControl({ document, settings, editorAPI, getActivePat
     if (choice) return choose(choice.dataset.spacing);
     if (event.target.closest?.('[data-apply-spacing]')) {
       const model = editorAPI.getEditor?.()?.getModel?.();
-      const category = isMakefilePath(getActivePath?.()) ? 'makefileSpacing' : 'defaultSpacing';
-      if (model) editorAPI.setValue(convertLeadingIndentation(editorAPI.getValue(), previousByCategory[category] || active(), active()));
+      if (model) {
+        const original = editorAPI.getValue();
+        const converted = convertLeadingIndentation(original, detectSpacing(original), active());
+        if (converted !== original) editorAPI.setValue(converted);
+      }
       onApply?.(); close(true);
     }
   };
   const toggle = () => { open = !open; menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); };
   const keydown = (event) => { if (event.key === 'Escape' && open) close(true); };
-  button.addEventListener('click', toggle); menu.addEventListener('click', click); document.addEventListener('keydown', keydown);
+  const outsideClick = (event) => {
+    if (open && !button.contains(event.target) && !menu.contains(event.target)) close();
+  };
+  button.addEventListener('click', toggle); menu.addEventListener('click', click); document.addEventListener('keydown', keydown); document.addEventListener('click', outsideClick);
   const unsubscribe = settings.subscribe(refresh); refresh();
-  return { refresh, destroy() { unsubscribe(); button.removeEventListener('click', toggle); menu.removeEventListener('click', click); document.removeEventListener('keydown', keydown); } };
+  return { refresh, destroy() { unsubscribe(); button.removeEventListener('click', toggle); menu.removeEventListener('click', click); document.removeEventListener('keydown', keydown); document.removeEventListener('click', outsideClick); } };
 }
