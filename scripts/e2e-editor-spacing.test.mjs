@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { convertLeadingIndentation, isMakefilePath, spacingForPath } from '../src/ui/editor-spacing.mjs';
+import { convertLeadingIndentation, detectSpacing, isMakefilePath, spacingForPath } from '../src/ui/editor-spacing.mjs';
 import { createExtensionSettings } from '../src/ui/settings.mjs';
 
 test('classifies only Makefile and .makefile paths as Makefiles', () => {
@@ -20,6 +20,12 @@ test('converts only leading indentation and preserves interior whitespace', () =
   assert.equal(convertLeadingIndentation('    if (a) {\n        x  = 1;\n}', 'spaces-4', 'spaces-2'), '  if (a) {\n    x  = 1;\n}');
 });
 
+test('detects existing leading indentation before applying the selected style', () => {
+  assert.equal(detectSpacing('\tfirst\n\t\tsecond'), 'tabs');
+  assert.equal(detectSpacing('    first\n        second'), 'spaces-4');
+  assert.equal(detectSpacing('  first\n    second'), 'spaces-2');
+});
+
 test('persists the two category defaults', async () => {
   let stored;
   const settings = createExtensionSettings({ storage: { get: async () => ({}), set: async (value) => { stored = value; } } });
@@ -33,4 +39,10 @@ test('status bar exposes the spacing dropup after cursor status', async () => {
   const html = await readFile(new URL('../src/ui/index.html', import.meta.url), 'utf8');
   assert.match(html, /status-cursor[\s\S]*spacing-button[\s\S]*spacing-menu/);
   assert.match(html, /data-apply-spacing/);
+});
+
+test('only the selected spacing choice is styled boldly', async () => {
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\[role="menuitemradio"\]\[aria-checked="true"\]\s*[{]\s*font-weight:\s*700/);
+  assert.doesNotMatch(css, /aria-checked="true"\]::before/);
 });
