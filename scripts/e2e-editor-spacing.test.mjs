@@ -48,3 +48,10 @@ test('only the selected spacing choice is styled boldly', async () => {
   assert.match(css, /\[role="menuitemradio"\]\[aria-checked="true"\]\s*[{]\s*font-weight:\s*700/);
   assert.doesNotMatch(css, /aria-checked="true"\]::before/);
 });
+
+test('Monaco spacing selection disables content inference and updates indent size', async () => {
+  const editor = await readFile(new URL('../src/ui/editor.js', import.meta.url), 'utf8');
+  assert.match(editor, /detectIndentation:\s*false/);
+  assert.match(editor, /indentSize:\s*tabSize/);
+  assert.match(editor, /updateOptions\(\{\s*detectIndentation:\s*false,[\s\S]*indentSize:\s*tabSize/);
+});
