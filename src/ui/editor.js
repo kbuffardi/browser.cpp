@@ -131,7 +131,9 @@ export function createEditor(container, { theme = 'browser-cpp-dark' } = {}) {
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace",
     fontLigatures: true,
     lineHeight: 22,
+    detectIndentation: false,
     tabSize: 2,
+    indentSize: 2,
     insertSpaces: true,
     wordWrap: 'off',
     minimap: { enabled: true },
@@ -208,7 +210,12 @@ export function setValue(text) {
 
 /** Set Monaco's indentation behavior without mutating document content. */
 export function setIndentation({ tabSize, insertSpaces }) {
-  _editor?.updateOptions({ tabSize, insertSpaces });
+  _editor?.updateOptions({
+    detectIndentation: false,
+    tabSize,
+    indentSize: tabSize,
+    insertSpaces,
+  });
 }
 
 /** Change the editor language (e.g. 'cpp', 'c', 'plaintext'). */
