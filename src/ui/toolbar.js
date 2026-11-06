@@ -59,6 +59,7 @@ let _persistSession = null;
 let _persistWorkspaceSession = null;
 let _schedulePersistSession = null;
 let _getCompileOptions = () => ({ memoryDebugMode: false });
+let _onActiveTabChange = null;
 let _persistTimer = null;
 
 function describeRuntimeWritebackIssue(reason) {
@@ -115,6 +116,7 @@ export function initToolbar(worker, editorAPI, terminalAPI, fsAPI, persistence) 
     _persistWorkspaceSession = persistence?.persistWorkspace ?? _persistSession;
     _schedulePersistSession = persistence?.scheduleState ?? null;
     _getCompileOptions = persistence?.getCompileOptions ?? (() => ({ memoryDebugMode: false }));
+    _onActiveTabChange = persistence?.onActiveTabChange ?? null;
   }
 
   bindButtons();
@@ -994,6 +996,7 @@ function switchToTab(path) {
   setFileName(path);
 
   renderTabBar();
+  _onActiveTabChange?.(_activeTabPath);
   schedulePersist(); // debounced – tracks active tab changes
 }
 
@@ -1020,6 +1023,7 @@ function renameActiveTabPath(nextPath) {
   _activeTabPath = nextPath;
   setFileName(nextPath);
   renderTabBar();
+  _onActiveTabChange?.(_activeTabPath);
   schedulePersist();
 }
 
@@ -1052,6 +1056,7 @@ function closeTab(path, { discard = false } = {}) {
       const statusFile = document.getElementById('status-file');
       if (statusFile) statusFile.textContent = '';
       renderTabBar();
+      _onActiveTabChange?.(null);
     }
   } else {
     renderTabBar();
@@ -1347,6 +1352,7 @@ async function openFolderWorkspace() {
     _loadingFile = false;
     const statusFile = document.getElementById('status-file');
     if (statusFile) statusFile.textContent = '';
+  _onActiveTabChange?.(null);
     renderWorkspaceSidebar(workspace);
     await _persistWorkspaceSession?.();
     return true;

@@ -4,7 +4,7 @@ import { getExtensionAPI, getExtensionRuntimeError } from '../extension-api.mjs'
 import { DEFAULT_VISUAL_THEME_ID, VISUAL_THEMES, getVisualTheme } from './themes.mjs';
 
 export const SETTINGS_STORAGE_KEY = 'browser_cpp_settings';
-export const DEFAULT_SETTINGS = Object.freeze({ memoryDebugMode: false, visualTheme: DEFAULT_VISUAL_THEME_ID });
+export const DEFAULT_SETTINGS = Object.freeze({ memoryDebugMode: false, visualTheme: DEFAULT_VISUAL_THEME_ID, defaultSpacing: 'spaces-2', makefileSpacing: 'tabs' });
 
 function getStorageArea() {
   return getExtensionAPI()?.storage?.local ?? null;
@@ -14,6 +14,8 @@ function sanitizeSettings(value) {
   return {
     memoryDebugMode: value?.memoryDebugMode === true,
     visualTheme: getVisualTheme(value?.visualTheme).id,
+    defaultSpacing: ['spaces-2', 'spaces-4', 'tabs'].includes(value?.defaultSpacing) ? value.defaultSpacing : 'spaces-2',
+    makefileSpacing: ['spaces-2', 'spaces-4', 'tabs'].includes(value?.makefileSpacing) ? value.makefileSpacing : 'tabs',
   };
 }
 
@@ -93,6 +95,13 @@ export function createExtensionSettings({
       } catch (error) {
         onError(error);
       }
+      return { ...current };
+    },
+    async setSpacing(key, spacing) {
+      if (!['defaultSpacing', 'makefileSpacing'].includes(key)) return { ...current };
+      current = { ...current, [key]: ['spaces-2', 'spaces-4', 'tabs'].includes(spacing) ? spacing : current[key] };
+      notify();
+      try { await storageSet(storage, { [SETTINGS_STORAGE_KEY]: { ...current } }); } catch (error) { onError(error); }
       return { ...current };
     },
 

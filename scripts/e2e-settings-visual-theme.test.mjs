@@ -155,10 +155,12 @@ test('visual theme defaults, sanitizes legacy storage, and persists immediately'
   assert.deepEqual(await settings.load(), {
     memoryDebugMode: true,
     visualTheme: DEFAULT_VISUAL_THEME_ID,
+    defaultSpacing: 'spaces-2',
+    makefileSpacing: 'tabs',
   });
   await settings.setVisualTheme('vs');
-  assert.deepEqual(settings.get(), { memoryDebugMode: true, visualTheme: 'vs' });
-  assert.deepEqual(storage.value, { memoryDebugMode: true, visualTheme: 'vs' });
+  assert.deepEqual(settings.get(), { memoryDebugMode: true, visualTheme: 'vs', defaultSpacing: 'spaces-2', makefileSpacing: 'tabs' });
+  assert.deepEqual(storage.value, { memoryDebugMode: true, visualTheme: 'vs', defaultSpacing: 'spaces-2', makefileSpacing: 'tabs' });
 });
 
 test('monochrome themes persist and unknown values still use the existing default', async () => {
