@@ -96,6 +96,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     onStdinData: (message) => worker.postMessage(message),
     onStdinEOF: (message) => worker.postMessage(message),
     onStopRun: () => {
+      terminalAPI.prepareCompilerRestart();
       worker.terminate();
       worker = createCompilerWorker();
       toolbarController?.setWorker(worker);

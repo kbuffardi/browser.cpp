@@ -254,7 +254,7 @@ async function handleWorkerMessage(data) {
       }
       updateStatusBar('compiler', 'ready', 'Compiler ready');
       updateCompileButtons();
-      _terminalAPI.printInfo('Clang WASM compiler loaded. Ready to compile C++20.');
+      _terminalAPI.printInfo('Clang WASM compiler loaded, ready to compile C++ in browser');
       _terminalAPI.showInitialPrompt?.();
       break;
 
