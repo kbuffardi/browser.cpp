@@ -38,8 +38,8 @@ test('persists the two category defaults', async () => {
 test('status bar exposes the spacing dropup after cursor status', async () => {
   const html = await readFile(new URL('../src/ui/index.html', import.meta.url), 'utf8');
   assert.match(html, /status-cursor[\s\S]*spacing-button[\s\S]*spacing-menu/);
-  assert.match(html, /Spacing: 2 spaces ⌃/);
-  assert.doesNotMatch(html, /Spacing: 2 spaces \^/);
+  assert.match(html, /Spacing: 2 spaces<\/button>/);
+  assert.doesNotMatch(html, /Spacing: 2 spaces [⌃^]/);
   assert.match(html, /data-apply-spacing/);
 });
 

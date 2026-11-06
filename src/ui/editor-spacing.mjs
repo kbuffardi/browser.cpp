@@ -54,7 +54,7 @@ export function initSpacingControl({ document, settings, editorAPI, getActivePat
   const close = (focus = false) => { open = false; menu.hidden = true; button.setAttribute('aria-expanded', 'false'); if (focus) button.focus(); };
   const refresh = () => {
     const id = active(); const option = SPACING_OPTIONS[id];
-    button.textContent = `Spacing: ${option.label.replace(/ \.{2,4}$/, '')} ⌃`;
+    button.textContent = `Spacing: ${option.label.replace(/ \.{2,4}$/, '')}`;
     button.setAttribute('aria-label', `Spacing: ${option.label}`);
     for (const item of menu.querySelectorAll('[role="menuitemradio"]')) item.setAttribute('aria-checked', String(item.dataset.spacing === id));
   };
