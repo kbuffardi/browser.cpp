@@ -37,6 +37,7 @@ import { getExtensionVersionLabel } from '../extension-api.mjs';
 import { selectRunBinaryBytes } from './build-request.mjs';
 import { createExtensionSettings, initSettingsPanel } from './settings.mjs';
 import { getVisualTheme } from './themes.mjs';
+import { initSpacingControl, SPACING_OPTIONS, spacingForPath } from './editor-spacing.mjs';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -172,7 +173,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     persistWorkspace: () => persistenceGate.persistWorkspace(),
     scheduleState: () => persistenceGate.scheduleState(),
     getCompileOptions: () => ({ memoryDebugMode: extensionSettings.get().memoryDebugMode }),
+    onActiveTabChange: (path) => {
+      editorAPI.setIndentation(SPACING_OPTIONS[spacingForPath(path, extensionSettings.get())]);
+      spacingControl?.refresh();
+    },
   });
+  const spacingControl = initSpacingControl({
+    document,
+    settings: extensionSettings,
+    editorAPI,
+    getActivePath: getActiveTabPath,
+  });
+  editorAPI.setIndentation(SPACING_OPTIONS[spacingForPath(null, extensionSettings.get())]);
   extensionSettings.subscribe(applyVisualTheme);
   resetToNewProject();
 

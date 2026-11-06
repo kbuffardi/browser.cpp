@@ -739,6 +739,15 @@ select:focus {
   color: var(--subtext0);
 }
 
+.spacing-control { position: relative; }
+.spacing-button { background: none; border: 0; color: inherit; padding: 0; font-size: inherit; }
+.spacing-button:hover, .spacing-button:focus-visible { color: var(--text); outline: 1px solid var(--blue); }
+.spacing-menu { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 20; min-width: 145px; padding: 4px; background: var(--mantle); border: 1px solid var(--surface1); box-shadow: 0 4px 12px #0006; }
+.spacing-menu button { display: flex; width: 100%; background: none; color: var(--text); border: 0; border-radius: 2px; padding: 4px 7px; text-align: left; }
+.spacing-menu button:hover, .spacing-menu button:focus-visible { background: var(--surface0); outline: none; }
+.spacing-menu [aria-checked="true"]::before { content: '✓ '; }
+.spacing-menu hr { border: 0; border-top: 1px solid var(--surface1); margin: 4px 0; }
+
 .status-item { white-space: nowrap; }
 .status-version { margin-left: auto; }
 
